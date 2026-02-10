@@ -381,13 +381,10 @@ pub fn verify_tapscript_schnorr_signature(
         Err(_) => return Ok(false), // Invalid signature format
     };
 
-    // Create message from sighash (already 32 bytes)
-    let msg = Message::from_digest_slice(sighash)
-        .map_err(|_| ConsensusError::InvalidSignature("Invalid sighash".into()))?;
-
     // Verify using secp256k1 BIP 340 verification
+    // verify_schnorr expects &[u8] for the message (32-byte sighash)
     let secp = Secp256k1::verification_only();
-    match secp.verify_schnorr(&sig, &msg, &pubkey_xonly) {
+    match secp.verify_schnorr(&sig, sighash, &pubkey_xonly) {
         Ok(_) => Ok(true),
         Err(_) => Ok(false), // Invalid signature
     }

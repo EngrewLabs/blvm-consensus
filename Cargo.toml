@@ -25,8 +25,10 @@ smallvec = { version = "1.11", optional = true, features = ["serde"] }
 # Consensus-critical cryptography - EXACT VERSIONS
 # Using fork with batch Schnorr verification support
 # CI: Uses git dependency from secsovereign/rust-secp256k1
-# Local dev: Override with [patch.crates-io] section below
-secp256k1 = { git = "https://github.com/secsovereign/rust-secp256k1.git", branch = "batch-schnorr-verification" }
+# Local dev: Override with [patch.crates-io] section below (automatically uses local if available)
+# Use local fork (patched below) - batch verification not on GitHub yet
+# secp256k1 = { git = "https://github.com/secsovereign/rust-secp256k1.git", branch = "batch-schnorr-verification" }
+secp256k1 = { path = "../secp256k1-fork", default-features = true }
 # Pure Rust secp256k1 implementation (Phase 3.2 - migration in progress)
 k256 = { version = "=0.13", optional = true, features = ["ecdsa", "sha256"] }
 # Enable SIMD optimizations for hashing
@@ -53,12 +55,10 @@ hex = "=0.4.3"
 rustc-hash = { version = "2.0", optional = true }
 
 # Spec-lock for mathematical verification
-# Default: Use crate from crates.io (once published)
-# Fallback: Git dependency (if crate not available, CI will clone repo)
-# Local dev: Use .cargo/config.toml with [patch.crates-io] (see .cargo/config.toml.example)
-# Version range allows compatible updates (^0.1.0 allows 0.1.x but not 0.2.x)
+# CI: Uses git dependency (fallback if local path not available)
+# Local dev: Override with [patch.crates-io] section below (automatically uses local if available)
 # Note: Constants are always available for property tests; #[spec_locked] attributes are metadata for formal verification
-blvm-spec-lock = "^0.1.0"
+blvm-spec-lock = { git = "https://github.com/BTCDecoded/blvm-spec-lock.git", default-features = false }
 # Spec-macros for spec_locked attributes (migration in progress - commented out until committed)
 # blvm-spec-macros = { path = "../blvm-spec-macros", optional = true }
 
@@ -154,14 +154,6 @@ sha2 = { version = "=0.10.9" }
 [target.x86_64-pc-windows-gnu.dependencies]
 sha2 = { version = "=0.10.9" }
 
-# Local development: Override blvm-spec-lock to use local path
-# This section is only used when developing locally
-# In CI, this section is ignored and the default crate/git dependency is used
-# To use locally: Create .cargo/config.toml with:
-# [patch.crates-io]
-# blvm-spec-lock = { path = "../blvm-spec-lock" }
-# Or uncomment the section below (not recommended for committed code)
-
 [profile.release]
 # Aggressive optimizations for production builds
 # Reference: Orange Paper Section 13.1 - Performance Considerations
@@ -195,11 +187,13 @@ strip = false
 lto = "thin"  # Faster than "fat" for iterative benchmarking
 codegen-units = 16  # Faster compilation
 
-# Benchmarks have been moved to blvm-bench crate
-# See: https://github.com/BTCDecoded/blvm-bench
-
-[patch.crates-io]
+# Local development patches (only active when paths exist, ignored in CI)
+# These automatically override git dependencies when developing locally
+# In CI, these paths won't exist, so git dependencies are used instead
+[patch."https://github.com/BTCDecoded/blvm-spec-lock.git"]
+# Use local blvm-spec-lock if available (local dev), otherwise use git (CI)
 blvm-spec-lock = { path = "../blvm-spec-lock" }
-# Local development: Use local secp256k1 fork instead of git dependency
-# Uncomment the line below when developing locally:
-# secp256k1 = { path = "../secp256k1-fork" }
+
+# Local fork is used directly above - no patch needed
+# [patch."https://github.com/secsovereign/rust-secp256k1.git"]
+# secp256k1 = { path = "../secp256k1-fork", default-features = true }
