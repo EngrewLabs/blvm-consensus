@@ -11,7 +11,7 @@ use blvm_consensus::economic::calculate_fee;
 
 #[test]
 fn test_input_value_overflow() {
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     
     // Create UTXOs that will cause overflow when summed
     // Use values near i64::MAX
@@ -68,7 +68,7 @@ fn test_input_value_overflow() {
 
 #[test]
 fn test_output_value_overflow() {
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     
     // Create UTXO
     let outpoint = OutPoint { hash: [1; 32], index: 0 };
@@ -115,7 +115,7 @@ fn test_output_value_overflow() {
 
 #[test]
 fn test_output_exceeds_max_money() {
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     
     // Create UTXO
     let outpoint = OutPoint { hash: [1; 32], index: 0 };
@@ -156,7 +156,7 @@ fn test_output_exceeds_max_money() {
 
 #[test]
 fn test_fee_calculation_no_overflow() {
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     
     // Test with large but safe values
     let input_value = MAX_MONEY / 2;
@@ -196,7 +196,7 @@ fn test_fee_calculation_no_overflow() {
 
 #[test]
 fn test_coinbase_value_overflow() {
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     
     // Create block with coinbase that would overflow subsidy + fees
     // Use very large values that would cause overflow
@@ -248,7 +248,7 @@ fn test_total_fees_overflow() {
     // but the overflow check in connect_block should catch it.
     
     // For now, we verify that fee calculation itself doesn't overflow
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     
     // Create UTXO with large value
     let outpoint = OutPoint { hash: [1; 32], index: 0 };
@@ -282,7 +282,7 @@ fn test_total_fees_overflow() {
 #[test]
 fn test_max_valid_values() {
     // Test with maximum valid values (should not overflow)
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     
     let outpoint = OutPoint { hash: [1; 32], index: 0 };
     let utxo = UTXO {

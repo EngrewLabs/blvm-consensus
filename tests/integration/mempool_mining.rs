@@ -41,7 +41,7 @@ fn test_mempool_to_block_integration() {
     };
     
     // Add transactions to mempool
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let _result1 = consensus.accept_to_memory_pool(&tx1, &utxo_set, &mempool, 100);
     let _result2 = consensus.accept_to_memory_pool(&tx2, &utxo_set, &mempool, 100);
     
@@ -81,7 +81,7 @@ fn test_economic_mining_integration() {
     assert_eq!(subsidy, 5000000000);
     
     // Create a block template
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let mempool_txs = vec![];
     let prev_header = BlockHeader {
         version: 1,
@@ -169,7 +169,7 @@ fn test_pow_block_integration() {
     assert!(pow_result == true || pow_result == false);
     
     // Validate the block
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let witnesses: Vec<blvm_consensus::segwit::Witness> =
         block.transactions.iter().map(|_| Vec::new()).collect();
     let time_context = None;
@@ -200,7 +200,7 @@ fn test_cross_system_error_handling() {
     assert!(matches!(tx_result, ValidationResult::Invalid(_)));
     
     // Mempool acceptance should also fail
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let mempool = Mempool::new();
     let mempool_result = consensus.accept_to_memory_pool(&invalid_tx, &utxo_set, &mempool, 100);
     assert!(mempool_result.is_err());
@@ -257,7 +257,7 @@ fn test_performance_integration() {
     }
     
     // Create block with all transactions
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let prev_header = BlockHeader {
         version: 1,
         prev_block_hash: [0; 32],

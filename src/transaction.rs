@@ -779,7 +779,7 @@ mod property_tests {
         #[test]
         fn prop_check_tx_inputs_coinbase(
             tx in any::<Transaction>(),
-            utxo_set in any::<UtxoSet>(),
+            utxo_set in prop::collection::vec((any::<OutPoint>(), any::<UTXO>()), 0..50).prop_map(|v| v.into_iter().collect::<UtxoSet>()),
             height in 0u64..1000u64
         ) {
             // Bound for tractability
@@ -957,7 +957,7 @@ mod tests {
             lock_time: 0,
         };
 
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         let (result, fee) = check_tx_inputs(&tx, &utxo_set, 0).unwrap();
 
         assert_eq!(result, ValidationResult::Valid);
@@ -1238,7 +1238,7 @@ mod tests {
 
     #[test]
     fn test_check_tx_inputs_regular_transaction() {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
 
         // Add UTXO to the set
         let outpoint = OutPoint {
@@ -1280,7 +1280,7 @@ mod tests {
 
     #[test]
     fn test_check_tx_inputs_missing_utxo() {
-        let utxo_set = UtxoSet::new(); // Empty UTXO set
+        let utxo_set = UtxoSet::default(); // Empty UTXO set
 
         let tx = Transaction {
             version: 1,
@@ -1309,7 +1309,7 @@ mod tests {
 
     #[test]
     fn test_check_tx_inputs_insufficient_funds() {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
 
         // Add UTXO with insufficient value
         let outpoint = OutPoint {
@@ -1351,7 +1351,7 @@ mod tests {
 
     #[test]
     fn test_check_tx_inputs_multiple_inputs() {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
 
         // Add two UTXOs
         let outpoint1 = OutPoint {

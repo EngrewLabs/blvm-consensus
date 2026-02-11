@@ -196,7 +196,7 @@ fn test_block_size_boundaries() {
             transactions: transactions.into(),
     };
     
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let witnesses: Vec<blvm_consensus::segwit::Witness> =
         block.transactions.iter().map(|_| Vec::new()).collect();
     let time_context = None;

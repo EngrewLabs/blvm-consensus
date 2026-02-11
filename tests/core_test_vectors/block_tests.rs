@@ -57,9 +57,9 @@ pub fn load_block_test_vectors(dir: &str) -> Result<Vec<BlockTestVector>, Box<dy
                         // Parse previous UTXO set if provided (otherwise use empty)
                         let prev_utxo_set = if test_case.len() > 2 {
                             // UTXO set might be provided as JSON or hex, but typically empty for test vectors
-                            UtxoSet::new()
+                            UtxoSet::default()
                         } else {
-                            UtxoSet::new()
+                            UtxoSet::default()
                         };
                         
                         vectors.push(BlockTestVector {
@@ -106,7 +106,7 @@ pub fn load_block_test_vectors(dir: &str) -> Result<Vec<BlockTestVector>, Box<dy
                                 block,
                                 expected_result: ValidationResult::Invalid(description),
                                 height,
-                                prev_utxo_set: UtxoSet::new(),
+                                prev_utxo_set: UtxoSet::default(),
                             });
                         }
                         // If deserialization fails, that's expected for invalid blocks
@@ -209,7 +209,7 @@ mod tests {
             },
             expected_result: ValidationResult::Invalid("Test block".to_string()),
             height: 0,
-            prev_utxo_set: UtxoSet::new(),
+            prev_utxo_set: UtxoSet::default(),
         };
         
         // Verify structure is valid

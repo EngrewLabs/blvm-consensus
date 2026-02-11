@@ -134,7 +134,7 @@ proptest! {
         reorg_depth in 1u64..5u64
     ) {
         // Create initial chain state
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         
         // Add some UTXOs
         for i in 0..5 {

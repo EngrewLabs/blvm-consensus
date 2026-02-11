@@ -30,7 +30,7 @@ fn test_genesis_block_validation() {
     let block_bytes = hex::decode(genesis_block_hex).ok();
     if let Some(bytes) = block_bytes {
         if let Ok((block, witnesses)) = deserialize_block_with_witnesses(&bytes) {
-            let utxo_set = UtxoSet::new();
+            let utxo_set = UtxoSet::default();
             // connect_block expects &[Witness] where Witness is Vec<ByteString> (one per transaction)
             let result = connect_block(&block, &witnesses, utxo_set, 0, None, 0u64, Network::Mainnet);
 
@@ -67,7 +67,7 @@ fn test_segwit_activation_block() {
     if let Ok((block, witnesses)) =
         load_mainnet_block_from_disk(&block_dir, segwit_activation_height)
     {
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         let result = connect_block(
             &block,
             &witnesses,
@@ -115,7 +115,7 @@ fn test_taproot_activation_block() {
     if let Ok((block, witnesses)) =
         load_mainnet_block_from_disk(&block_dir, taproot_activation_height)
     {
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         let result = connect_block(
             &block,
             &witnesses,
@@ -388,7 +388,7 @@ mod tests {
         // Test the helper function with a minimal block
         let minimal_block_hex = "0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c010100000001000000000000000000000000000000000000000000000000000000000000000000ffffffff4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000";
 
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         let result = validate_mainnet_block(minimal_block_hex, 0, utxo_set);
 
         // Should parse successfully (may fail validation due to missing context)

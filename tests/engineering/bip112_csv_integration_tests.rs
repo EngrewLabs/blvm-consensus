@@ -14,7 +14,7 @@ fn test_csv_sequence_validation_passes() {
     
     let tx = create_csv_transaction(input_sequence, required_sequence, vec![0x51]); // OP_1
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -40,7 +40,7 @@ fn test_csv_sequence_disabled_fails() {
     
     let tx = create_csv_transaction(input_sequence, required_sequence, vec![0x51]);
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -65,7 +65,7 @@ fn test_csv_type_mismatch_fails() {
     
     let tx = create_csv_transaction(input_sequence, required_sequence, vec![0x51]);
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -90,7 +90,7 @@ fn test_csv_insufficient_locktime_fails() {
     
     let tx = create_csv_transaction(input_sequence, required_sequence, vec![0x51]);
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -114,7 +114,7 @@ fn test_csv_exact_locktime_passes() {
     
     let tx = create_csv_transaction(sequence, sequence, vec![0x51]);
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -139,7 +139,7 @@ fn test_csv_block_based_locktime() {
     
     let tx = create_csv_transaction(input_sequence, required_sequence, vec![0x51]);
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -164,7 +164,7 @@ fn test_csv_time_based_locktime() {
     
     let tx = create_csv_transaction(input_sequence, required_sequence, vec![0x51]);
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -198,7 +198,7 @@ fn test_csv_empty_stack_fails() {
         lock_time: 0,
     };
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -235,7 +235,7 @@ fn test_csv_invalid_encoding_fails() {
         lock_time: 0,
     };
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -260,7 +260,7 @@ fn test_csv_max_relative_locktime() {
     
     let tx = create_csv_transaction(input_sequence, required_sequence, vec![0x51]);
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -286,7 +286,7 @@ fn test_csv_bip68_encoding() {
     
     let tx = create_csv_transaction(input_sequence, required_sequence, vec![0x51]);
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -332,7 +332,7 @@ fn test_csv_multiple_inputs_context() {
         lock_time: 0,
     };
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -395,7 +395,7 @@ fn test_csv_in_script_pubkey() {
         lock_time: 0,
     };
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -420,7 +420,7 @@ fn test_csv_zero_locktime() {
     
     let tx = create_csv_transaction(input_sequence, required_sequence, vec![0x51]);
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {

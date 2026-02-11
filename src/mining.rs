@@ -587,7 +587,7 @@ mod tests {
 
     #[test]
     fn test_create_new_block() {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         // Add UTXO for the transaction input
         let outpoint = OutPoint {
             hash: [1; 32],
@@ -653,7 +653,7 @@ mod tests {
 
     #[test]
     fn test_create_block_template() {
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         let mempool_txs = vec![create_valid_transaction()];
         let height = 100;
         let prev_header = create_valid_block_header();
@@ -712,7 +712,7 @@ mod tests {
 
     #[test]
     fn test_create_block_template_comprehensive() {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         // Add UTXO for the transaction input
         let outpoint = OutPoint {
             hash: [1; 32],
@@ -974,7 +974,7 @@ mod tests {
 
     #[test]
     fn test_block_template_fields() {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         // Add UTXO for the transaction input
         let outpoint = OutPoint {
             hash: [1; 32],

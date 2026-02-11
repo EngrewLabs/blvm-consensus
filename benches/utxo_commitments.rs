@@ -1,5 +1,5 @@
 #[cfg(feature = "utxo-commitments")]
-use bllvm_consensus::{
+use blvm_consensus::{
     types::Natural,
     utxo_commitments::data_structures::UtxoCommitment,
     utxo_commitments::verification::{verify_header_chain, verify_supply},

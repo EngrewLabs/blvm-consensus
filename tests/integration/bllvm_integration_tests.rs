@@ -15,7 +15,7 @@ use blvm_consensus::{
 #[test]
 fn test_block_validation_correctness() {
     let block = create_test_block();
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
 
     // Validate (uses optimizations in production)
     let consensus = ConsensusProof::new();

@@ -151,7 +151,7 @@ fn test_mempool_fee_calculation() {
         lock_time: 0,
     };
 
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     let outpoint = OutPoint {
         hash: [1; 32],
         index: 0,

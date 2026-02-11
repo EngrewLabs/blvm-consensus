@@ -88,7 +88,7 @@ fn test_economic_mining_integration() {
 
         let block = consensus
             .create_new_block(
-                &UtxoSet::new(),
+                &UtxoSet::default(),
                 &[],
                 height,
                 &create_valid_block_header(),
@@ -118,7 +118,7 @@ fn test_script_transaction_integration() {
     tx.outputs[0].script_pubkey = vec![0x51]; // OP_1
 
     // 2. Create UTXO with matching script
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     let outpoint = tx.inputs[0].prevout.clone();
     let utxo = UTXO {
         value: 10000,
@@ -173,7 +173,7 @@ fn test_pow_block_integration() {
     assert!(next_work > 0); // Should return valid target
 
     // 4. Validate block (should pass other validations even if PoW fails)
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let witnesses: Vec<Vec<blvm_consensus::segwit::Witness>> =
         block.transactions.iter().map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect()).collect();
     let time_context = None;
@@ -195,7 +195,7 @@ fn test_cross_system_error_handling() {
 
     // 1. Test invalid transaction in mempool
     let invalid_tx = create_invalid_transaction();
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let mempool = mempool::Mempool::new();
 
     let time_context = None; // No time context for this test
@@ -227,7 +227,7 @@ fn test_performance_integration() {
     let consensus = ConsensusProof::new();
 
     // 1. Create large UTXO set
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     for i in 0..1000 {
         let outpoint = OutPoint {
             hash: [i as u8; 32],

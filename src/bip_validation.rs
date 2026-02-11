@@ -559,7 +559,7 @@ mod tests {
             transactions: transactions.into_boxed_slice(),
         };
 
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         let result = check_bip30(&block, &utxo_set, 0, crate::types::Network::Mainnet).unwrap();
         assert!(result, "BIP30 should pass for new coinbase");
     }
@@ -702,7 +702,7 @@ mod tests {
         let txid = calculate_tx_id(&coinbase_tx);
 
         // Create UTXO set with a UTXO from this coinbase
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         utxo_set.insert(
             OutPoint {
                 hash: txid,

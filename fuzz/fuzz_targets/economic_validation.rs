@@ -140,7 +140,7 @@ fuzz_target!(|data: &[u8]| {
         };
 
         // Create UTXO set with inputs
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         for input in &tx.inputs {
             utxo_set.insert(
                 input.prevout.clone(),

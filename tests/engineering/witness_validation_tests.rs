@@ -33,7 +33,7 @@ fn test_witness_validation_empty_witnesses() {
     };
     
     let witnesses: Vec<Witness> = vec![Vec::new()]; // Empty witness for coinbase
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     
     // Should validate successfully with empty witnesses
     let (result, _) = connect_block(&block, &witnesses, utxo_set, 0, None, 0u64, crate::types::Network::Mainnet).unwrap();
@@ -76,7 +76,7 @@ fn test_witness_validation_segwit_block() {
         Vec::new(), // Empty witness for coinbase (correct)
     ];
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     
     let (result, _) = connect_block(&block, &witnesses, utxo_set, 0, None, 0u64, crate::types::Network::Mainnet).unwrap();
     assert!(matches!(result, ValidationResult::Valid));
@@ -111,7 +111,7 @@ fn test_witness_count_mismatch() {
     
     // Wrong number of witnesses (2 instead of 1)
     let witnesses: Vec<Witness> = vec![Vec::new(), Vec::new()];
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     
     let (result, _) = connect_block(&block, &witnesses, utxo_set, 0, None, 0u64, crate::types::Network::Mainnet).unwrap();
     assert!(matches!(result, ValidationResult::Invalid(_)));
@@ -166,7 +166,7 @@ fn test_median_time_past_validation() {
     };
     
     let witnesses: Vec<Witness> = vec![Vec::new()];
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     
     // Validate with recent headers for median time-past
     let (result, _) = connect_block(&block, &witnesses, utxo_set, 0, Some(&headers), crate::types::Network::Mainnet).unwrap();

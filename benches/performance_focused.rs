@@ -11,7 +11,7 @@
 //!
 //! Run with: cargo bench --bench performance_focused --features production
 
-use bllvm_consensus::{
+use blvm_consensus::{
     block::connect_block, segwit::Witness, types::Network, Block, BlockHeader, OutPoint,
     Transaction, TransactionInput, TransactionOutput, UtxoSet, UTXO,
 };
@@ -61,7 +61,7 @@ fn bench_hash_single(c: &mut Criterion) {
 
 #[cfg(feature = "production")]
 fn bench_hash_batch(c: &mut Criterion) {
-    use bllvm_consensus::optimizations::simd_vectorization;
+    use blvm_consensus::optimizations::simd_vectorization;
 
     let data = vec![0u8; 64];
     let mut group = c.benchmark_group("hash_batch");
@@ -117,13 +117,13 @@ fn bench_transaction_basics(c: &mut Criterion) {
 
     // Transaction serialization (needed for tx ID calculation)
     group.bench_function("serialize", |b| {
-        use bllvm_consensus::serialization::transaction::serialize_transaction;
+        use blvm_consensus::serialization::transaction::serialize_transaction;
         b.iter(|| black_box(serialize_transaction(black_box(&tx))))
     });
 
     // Transaction ID calculation (SHA256D of serialized tx)
     group.bench_function("calculate_id", |b| {
-        use bllvm_consensus::block::calculate_tx_id;
+        use blvm_consensus::block::calculate_tx_id;
         b.iter(|| black_box(calculate_tx_id(black_box(&tx))))
     });
 
@@ -208,7 +208,7 @@ fn bench_block_validation(c: &mut Criterion) {
 
     group.bench_function("10_txs", |b| {
         b.iter(|| {
-            let utxo_set = UtxoSet::new();
+            let utxo_set = UtxoSet::default();
             let _result = connect_block(
                 black_box(&block_10),
                 black_box(&witnesses_10),
@@ -226,7 +226,7 @@ fn bench_block_validation(c: &mut Criterion) {
 
     group.bench_function("100_txs", |b| {
         b.iter(|| {
-            let utxo_set = UtxoSet::new();
+            let utxo_set = UtxoSet::default();
             let _result = connect_block(
                 black_box(&block_100),
                 black_box(&witnesses_100),

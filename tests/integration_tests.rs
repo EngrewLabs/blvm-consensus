@@ -54,7 +54,7 @@ fn test_consensus_proof_coinbase_validation() {
         lock_time: 0,
     };
 
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let (result, fee) = consensus
         .validate_tx_inputs(&coinbase_tx, &utxo_set, 0)
         .unwrap();
@@ -109,7 +109,7 @@ fn test_consensus_proof_utxo_validation() {
     };
 
     // Create UTXO set with the input
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         prevout,
         UTXO {
@@ -152,7 +152,7 @@ fn test_consensus_proof_insufficient_funds() {
     };
 
     // Create UTXO set with insufficient funds
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         prevout,
         UTXO {

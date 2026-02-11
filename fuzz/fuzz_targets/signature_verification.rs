@@ -1,6 +1,6 @@
 #![no_main]
-use bllvm_consensus::script::verify_script_with_context_full;
-use bllvm_consensus::types::{Hash, Network, TimeContext};
+use blvm_consensus::script::verify_script_with_context_full;
+use blvm_consensus::types::{Hash, Network, TimeContext};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -138,24 +138,24 @@ fuzz_target!(|data: &[u8]| {
                 script_pubkey.push(0xac); // OP_CHECKSIG
 
                 // Create a transaction for sighash computation
-                let tx = bllvm_consensus::types::Transaction {
+                let tx = blvm_consensus::types::Transaction {
                     version: 1,
-                    inputs: vec![bllvm_consensus::types::TransactionInput {
-                        prevout: bllvm_consensus::types::OutPoint {
+                    inputs: vec![blvm_consensus::types::TransactionInput {
+                        prevout: blvm_consensus::types::OutPoint {
                             hash: sighash,
                             index: 0,
                         },
                         script_sig: vec![].into(),
                         sequence: 0xffffffff,
                     }],
-                    outputs: vec![bllvm_consensus::types::TransactionOutput {
+                    outputs: vec![blvm_consensus::types::TransactionOutput {
                         value: 0,
                         script_pubkey: vec![].into(),
                     }],
                     lock_time: 0,
                 };
 
-                let prevouts = vec![bllvm_consensus::types::TransactionOutput {
+                let prevouts = vec![blvm_consensus::types::TransactionOutput {
                     value: 0,
                     script_pubkey: vec![].into(),
                 }];
@@ -173,7 +173,7 @@ fuzz_target!(|data: &[u8]| {
                     Some(height),
                     Some(time_context.median_time_past),
                     network,
-                    bllvm_consensus::script::SigVersion::Base,
+                    blvm_consensus::script::SigVersion::Base,
                 );
             }
         }
@@ -185,24 +185,24 @@ fuzz_target!(|data: &[u8]| {
         let script_sig: Vec<u8> = signature_bytes.to_vec();
         let script_pubkey: Vec<u8> = vec![0xac]; // Just OP_CHECKSIG
 
-        let tx = bllvm_consensus::types::Transaction {
+        let tx = blvm_consensus::types::Transaction {
             version: 1,
-            inputs: vec![bllvm_consensus::types::TransactionInput {
-                prevout: bllvm_consensus::types::OutPoint {
+            inputs: vec![blvm_consensus::types::TransactionInput {
+                prevout: blvm_consensus::types::OutPoint {
                     hash: sighash,
                     index: 0,
                 },
                 script_sig: vec![].into(),
                 sequence: 0xffffffff,
             }],
-            outputs: vec![bllvm_consensus::types::TransactionOutput {
+            outputs: vec![blvm_consensus::types::TransactionOutput {
                 value: 0,
                 script_pubkey: vec![].into(),
             }],
             lock_time: 0,
         };
 
-        let prevouts = vec![bllvm_consensus::types::TransactionOutput {
+        let prevouts = vec![blvm_consensus::types::TransactionOutput {
             value: 0,
             script_pubkey: vec![].into(),
         }];
@@ -218,7 +218,7 @@ fuzz_target!(|data: &[u8]| {
             Some(0),
             Some(0),
             Network::Mainnet,
-            bllvm_consensus::script::SigVersion::Base,
+            blvm_consensus::script::SigVersion::Base,
         );
     }
 
@@ -229,24 +229,24 @@ fuzz_target!(|data: &[u8]| {
         script_pubkey.extend_from_slice(pubkey_bytes);
         script_pubkey.push(0xac); // OP_CHECKSIG
 
-        let tx = bllvm_consensus::types::Transaction {
+        let tx = blvm_consensus::types::Transaction {
             version: 1,
-            inputs: vec![bllvm_consensus::types::TransactionInput {
-                prevout: bllvm_consensus::types::OutPoint {
+            inputs: vec![blvm_consensus::types::TransactionInput {
+                prevout: blvm_consensus::types::OutPoint {
                     hash: sighash,
                     index: 0,
                 },
                 script_sig: vec![].into(),
                 sequence: 0xffffffff,
             }],
-            outputs: vec![bllvm_consensus::types::TransactionOutput {
+            outputs: vec![blvm_consensus::types::TransactionOutput {
                 value: 0,
                 script_pubkey: vec![].into(),
             }],
             lock_time: 0,
         };
 
-        let prevouts = vec![bllvm_consensus::types::TransactionOutput {
+        let prevouts = vec![blvm_consensus::types::TransactionOutput {
             value: 0,
             script_pubkey: vec![].into(),
         }];
@@ -262,7 +262,7 @@ fuzz_target!(|data: &[u8]| {
             Some(0),
             Some(0),
             Network::Mainnet,
-            bllvm_consensus::script::SigVersion::Base,
+            blvm_consensus::script::SigVersion::Base,
         );
     }
 
@@ -273,24 +273,24 @@ fuzz_target!(|data: &[u8]| {
         script_pubkey.extend_from_slice(pubkey_bytes);
         script_pubkey.push(0xac); // OP_CHECKSIG
 
-        let tx = bllvm_consensus::types::Transaction {
+        let tx = blvm_consensus::types::Transaction {
             version: 1,
-            inputs: vec![bllvm_consensus::types::TransactionInput {
-                prevout: bllvm_consensus::types::OutPoint {
+            inputs: vec![blvm_consensus::types::TransactionInput {
+                prevout: blvm_consensus::types::OutPoint {
                     hash: sighash,
                     index: 0,
                 },
                 script_sig: vec![].into(),
                 sequence: 0xffffffff,
             }],
-            outputs: vec![bllvm_consensus::types::TransactionOutput {
+            outputs: vec![blvm_consensus::types::TransactionOutput {
                 value: 0,
                 script_pubkey: vec![].into(),
             }],
             lock_time: 0,
         };
 
-        let prevouts = vec![bllvm_consensus::types::TransactionOutput {
+        let prevouts = vec![blvm_consensus::types::TransactionOutput {
             value: 0,
             script_pubkey: vec![].into(),
         }];
@@ -306,7 +306,7 @@ fuzz_target!(|data: &[u8]| {
             Some(0),
             Some(0),
             Network::Mainnet,
-            bllvm_consensus::script::SigVersion::Base,
+            blvm_consensus::script::SigVersion::Base,
         );
     }
 });

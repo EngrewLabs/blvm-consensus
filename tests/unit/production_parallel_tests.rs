@@ -35,7 +35,7 @@ mod tests {
     }
 
     fn create_multi_input_utxo_set() -> UtxoSet {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         
         for i in 1..=3 {
             let outpoint = OutPoint { hash: [i as u8; 32], index: 0 };
@@ -221,7 +221,7 @@ mod tests {
         };
         
         let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
-        let (result, _) = connect_block(&block, &witnesses, UtxoSet::new(), 0, None, 0u64, crate::types::Network::Mainnet).unwrap();
+        let (result, _) = connect_block(&block, &witnesses, UtxoSet::default(), 0, None, 0u64, crate::types::Network::Mainnet).unwrap();
         // Should handle empty non-coinbase transactions correctly
         assert!(matches!(result, ValidationResult::Valid | ValidationResult::Invalid(_)));
     }
@@ -229,7 +229,7 @@ mod tests {
     #[test]
     fn test_parallel_single_input() {
         // Edge case: transaction with single input (should still work)
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         let outpoint = OutPoint { hash: [1; 32], index: 0 };
         let utxo = UTXO {
             value: 10000,

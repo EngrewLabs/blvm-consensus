@@ -30,6 +30,8 @@
 use crate::error::{ConsensusError, Result};
 use crate::types::{ByteString, Hash};
 use secp256k1::{XOnlyPublicKey, Message, schnorr::{Signature, verify_batch}, Secp256k1};
+#[cfg(all(feature = "production", feature = "rayon"))]
+use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 use blvm_spec_lock::spec_locked;
 
@@ -37,15 +39,18 @@ use blvm_spec_lock::spec_locked;
 ///
 /// Collects signatures during script execution and defers verification
 /// until all signatures in a transaction can be batch verified together.
-/// This provides 2-3x performance improvement for transactions with multiple
-/// Schnorr signatures (Tapscript OP_CHECKSIG or OP_CHECKSIGFROMSTACK).
+/// Uses interior Mutex so collect(&self) can be called from parallel workers (maximum parallelization).
 #[cfg(feature = "production")]
-#[derive(Default)]
 pub struct SchnorrSignatureCollector {
-    /// Collected verification tasks: (message, pubkey, signature)
-    tasks: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)>,
-    /// Indices of tasks that need verification (for mapping results back)
-    task_indices: Vec<usize>,
+    /// (tasks, task_indices); Mutex allows collect(&self) from many threads
+    inner: std::sync::Mutex<(Vec<(Vec<u8>, Vec<u8>, Vec<u8>)>, Vec<usize>)>,
+}
+
+#[cfg(feature = "production")]
+impl Default for SchnorrSignatureCollector {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(feature = "production")]
@@ -53,35 +58,40 @@ impl SchnorrSignatureCollector {
     /// Create a new empty collector
     pub fn new() -> Self {
         Self {
-            tasks: Vec::new(),
-            task_indices: Vec::new(),
+            inner: std::sync::Mutex::new((Vec::new(), Vec::new())),
         }
     }
 
     /// Collect a signature for deferred batch verification
     ///
     /// Returns the index of this task for result mapping
-    pub fn collect(&mut self, message: &[u8], pubkey: &[u8], signature: &[u8]) -> usize {
-        let idx = self.tasks.len();
-        self.tasks.push((
-            message.to_vec(),
-            pubkey.to_vec(),
-            signature.to_vec(),
-        ));
-        self.task_indices.push(idx);
-        idx
+    pub fn collect(&self, message: &[u8], pubkey: &[u8], signature: &[u8]) -> usize {
+        if let Ok(mut guard) = self.inner.lock() {
+            let idx = guard.0.len();
+            guard.0.push((
+                message.to_vec(),
+                pubkey.to_vec(),
+                signature.to_vec(),
+            ));
+            guard.1.push(idx);
+            return idx;
+        }
+        0
     }
 
     /// Batch verify all collected signatures
     ///
     /// Returns a vector of results, one per collected signature (in collection order)
     pub fn verify_batch(&self) -> Result<Vec<bool>> {
-        if self.tasks.is_empty() {
+        let tasks: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)> = match self.inner.lock() {
+            Ok(guard) => guard.0.clone(),
+            Err(_) => return Ok(Vec::new()),
+        };
+        if tasks.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Convert to slice of references for batch verification
-        let task_refs: Vec<(&[u8], &[u8], &[u8])> = self.tasks
+        let task_refs: Vec<(&[u8], &[u8], &[u8])> = tasks
             .iter()
             .map(|(msg, pk, sig)| (msg.as_slice(), pk.as_slice(), sig.as_slice()))
             .collect();
@@ -90,14 +100,26 @@ impl SchnorrSignatureCollector {
     }
 
     /// Clear all collected signatures
-    pub fn clear(&mut self) {
-        self.tasks.clear();
-        self.task_indices.clear();
+    pub fn clear(&self) {
+        if let Ok(mut guard) = self.inner.lock() {
+            guard.0.clear();
+            guard.1.clear();
+        }
     }
 
     /// Check if collector is empty
     pub fn is_empty(&self) -> bool {
-        self.tasks.is_empty()
+        self.inner.lock().map(|g| g.0.is_empty()).unwrap_or(true)
+    }
+
+    /// Merge tasks from another collector (for per-thread collection merge).
+    #[cfg(feature = "rayon")]
+    pub fn extend_from(&self, other: &Self) {
+        if let (Ok(mut self_guard), Ok(other_guard)) = (self.inner.lock(), other.inner.lock()) {
+            let old_len = self_guard.0.len();
+            self_guard.0.extend(other_guard.0.iter().cloned());
+            self_guard.1.extend(old_len..old_len + other_guard.0.len());
+        }
     }
 }
 
@@ -140,7 +162,7 @@ pub fn verify_signature_from_stack(
     message: &[u8],
     pubkey: &[u8],
     signature: &[u8],
-    #[cfg(feature = "production")] collector: Option<&mut SchnorrSignatureCollector>,
+    #[cfg(feature = "production")] collector: Option<&SchnorrSignatureCollector>,
 ) -> Result<bool> {
     // BIP-348: If pubkey size is zero, script MUST fail
     if pubkey.is_empty() {
@@ -314,11 +336,43 @@ pub fn batch_verify_signatures_from_stack(
         return Ok(results);
     }
 
-    // Perform batch verification
     let msg_refs: Vec<&[u8]> = msgs.iter().map(|m| m.as_slice()).collect();
+    const CHUNK_THRESHOLD: usize = 32;
+    const CHUNK_SIZE: usize = 32;
+
+    #[cfg(all(feature = "production", feature = "rayon"))]
+    let batch_results: Vec<std::result::Result<(), secp256k1::Error>> = {
+        if sigs.len() <= CHUNK_THRESHOLD {
+            verify_batch(&sigs, &msg_refs, &pubkeys)
+        } else {
+            let n = sigs.len();
+            let num_threads = rayon::current_num_threads().max(1);
+            let num_chunks = ((n + CHUNK_SIZE - 1) / CHUNK_SIZE).max(num_threads).min(n);
+            let chunk_ranges: Vec<(usize, usize)> = (0..num_chunks)
+                .map(|i| {
+                    let start = (i * n) / num_chunks;
+                    let end = if i + 1 >= num_chunks { n } else { ((i + 1) * n) / num_chunks };
+                    (start, end)
+                })
+                .filter(|&(s, e)| s < e)
+                .collect();
+            let per_chunk: Vec<Vec<std::result::Result<(), secp256k1::Error>>> = chunk_ranges
+                .into_par_iter()
+                .map(|(start, end)| {
+                    verify_batch(
+                        &sigs[start..end],
+                        &msg_refs[start..end],
+                        &pubkeys[start..end],
+                    )
+                })
+                .collect();
+            per_chunk.into_iter().flatten().collect()
+        }
+    };
+
+    #[cfg(not(all(feature = "production", feature = "rayon")))]
     let batch_results = verify_batch(&sigs, &msg_refs, &pubkeys);
 
-    // Map results back to original indices
     for (i, result) in batch_results.iter().enumerate() {
         let original_idx = task_indices[i];
         results[original_idx] = result.is_ok();
@@ -348,7 +402,7 @@ pub fn verify_tapscript_schnorr_signature(
     sighash: &[u8; 32],
     pubkey: &[u8],
     signature: &[u8],
-    collector: Option<&mut SchnorrSignatureCollector>,
+    collector: Option<&SchnorrSignatureCollector>,
 ) -> Result<bool> {
     // Tapscript: Only 32-byte pubkeys are verified (BIP 340 x-only pubkeys)
     if pubkey.len() != 32 {
@@ -400,7 +454,7 @@ mod tests {
         let pubkey = vec![];
         let signature = vec![0u8; 64];
         
-        let result = verify_signature_from_stack(message, &pubkey, &signature);
+        let result = verify_signature_from_stack(message, &pubkey, &signature, #[cfg(feature = "production")] None);
         assert!(result.is_err());
     }
 
@@ -411,7 +465,7 @@ mod tests {
         let signature = vec![0u8; 64];
         
         // Unknown pubkey type should succeed
-        let result = verify_signature_from_stack(message, &pubkey, &signature);
+        let result = verify_signature_from_stack(message, &pubkey, &signature, #[cfg(feature = "production")] None);
         assert_eq!(result.unwrap(), true);
     }
 
@@ -421,7 +475,7 @@ mod tests {
         let pubkey = vec![1u8; 32]; // Valid 32-byte pubkey
         let signature = vec![0u8; 63]; // Invalid length (not 64 bytes)
         
-        let result = verify_signature_from_stack(message, &pubkey, &signature);
+        let result = verify_signature_from_stack(message, &pubkey, &signature, #[cfg(feature = "production")] None);
         assert_eq!(result.unwrap(), false);
     }
 }

@@ -13,7 +13,7 @@ proptest! {
     fn prop_utxo_set_insertion_uniqueness(
         outpoint_count in 1usize..20usize
     ) {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         let mut inserted_count = 0;
         
         for i in 0..outpoint_count {
@@ -48,7 +48,7 @@ proptest! {
         initial_count in 1usize..20usize,
         remove_count in 1usize..20usize
     ) {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         let mut outpoints = Vec::new();
         
         // Insert UTXOs
@@ -120,7 +120,7 @@ proptest! {
         outpoint_index in 0u64..1000u64,
         value in 1000i64..1000000i64
     ) {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         let outpoint = OutPoint {
             hash: outpoint_hash,
             index: outpoint_index,
@@ -153,7 +153,7 @@ proptest! {
         initial_value in 1000i64..50000i64,
         new_value in 50000i64..100000i64
     ) {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         let outpoint = OutPoint {
             hash: outpoint_hash,
             index: 0,
@@ -189,7 +189,7 @@ proptest! {
     fn prop_utxo_set_iteration(
         entry_count in 1usize..20usize
     ) {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         let mut inserted_outpoints = Vec::new();
         
         // Insert entries
@@ -227,7 +227,7 @@ proptest! {
         insert_count in 1usize..20usize,
         remove_count in 0usize..20usize
     ) {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         let mut outpoints = Vec::new();
         
         // Insert UTXOs

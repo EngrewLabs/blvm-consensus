@@ -66,6 +66,8 @@ fn test_p2sh_scriptsig_push_only_validation() {
     }];
 
     // CRITICAL: This should fail due to push-only validation
+    let pv: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
+    let psp: Vec<&ByteString> = prevouts.iter().map(|p| &p.script_pubkey).collect();
     let result = verify_script_with_context_full(
         &invalid_script_sig,
         &script_pubkey,
@@ -73,11 +75,15 @@ fn test_p2sh_scriptsig_push_only_validation() {
         flags,
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         Some(0),
         None,
         Network::Mainnet,
         SigVersion::Base,
+        None,
+        None,
+        None,
     );
 
     // Must reject non-push opcode in P2SH scriptSig
@@ -139,6 +145,8 @@ fn test_taproot_empty_scriptsig_requirement() {
     }
 
     // CRITICAL: This should fail - Taproot requires empty scriptSig
+    let pv: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
+    let psp: Vec<&ByteString> = prevouts.iter().map(|p| &p.script_pubkey).collect();
     let result = verify_script_with_context_full(
         &tx.inputs[0].script_sig,
         &script_pubkey,
@@ -146,11 +154,15 @@ fn test_taproot_empty_scriptsig_requirement() {
         flags,
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         Some(height),
         None,
         Network::Mainnet,
         SigVersion::Base,
+        None,
+        None,
+        None,
     );
 
     // Must reject non-empty scriptSig for Taproot
@@ -198,11 +210,15 @@ fn test_p2sh_redeem_script_sighash() {
     let redeem_script = vec![0x51, 0x52]; // Redeem script (different from scriptPubkey)
     let script_pubkey = script_pubkey_vec;
 
+    let pv: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
+    let psp: Vec<&ByteString> = prevouts.iter().map(|p| &p.script_pubkey).collect();
+
     // Calculate sighash with redeem script (correct for P2SH)
     let sighash_with_redeem = calculate_transaction_sighash_with_script_code(
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         SighashType::ALL,
         Some(&redeem_script),
     );
@@ -211,7 +227,8 @@ fn test_p2sh_redeem_script_sighash() {
     let sighash_with_scriptpubkey = calculate_transaction_sighash_with_script_code(
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         SighashType::ALL,
         Some(&script_pubkey),
     );
@@ -311,7 +328,7 @@ fn test_bip30_deactivation() {
         ].into(),
     };
 
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let network = Network::Mainnet;
 
     // Before deactivation (block 91,721): BIP30 should be active
@@ -361,11 +378,15 @@ fn test_sighash_alllegacy() {
         script_pubkey: vec![0x51],
     }];
 
+    let pv: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
+    let psp: Vec<&ByteString> = prevouts.iter().map(|p| &p.script_pubkey).collect();
+
     // Calculate sighash with AllLegacy (0x00)
     let sighash_alllegacy = calculate_transaction_sighash_with_script_code(
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         SighashType::ALL_LEGACY,
         None,
     );
@@ -374,7 +395,8 @@ fn test_sighash_alllegacy() {
     let sighash_all = calculate_transaction_sighash_with_script_code(
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         SighashType::ALL,
         None,
     );
@@ -444,6 +466,8 @@ fn test_script_flags_per_transaction() {
 
     // Verify that Taproot transaction with empty scriptSig is accepted
     // (This indirectly tests that Taproot flag is set correctly)
+    let pv: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
+    let psp: Vec<&ByteString> = prevouts.iter().map(|p| &p.script_pubkey).collect();
     let result = verify_script_with_context_full(
         &tx_with_taproot.inputs[0].script_sig,
         &script_pubkey_taproot,
@@ -451,11 +475,15 @@ fn test_script_flags_per_transaction() {
         0x8000, // Taproot flag set
         &tx_with_taproot,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         Some(height),
         None,
         Network::Mainnet,
         SigVersion::Base,
+        None,
+        None,
+        None,
     );
 
     // Should not fail due to empty scriptSig (Taproot allows empty scriptSig)

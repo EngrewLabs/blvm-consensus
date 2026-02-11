@@ -33,7 +33,7 @@ proptest! {
         };
         
         let mut pool = mempool::Mempool::new();
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         
         // Add transaction first time
         let result1 = mempool::accept_to_memory_pool(&tx, &utxo_set, &pool, 0);
@@ -177,7 +177,7 @@ proptest! {
             lock_time: 0,
         };
         
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         
         // Add first transaction
         let result1 = mempool::accept_to_memory_pool(&tx1, &utxo_set, &pool, 0);
@@ -227,7 +227,7 @@ proptest! {
             lock_time: 0,
         };
         
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         // Note: actual fee calculation requires UTXO set
         // This tests structural correctness
         let expected_fee = input_value - output;

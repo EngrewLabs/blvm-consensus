@@ -509,7 +509,7 @@ pub enum MempoolResult {
 /// #     transactions: vec![coinbase_tx].into(),
 /// # };
 /// # let witnesses: Vec<blvm_consensus::segwit::Witness> = vec![vec![]]; // One empty witness for the coinbase transaction
-/// # let mut utxo_set = UtxoSet::new();
+/// # let mut utxo_set = UtxoSet::default();
 /// # let height = 0;
 /// # let mut mempool = Mempool::new();
 /// # use blvm_consensus::types::Network;
@@ -1086,7 +1086,7 @@ mod tests {
     #[test]
     fn test_accept_to_memory_pool_coinbase() {
         let coinbase_tx = create_coinbase_transaction();
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         let mempool = Mempool::new();
         // Coinbase transactions should be rejected from mempool
         let time_context = Some(TimeContext {
@@ -1414,7 +1414,7 @@ mod tests {
     }
 
     fn create_test_utxo_set() -> UtxoSet {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         let outpoint = OutPoint {
             hash: [1; 32],
             index: 0,

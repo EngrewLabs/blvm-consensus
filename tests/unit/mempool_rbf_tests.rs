@@ -23,7 +23,7 @@ fn test_rbf_sequence_checks() {
 fn test_mempool_duplicate_detection() {
     let mut pool = mempool::Mempool::new();
     let tx = create_rbf_tx(0xffffffffu64);
-    let utxo = UtxoSet::new();
+    let utxo = UtxoSet::default();
     
     // First acceptance should work
     let _ = mempool::accept_to_memory_pool(&tx, &utxo, &pool, 1);

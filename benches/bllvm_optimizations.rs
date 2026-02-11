@@ -7,9 +7,9 @@
 //! Run with: cargo bench --bench bllvm_optimizations --features production
 
 #[cfg(feature = "production")]
-use bllvm_consensus::optimizations;
+use blvm_consensus::optimizations;
 
-use bllvm_consensus::{
+use blvm_consensus::{
     mining::calculate_merkle_root,
     serialization::{block::serialize_block_header, transaction::serialize_transaction},
     types::{BlockHeader, OutPoint, Transaction, TransactionInput, TransactionOutput},
@@ -157,7 +157,7 @@ fn bench_block_header_serialization(c: &mut Criterion) {
 /// Benchmark pre-allocation impact
 #[cfg(feature = "production")]
 fn bench_preallocation_impact(c: &mut Criterion) {
-    use bllvm_consensus::optimizations::{prealloc_block_buffer, prealloc_tx_buffer};
+    use blvm_consensus::optimizations::{prealloc_block_buffer, prealloc_tx_buffer};
 
     let mut group = c.benchmark_group("preallocation");
 

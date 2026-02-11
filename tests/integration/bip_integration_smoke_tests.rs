@@ -42,7 +42,7 @@ fn smoke_test_bip30_enforced() {
     };
     
     let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     
     // This should not panic - if BIP checks cause issues, we'll catch them here
     let _result = connect_block(&block, &witnesses, utxo_set, 227_836, None, 0u64, types::Network::Mainnet);
@@ -81,7 +81,7 @@ fn smoke_test_bip34_enforced() {
     };
     
     let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     
     // At BIP34 activation height, this should be rejected
     let result = connect_block(&block, &witnesses, utxo_set, 227_836, None, 0u64, types::Network::Mainnet);
@@ -131,7 +131,7 @@ fn smoke_test_bip90_enforced() {
     };
     
     let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     
     // At BIP34 activation height, version 1 should be rejected (BIP90)
     let result = connect_block(&block, &witnesses, utxo_set, 227_836, None, 0u64, types::Network::Mainnet);

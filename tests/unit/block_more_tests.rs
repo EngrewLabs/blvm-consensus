@@ -28,7 +28,7 @@ fn header_prev() -> BlockHeader {
 fn test_connect_block_smoke() {
     let coinbase = tx_p2pkh(50_000_000_000);
     let block = Block { header: header_prev(), transactions: vec![coinbase] };
-    let utxo = UtxoSet::new();
+    let utxo = UtxoSet::default();
     let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
     let _ = block::connect_block(&block, &witnesses, utxo, 1, None, 0u64, crate::types::Network::Mainnet);
 }

@@ -1,6 +1,6 @@
 #![no_main]
-use bllvm_consensus::transaction::{check_transaction, check_tx_inputs};
-use bllvm_consensus::types::{Hash, OutPoint, Transaction, TransactionInput, TransactionOutput, UtxoSet};
+use blvm_consensus::transaction::{check_transaction, check_tx_inputs};
+use blvm_consensus::types::{Hash, OutPoint, Transaction, TransactionInput, TransactionOutput, UtxoSet};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -163,7 +163,7 @@ fuzz_target!(|data: &[u8]| {
         };
 
         // Build UTXO set
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         utxo_set.insert(
             OutPoint {
                 hash,

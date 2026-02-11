@@ -288,11 +288,11 @@ mod tests {
         // Generate proof
         let proof = tree.generate_proof(&outpoint).unwrap();
         
-        // Serialize proof
-        let proof_bytes = bincode::serialize(&proof).unwrap();
-        
+        // Serialize proof (custom wire format)
+        let proof_bytes = UtxoMerkleTree::serialize_proof_for_wire(proof).unwrap();
+
         // Deserialize proof
-        let proof_deserialized: sparse_merkle_tree::MerkleProof = bincode::deserialize(&proof_bytes).unwrap();
+        let proof_deserialized = UtxoMerkleTree::deserialize_proof_from_wire(&proof_bytes).unwrap();
         
         // Verify deserialized proof still works
         let is_valid = UtxoMerkleTree::verify_utxo_proof(

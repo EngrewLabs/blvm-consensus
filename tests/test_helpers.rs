@@ -111,7 +111,7 @@ pub fn create_coinbase_tx(value: i64) -> Transaction {
 ///
 /// Returns (UtxoSet, OutPoint) for the created UTXO
 pub fn create_test_utxo(value: i64) -> (UtxoSet, OutPoint) {
-    let mut set = UtxoSet::new();
+    let mut set = UtxoSet::default();
     let txid = [1u8; 32];
     let op = OutPoint {
         hash: txid,

@@ -32,7 +32,7 @@ fn test_bip65_cltv_compliance_basic() {
         lock_time: 500000, // >= required
     };
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -90,7 +90,7 @@ fn test_bip112_csv_compliance_basic() {
         lock_time: 0,
     };
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -173,7 +173,7 @@ fn test_bip65_cltv_type_mismatch_rejection() {
         lock_time: 400000, // Block height (< threshold)
     };
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -230,7 +230,7 @@ fn test_bip112_csv_disabled_sequence_rejection() {
         lock_time: 0,
     };
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {

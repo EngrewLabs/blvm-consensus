@@ -15,7 +15,7 @@ fn test_cltv_block_height_validation_passes() {
     
     let tx = create_cltv_transaction(block_height, required_locktime, vec![0x51]); // OP_1
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -42,7 +42,7 @@ fn test_cltv_block_height_type_mismatch_fails() {
     
     let tx = create_cltv_transaction(tx_locktime, required_locktime, vec![0x51]);
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -67,7 +67,7 @@ fn test_cltv_timestamp_type_mismatch_fails() {
     
     let tx = create_cltv_transaction(tx_locktime, required_locktime, vec![0x51]);
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -92,7 +92,7 @@ fn test_cltv_zero_locktime_fails() {
     
     let tx = create_cltv_transaction(tx_locktime, required_locktime, vec![0x51]);
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -117,7 +117,7 @@ fn test_cltv_insufficient_locktime_fails() {
     
     let tx = create_cltv_transaction(tx_locktime, required_locktime, vec![0x51]);
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -141,7 +141,7 @@ fn test_cltv_exact_locktime_passes() {
     
     let tx = create_cltv_transaction(locktime, locktime, vec![0x51]);
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -166,7 +166,7 @@ fn test_cltv_timestamp_validation() {
     
     let tx = create_cltv_transaction(tx_locktime, required_locktime, vec![0x51]);
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -192,7 +192,7 @@ fn test_cltv_boundary_block_height() {
     
     let tx = create_cltv_transaction(tx_locktime, required_locktime, vec![0x51]);
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -216,7 +216,7 @@ fn test_cltv_boundary_timestamp() {
     
     let tx = create_cltv_transaction(tx_locktime, required_locktime, vec![0x51]);
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -249,7 +249,7 @@ fn test_cltv_empty_stack_fails() {
         lock_time: 400000,
     };
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -286,7 +286,7 @@ fn test_cltv_invalid_encoding_fails() {
         lock_time: 400000,
     };
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -311,7 +311,7 @@ fn test_cltv_max_u32_value() {
     
     let tx = create_cltv_transaction(tx_locktime, required_locktime, vec![0x51]);
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -357,7 +357,7 @@ fn test_cltv_multiple_inputs_context() {
         lock_time: 500000,
     };
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -419,7 +419,7 @@ fn test_cltv_in_script_pubkey() {
         lock_time: 500000, // >= required_locktime
     };
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {

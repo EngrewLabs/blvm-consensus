@@ -183,7 +183,9 @@ pub type UtxoCommitmentResult<T> = Result<T, UtxoCommitmentError>;
 /// - from_bytes(to_bytes(commitment)) = commitment (round-trip)
 /// - verify_supply(expected) = true ⟺ commitment.total_supply = expected
 ///
-// Invariants:
-// - Serialization is deterministic and reversible
+/// Invariants:
+/// - Serialization is deterministic and reversible
+#[doc(hidden)]
+const _UTXO_COMMITMENT_SPEC: () = ();
 
 // End of module

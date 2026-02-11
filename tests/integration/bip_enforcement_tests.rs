@@ -39,7 +39,7 @@ fn test_connect_block_rejects_bip30_violation() {
     let txid = calculate_tx_id(&coinbase_tx);
     
     // Create UTXO set with a UTXO from this coinbase (simulating duplicate)
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: txid, index: 0 },
         UTXO {
@@ -126,7 +126,7 @@ fn test_connect_block_rejects_bip34_violation() {
     };
     
     let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     
     // connect_block MUST reject this block due to BIP34 violation
     let result = connect_block(&block, &witnesses, utxo_set, height, None, 0u64, types::Network::Mainnet);
@@ -188,7 +188,7 @@ fn test_connect_block_allows_bip34_before_activation() {
     };
     
     let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     
     // connect_block should allow this block (BIP34 not active yet)
     // Note: Block may still be invalid for other reasons (PoW, etc.), but BIP34 shouldn't reject it
@@ -244,7 +244,7 @@ fn test_connect_block_rejects_bip90_violation() {
     };
     
     let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     
     // connect_block MUST reject this block due to BIP90 violation
     let result = connect_block(&block, &witnesses, utxo_set, height, None, 0u64, types::Network::Mainnet);
@@ -306,7 +306,7 @@ fn test_connect_block_allows_bip90_valid_version() {
     };
     
     let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     
     // connect_block should allow this block (BIP90 satisfied)
     // Note: Block may still be invalid for other reasons (PoW, etc.), but BIP90 shouldn't reject it
@@ -350,7 +350,7 @@ fn test_connect_block_multiple_bip_violations() {
     let txid = calculate_tx_id(&coinbase_tx);
     
     // Add UTXO to simulate duplicate coinbase (violates BIP30)
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: txid, index: 0 },
         UTXO {
@@ -442,7 +442,7 @@ fn test_bip_check_order() {
     };
     
     let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     
     let result = connect_block(&block, &witnesses, utxo_set, height, None, 0u64, types::Network::Mainnet);
     

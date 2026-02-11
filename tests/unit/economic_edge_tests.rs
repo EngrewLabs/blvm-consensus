@@ -9,7 +9,7 @@ use test_helpers::{create_tx_with_value, create_coinbase_tx, create_test_utxo};
 fn test_calculate_fee_coinbase() {
     let coinbase_tx = create_coinbase_tx(50_000_000_000);
     
-    let utxo = UtxoSet::new();
+    let utxo = UtxoSet::default();
     let fee = economic::calculate_fee(&coinbase_tx, &utxo);
     
     // Coinbase transactions should have zero fee
@@ -20,7 +20,7 @@ fn test_calculate_fee_coinbase() {
 #[test]
 fn test_calculate_fee_negative() {
     let tx = create_tx_with_value(1000);
-    let mut utxo = UtxoSet::new();
+    let mut utxo = UtxoSet::default();
     
     // Create UTXO with less value than transaction output
     utxo.insert(

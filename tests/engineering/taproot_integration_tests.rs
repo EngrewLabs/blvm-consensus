@@ -269,7 +269,7 @@ fn test_taproot_key_path_spending() {
         lock_time: 0,
     };
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {

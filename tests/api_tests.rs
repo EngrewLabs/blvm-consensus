@@ -87,7 +87,7 @@ fn test_validate_tx_inputs() {
         lock_time: 0,
     };
 
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     let outpoint = OutPoint {
         hash: [1; 32],
         index: 0,
@@ -144,7 +144,7 @@ fn test_validate_block() {
         transactions: vec![coinbase_tx].into_boxed_slice(),
     };
 
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let witnesses: Vec<Vec<blvm_consensus::segwit::Witness>> =
         block.transactions.iter().map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect()).collect();
     let time_context = None;
@@ -331,7 +331,7 @@ fn test_accept_to_memory_pool() {
         lock_time: 0,
     };
 
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let mempool = Mempool::new();
     let time_context = None; // No time context for this test
 
@@ -420,7 +420,7 @@ fn test_replacement_checks() {
         lock_time: 0,
     };
 
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     // Add UTXO for the input (needed for fee calculation)
     let outpoint = OutPoint {
         hash: [1; 32],
@@ -446,7 +446,7 @@ fn test_replacement_checks() {
 fn test_create_new_block() {
     let consensus = ConsensusProof::new();
 
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let mempool_txs = vec![];
     let prev_header = BlockHeader {
         version: 1,
@@ -519,7 +519,7 @@ fn test_mine_block() {
 fn test_create_block_template() {
     let consensus = ConsensusProof::new();
 
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let mempool_txs = vec![];
     let prev_header = BlockHeader {
         version: 1,
@@ -604,7 +604,7 @@ fn test_reorganize_chain() {
         transactions: vec![coinbase_tx].into_boxed_slice(),
     }];
 
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let result = consensus.reorganize_chain(&new_chain, &current_chain, utxo_set, 1, blvm_consensus::types::Network::Regtest);
 
     // This might fail due to simplified validation, which is expected

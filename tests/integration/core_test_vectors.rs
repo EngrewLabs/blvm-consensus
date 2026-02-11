@@ -189,7 +189,7 @@ fn test_block_vectors_if_available() {
         return;
     }
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     let mut height = 0u64;
     
     // Test each vector

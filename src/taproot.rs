@@ -413,8 +413,9 @@ mod tests {
             value: 2000,
             script_pubkey: create_taproot_script(&[1u8; 32]),
         }];
-
-        let sig_hash = compute_taproot_signature_hash(&tx, 0, &prevouts, 0x01).unwrap();
+        let pv: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
+        let psp: Vec<&ByteString> = prevouts.iter().map(|p| &p.script_pubkey).collect();
+        let sig_hash = compute_taproot_signature_hash(&tx, 0, &pv, &psp, 0x01).unwrap();
         assert_eq!(sig_hash.len(), 32);
     }
 
@@ -443,9 +444,10 @@ mod tests {
             value: 2000,
             script_pubkey: create_taproot_script(&[1u8; 32]),
         }];
-
+        let pv: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
+        let psp: Vec<&ByteString> = prevouts.iter().map(|p| &p.script_pubkey).collect();
         // Use invalid input index (out of bounds)
-        let sig_hash = compute_taproot_signature_hash(&tx, 1, &prevouts, 0x01).unwrap();
+        let sig_hash = compute_taproot_signature_hash(&tx, 1, &pv, &psp, 0x01).unwrap();
         assert_eq!(sig_hash.len(), 32);
     }
 
@@ -470,9 +472,10 @@ mod tests {
             lock_time: 0,
         };
 
-        let prevouts = vec![];
-
-        let sig_hash = compute_taproot_signature_hash(&tx, 0, &prevouts, 0x01).unwrap();
+        let prevouts: Vec<TransactionOutput> = vec![];
+        let pv: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
+        let psp: Vec<&ByteString> = prevouts.iter().map(|p| &p.script_pubkey).collect();
+        let sig_hash = compute_taproot_signature_hash(&tx, 0, &pv, &psp, 0x01).unwrap();
         assert_eq!(sig_hash.len(), 32);
     }
 

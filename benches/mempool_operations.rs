@@ -1,7 +1,7 @@
-use bllvm_consensus::mempool::{
+use blvm_consensus::mempool::{
     accept_to_memory_pool, is_standard_tx, replacement_checks, Mempool,
 };
-use bllvm_consensus::{OutPoint, Transaction, TransactionInput, TransactionOutput, UtxoSet};
+use blvm_consensus::{OutPoint, Transaction, TransactionInput, TransactionOutput, UtxoSet};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::collections::HashSet;
 
@@ -55,7 +55,7 @@ fn create_complex_transaction(input_count: usize, output_count: usize) -> Transa
 
 fn benchmark_mempool_acceptance(c: &mut Criterion) {
     let tx = create_test_transaction();
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let mempool: Mempool = HashSet::new();
 
     c.bench_function("accept_to_memory_pool_simple", |b| {
@@ -74,7 +74,7 @@ fn benchmark_mempool_acceptance(c: &mut Criterion) {
 
 fn benchmark_mempool_acceptance_complex(c: &mut Criterion) {
     let tx = create_complex_transaction(5, 3);
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let mempool: Mempool = HashSet::new();
 
     c.bench_function("accept_to_memory_pool_complex", |b| {
@@ -107,7 +107,7 @@ fn benchmark_replacement_checks(c: &mut Criterion) {
     existing_tx.inputs[0].sequence = 0xfffffffe; // RBF
 
     let mempool: Mempool = HashSet::new();
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
 
     c.bench_function("replacement_checks", |b| {
         b.iter(|| {

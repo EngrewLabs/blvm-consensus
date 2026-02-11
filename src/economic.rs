@@ -260,7 +260,7 @@ mod property_tests {
             tx in proptest::collection::vec(any::<Transaction>(), 1..=1)
         ) {
             if let Some(tx) = tx.first() {
-                let utxo_set = UtxoSet::new();
+                let utxo_set = UtxoSet::default();
 
                 if is_coinbase(tx) {
                     let fee = calculate_fee(tx, &utxo_set).unwrap_or(-1);
@@ -342,7 +342,7 @@ mod tests {
             lock_time: 0,
         };
 
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         assert_eq!(calculate_fee(&coinbase_tx, &utxo_set).unwrap(), 0);
     }
 
@@ -426,7 +426,7 @@ mod tests {
 
     #[test]
     fn test_calculate_fee_regular_transaction() {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
 
         // Add UTXO to the set
         let outpoint = OutPoint {
@@ -466,7 +466,7 @@ mod tests {
 
     #[test]
     fn test_calculate_fee_multiple_inputs_outputs() {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
 
         // Add two UTXOs
         let outpoint1 = OutPoint {
@@ -534,7 +534,7 @@ mod tests {
 
     #[test]
     fn test_calculate_fee_missing_utxo() {
-        let utxo_set = UtxoSet::new(); // Empty UTXO set
+        let utxo_set = UtxoSet::default(); // Empty UTXO set
 
         let tx = Transaction {
             version: 1,
@@ -563,7 +563,7 @@ mod tests {
 
     #[test]
     fn test_calculate_fee_negative_fee() {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
 
         // Add UTXO with value less than output
         let outpoint = OutPoint {

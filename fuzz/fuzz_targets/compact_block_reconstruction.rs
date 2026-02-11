@@ -76,7 +76,7 @@ fuzz_target!(|data: &[u8]| {
         }],
     };
 
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
 
     // Test block connection - should never panic
     // This exercises the same code paths that compact blocks use

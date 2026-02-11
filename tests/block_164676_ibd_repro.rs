@@ -1,0 +1,79 @@
+//! Reproduce block 164676 validation using dumped IBD failure data.
+//!
+//! When IBD fails at a block, the node dumps block.bin, witnesses.bin, utxo_set.bin to
+//! `$BLVM_IBD_FAILURE_DUMP_DIR/height_{height}/` (default /tmp/blvm_ibd_failure).
+//! This test loads that data and runs connect_block_ibd so we can fix the ECDSA batch
+//! issue without running full IBD.
+//!
+//! Run with: `cargo test --test block_164676_ibd_repro -- --ignored` (or run without
+//! --ignored if the dump is present and you want it to run in CI).
+//! Set BLVM_IBD_FAILURE_DUMP_DIR to point at the dump root if not using default.
+
+use blvm_consensus::block::connect_block_ibd;
+use blvm_consensus::types::{Block, Network, UtxoSet};
+use blvm_consensus::segwit::Witness;
+use blvm_consensus::ValidationResult;
+use std::path::Path;
+
+const DEFAULT_DUMP_DIR: &str = "/tmp/blvm_ibd_failure";
+/// Backup in repo so it survives cleanup; used when BLVM_IBD_FAILURE_DUMP_DIR is not set.
+const REPO_DUMP_SUBDIR: &str = "tests/test_data/ibd_failure_height_164676";
+const HEIGHT: u64 = 164676;
+
+fn dump_dir() -> std::path::PathBuf {
+    if let Ok(d) = std::env::var("BLVM_IBD_FAILURE_DUMP_DIR") {
+        return std::path::PathBuf::from(d).join(format!("height_{}", HEIGHT));
+    }
+    // Prefer repo backup (survives /tmp cleanup)
+    let repo = std::path::PathBuf::from(REPO_DUMP_SUBDIR);
+    if repo.join("block.bin").exists() {
+        return repo;
+    }
+    std::path::PathBuf::from(DEFAULT_DUMP_DIR).join(format!("height_{}", HEIGHT))
+}
+
+fn load_dump(dir: &Path) -> Result<(Block, Vec<Vec<Witness>>, UtxoSet), Box<dyn std::error::Error + Send + Sync>> {
+    let block_path = dir.join("block.bin");
+    let witnesses_path = dir.join("witnesses.bin");
+    let utxo_path = dir.join("utxo_set.bin");
+
+    let block: Block = bincode::deserialize_from(std::io::BufReader::new(std::fs::File::open(&block_path)?))?;
+    let witnesses: Vec<Vec<Witness>> = bincode::deserialize_from(std::io::BufReader::new(std::fs::File::open(&witnesses_path)?))?;
+    let utxo_set: UtxoSet = bincode::deserialize_from(std::io::BufReader::new(std::fs::File::open(&utxo_path)?))?;
+
+    Ok((block, witnesses, utxo_set))
+}
+
+#[test]
+#[ignore = "Slow: loads ~113MB UTXO set; run with --ignored when iterating on ECDSA fix"]
+fn block_164676_connect_block_ibd_repro() {
+    let dir = dump_dir();
+    if !dir.join("block.bin").exists() {
+        eprintln!("Skip: dump not found at {} (set BLVM_IBD_FAILURE_DUMP_DIR or use repo tests/test_data/ibd_failure_height_164676)", dir.display());
+        return;
+    }
+
+    let (block, mut witnesses, utxo_set) = load_dump(&dir).expect("load dump");
+    // Pre-SegWit block 164676: signatures are in scriptSig. If dump has no witnesses, use one empty witness per input.
+    if witnesses.len() != block.transactions.len() {
+        witnesses = block
+            .transactions
+            .iter()
+            .map(|tx| (0..tx.inputs.len()).map(|_| Vec::new()).collect())
+            .collect();
+    }
+    let (result, _new_utxo_set, _tx_ids) = connect_block_ibd(
+        &block,
+        &witnesses,
+        utxo_set,
+        HEIGHT,
+        None,
+        0u64,
+        Network::Mainnet,
+    ).expect("connect_block_ibd");
+
+    match result {
+        ValidationResult::Valid => {}
+        ValidationResult::Invalid(reason) => panic!("Block {} should be valid: {}", HEIGHT, reason),
+    }
+}

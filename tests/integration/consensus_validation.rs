@@ -66,7 +66,7 @@ fn test_consensus_proof_utxo_validation() {
         lock_time: 0,
     };
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     let outpoint = OutPoint { hash: [1; 32], index: 0 };
     let utxo = UTXO {
         value: 2000,
@@ -97,7 +97,7 @@ fn test_consensus_proof_insufficient_funds() {
         lock_time: 0,
     };
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     let outpoint = OutPoint { hash: [1; 32], index: 0 };
     let utxo = UTXO {
         value: 1000, // Less than needed
@@ -156,7 +156,7 @@ fn test_consensus_proof_block_validation() {
         }],
     };
     
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let witnesses: Vec<blvm_consensus::segwit::Witness> =
         block.transactions.iter().map(|_| Vec::new()).collect();
     let time_context = None;

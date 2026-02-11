@@ -171,7 +171,7 @@ fuzz_target!(|data: &[u8]| {
     };
 
     // Test mempool operations - should never panic
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let mempool: Mempool = HashSet::new();
 
     // Test accept_to_memory_pool

@@ -38,7 +38,7 @@ fn test_block_validation_errors() {
         transactions: vec![].into_boxed_slice(),
     };
 
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let result = consensus.validate_block(&invalid_block, utxo_set, 0);
     // This might fail due to invalid header, which is expected
     match result {
@@ -136,7 +136,7 @@ fn test_reorganization_errors() {
     // Test reorganization with empty chains
     let new_chain = vec![];
     let current_chain = vec![];
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
 
     let result = consensus.reorganize_chain(&new_chain, &current_chain, utxo_set, 0, blvm_consensus::types::Network::Regtest);
     assert!(result.is_err());

@@ -1,6 +1,6 @@
 #![no_main]
-use bllvm_consensus::reorganization::reorganize_chain;
-use bllvm_consensus::{Block, BlockHeader, UtxoSet};
+use blvm_consensus::reorganization::reorganize_chain;
+use blvm_consensus::{Block, BlockHeader, UtxoSet};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -58,17 +58,17 @@ fuzz_target!(|data: &[u8]| {
         // Create minimal block with coinbase transaction
         let block = Block {
             header,
-            transactions: vec![bllvm_consensus::Transaction {
+            transactions: vec![blvm_consensus::Transaction {
                 version: 1,
-                inputs: vec![bllvm_consensus::TransactionInput {
-                    prevout: bllvm_consensus::OutPoint {
+                inputs: vec![blvm_consensus::TransactionInput {
+                    prevout: blvm_consensus::OutPoint {
                         hash: [0; 32],
                         index: 0xffffffff,
                     },
                     script_sig: vec![0x51, 0x51], // 2 bytes for valid coinbase
                     sequence: 0xffffffff,
                 }],
-                outputs: vec![bllvm_consensus::TransactionOutput {
+                outputs: vec![blvm_consensus::TransactionOutput {
                     value: 5000000000, // 50 BTC
                     script_pubkey: vec![0x51],
                 }],
@@ -117,17 +117,17 @@ fuzz_target!(|data: &[u8]| {
 
         let block = Block {
             header,
-            transactions: vec![bllvm_consensus::Transaction {
+            transactions: vec![blvm_consensus::Transaction {
                 version: 1,
-                inputs: vec![bllvm_consensus::TransactionInput {
-                    prevout: bllvm_consensus::OutPoint {
+                inputs: vec![blvm_consensus::TransactionInput {
+                    prevout: blvm_consensus::OutPoint {
                         hash: [0; 32],
                         index: 0xffffffff,
                     },
                     script_sig: vec![0x51, 0x51],
                     sequence: 0xffffffff,
                 }],
-                outputs: vec![bllvm_consensus::TransactionOutput {
+                outputs: vec![blvm_consensus::TransactionOutput {
                     value: 5000000000,
                     script_pubkey: vec![0x51],
                 }],
@@ -141,7 +141,7 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // Test reorganization
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let current_height = current_chain.len() as u64;
 
     let _result = reorganize_chain(&new_chain, &current_chain, utxo_set, current_height, blvm_consensus::types::Network::Mainnet);

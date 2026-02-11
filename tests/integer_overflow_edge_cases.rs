@@ -108,7 +108,7 @@ fn test_output_sum_near_i64_max() {
 /// Similar to output sum, but for inputs in check_tx_inputs
 #[test]
 fn test_input_sum_overflow() {
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
 
     // Create UTXOs with large values
     let large_value = MAX_MONEY;

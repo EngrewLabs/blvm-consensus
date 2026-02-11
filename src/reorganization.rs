@@ -348,7 +348,7 @@ pub fn reorganize_chain_with_witnesses(
 /// # let new_chain = vec![];
 /// # let new_witnesses = vec![];
 /// # let current_chain = vec![];
-/// # let current_utxo_set = UtxoSet::new();
+/// # let current_utxo_set = UtxoSet::default();
 /// # let current_height = 0;
 /// # let mut mempool = Mempool::new();
 /// // Note: This is a simplified example. In practice, chains must have at least one block
@@ -1025,7 +1025,7 @@ mod tests {
 
         let new_chain = vec![ancestor.clone(), new_block];
         let current_chain = vec![ancestor];
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
 
         // current_height = 1 (tip of current_chain at height 1)
         let result = reorganize_chain(&new_chain, &current_chain, utxo_set, 1, crate::types::Network::Regtest);
@@ -1059,7 +1059,7 @@ mod tests {
         let mut current_block2 = create_test_block();
         current_block2.header.nonce = 11;
         let current_chain = vec![current_block1, current_block2];
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
 
         let result = reorganize_chain(&new_chain, &current_chain, utxo_set, 2, crate::types::Network::Regtest);
         match result {
@@ -1081,7 +1081,7 @@ mod tests {
         use crate::segwit::Witness;
 
         let block = create_test_block_at_height(1);
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
 
         // Add some UTXOs that will be spent
         let tx_id = calculate_tx_id(&block.transactions[0]);
@@ -1153,7 +1153,7 @@ mod tests {
 
         // Create a block at height 1 and connect it to get undo log
         let block = create_test_block_at_height(1);
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         let witnesses: Vec<Vec<Witness>> = block.transactions.iter().map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect()).collect();
 
         let (result, connected_utxo_set, undo_log) = connect_block(
@@ -1222,7 +1222,7 @@ mod tests {
     fn test_reorganize_chain_empty_new_chain() {
         let new_chain = vec![];
         let current_chain = vec![create_test_block()];
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
 
         let result = reorganize_chain(&new_chain, &current_chain, utxo_set, 1, crate::types::Network::Regtest);
         assert!(result.is_err());
@@ -1232,7 +1232,7 @@ mod tests {
     fn test_reorganize_chain_empty_current_chain() {
         let new_chain = vec![create_test_block()];
         let current_chain = vec![];
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
 
         let result = reorganize_chain(&new_chain, &current_chain, utxo_set, 0, crate::types::Network::Regtest);
         assert!(result.is_err());
@@ -1241,7 +1241,7 @@ mod tests {
     #[test]
     fn test_disconnect_block() {
         let block = create_test_block();
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
 
         // Add some UTXOs that will be removed
         let tx_id = calculate_tx_id(&block.transactions[0]);

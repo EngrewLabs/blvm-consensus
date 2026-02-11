@@ -1,8 +1,8 @@
 #![no_main]
-use bllvm_consensus::block::connect_block_with_context;
-use bllvm_consensus::pow::check_proof_of_work;
-use bllvm_consensus::types::{Block, BlockHeader, Hash, Network, TimeContext, Transaction, TransactionInput, TransactionOutput, UtxoSet};
-use bllvm_consensus::witness::Witness;
+use blvm_consensus::block::connect_block_with_context;
+use blvm_consensus::pow::check_proof_of_work;
+use blvm_consensus::types::{Block, BlockHeader, Hash, Network, TimeContext, Transaction, TransactionInput, TransactionOutput, UtxoSet};
+use blvm_consensus::witness::Witness;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -86,7 +86,7 @@ fuzz_target!(|data: &[u8]| {
     let coinbase_tx = Transaction {
         version: 1,
         inputs: vec![TransactionInput {
-            prevout: bllvm_consensus::types::OutPoint {
+            prevout: blvm_consensus::types::OutPoint {
                 hash: [0; 32],
                 index: 0xffffffff,
             },
@@ -118,7 +118,7 @@ fuzz_target!(|data: &[u8]| {
             };
 
             // Test block connection (which validates header internally)
-            let empty_utxo_set = UtxoSet::new();
+            let empty_utxo_set = UtxoSet::default();
             let witnesses = vec![Witness::from(vec![])];
 
             let _result = connect_block_with_context(

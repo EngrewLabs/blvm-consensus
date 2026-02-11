@@ -381,7 +381,7 @@ mod tests {
         use blvm_consensus::types::UtxoSet;
 
         // Create UtxoSet
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         let outpoint1 = OutPoint { hash: [1; 32], index: 0 };
         let utxo1 = create_test_utxo(10000, 100);
         utxo_set.insert(outpoint1.clone(), utxo1.clone());
@@ -419,14 +419,14 @@ mod tests {
         let initial_supply = tree.total_supply();
 
         // Create new UtxoSet (removed outpoint1, added outpoint3)
-        let mut new_utxo_set = UtxoSet::new();
+        let mut new_utxo_set = UtxoSet::default();
         let outpoint3 = OutPoint { hash: [3; 32], index: 0 };
         let utxo3 = create_test_utxo(8000, 101);
         new_utxo_set.insert(outpoint2.clone(), utxo2.clone()); // Kept
         new_utxo_set.insert(outpoint3.clone(), utxo3.clone()); // Added
 
         // Create old UtxoSet for comparison
-        let mut old_utxo_set = UtxoSet::new();
+        let mut old_utxo_set = UtxoSet::default();
         old_utxo_set.insert(outpoint1.clone(), utxo1.clone());
         old_utxo_set.insert(outpoint2.clone(), utxo2.clone());
 

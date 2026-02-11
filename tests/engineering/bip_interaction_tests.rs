@@ -33,7 +33,7 @@ fn test_segwit_with_cltv() {
     
     let witness = vec![vec![0x51]]; // Witness data
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -95,7 +95,7 @@ fn test_segwit_with_csv() {
     
     let witness = vec![vec![0x51]];
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -168,7 +168,7 @@ fn test_taproot_with_csv() {
         lock_time: 0,
     };
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -373,7 +373,7 @@ fn test_cltv_csv_combined() {
         lock_time: 500000, // For CLTV
     };
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {

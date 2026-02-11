@@ -30,6 +30,7 @@ use crate::segwit::{
 use crate::transaction::{check_transaction, check_tx_inputs, is_coinbase};
 use crate::types::*;
 use crate::utxo_overlay::{UtxoOverlay, apply_transaction_to_overlay, apply_transaction_to_overlay_no_undo};
+use crate::witness::is_witness_empty;
 
 // Rayon is used conditionally in the code, imported where needed
 
@@ -562,21 +563,19 @@ fn connect_block_inner(
             // NOTE: Undo entries are created in Phase 5 when applying to real UTXO set, not during validation
             
             // OPTIMIZATION #1: Pre-allocate reusable Vecs to avoid per-transaction allocations
-            // Typical max inputs per transaction is ~256, but we'll use a reasonable default
             let mut prevout_values_reusable: Vec<i64> = Vec::with_capacity(256);
-            // NOTE: prevout_script_pubkeys_reusable moved inside script verification block
-            // to ensure it goes out of scope before mutating overlay (fixes borrow checker issue)
-            
-            // OPTIMIZATION: Block-level signature collectors for maximum batching efficiency
-            // Collect ALL signatures from ALL transactions, then verify in one large batch at the end
-            // rayon is included in production feature, so just check production
+            // prevout_script_pubkeys: per-tx allocation required (refs into overlay; must not outlive overlay mutation)
+            let mut witness_stacks_reusable: Vec<Option<&Witness>> = Vec::with_capacity(256);
+            // Block-level signature collectors. Single Mutex preserves collection order (tx0_in0, tx0_in1, ...)
+            // so batch result indices match script order. Per-thread collectors broke ordering and caused
+            // false "invalid signature" at e.g. block 164676 (see docs/IBD_BATCH_SPEED_PLAN.md §11).
             #[cfg(feature = "production")]
-            use std::sync::{Arc, Mutex};
+            use std::sync::Arc;
+            // Collectors use interior Mutex (collect(&self)); no outer Mutex so parallel script verification doesn't contend.
             #[cfg(feature = "production")]
-            let block_schnorr_collector = Arc::new(Mutex::new(crate::bip348::SchnorrSignatureCollector::new()));
+            let block_schnorr_collector = Arc::new(crate::bip348::SchnorrSignatureCollector::new());
             #[cfg(feature = "production")]
-            let block_ecdsa_collector = Arc::new(Mutex::new(crate::script::EcdsaSignatureCollector::new()));
-            
+            let block_ecdsa_collector = Arc::new(crate::script::EcdsaSignatureCollector::new());
             let validation_start = std::time::Instant::now();
             let mut total_input_lookup_time = std::time::Duration::ZERO;
             let mut total_script_time = std::time::Duration::ZERO;
@@ -618,9 +617,20 @@ fn connect_block_inner(
                     }
                 }
             }
-            
+
+            // Per-input ECDSA counters for composite index (base << 16) | sub so batch sort order
+            // is deterministic under parallel script verification (see docs/IBD_BATCH_SPEED_PLAN.md §11).
+            #[cfg(feature = "production")]
+            let total_ecdsa_inputs: usize = valid_tx_indices.iter().map(|&idx| block.transactions[idx].inputs.len()).sum();
+            #[cfg(feature = "production")]
+            let ecdsa_sub_counters: Vec<std::sync::atomic::AtomicUsize> = (0..total_ecdsa_inputs)
+                .map(|_| std::sync::atomic::AtomicUsize::new(0))
+                .collect();
+            #[cfg(feature = "production")]
+            let mut ecdsa_index_base: usize = 0;
+
             // Process only valid transactions sequentially (for intra-block dependencies)
-            for i in valid_tx_indices {
+            for &i in &valid_tx_indices {
                 let tx = &block.transactions[i];
                 let tx_start = std::time::Instant::now();
 
@@ -632,10 +642,9 @@ fn connect_block_inner(
                 let (input_valid, fee, mut input_utxos) = if is_coinbase(tx) {
                     (ValidationResult::Valid, 0, Vec::new())
                 } else {
-                    // Collect all input UTXOs once
+                    // Collect all input UTXOs once (per-tx alloc required: refs into overlay; must not outlive overlay mutation)
                     let mut input_utxos: Vec<Option<&UTXO>> = Vec::with_capacity(tx.inputs.len());
                     let mut total_input: i64 = 0;
-                    
                     for (input_idx, input) in tx.inputs.iter().enumerate() {
                         match overlay.get(&input.prevout) {
                             Some(utxo) => {
@@ -712,7 +721,6 @@ fn connect_block_inner(
                     if fee < 0 {
                         (ValidationResult::Invalid("Negative fee".into()), 0, Vec::new())
                     } else {
-                        // Pass pre-collected UTXOs to avoid redundant lookups
                         let (input_valid, _) = crate::transaction::check_tx_inputs_with_utxos(
                             tx, &overlay, height, Some(&input_utxos)
                         )?;
@@ -736,24 +744,18 @@ fn connect_block_inner(
                 // Verify scripts for non-coinbase transactions (read-only operations)
                 // Phase 4.1: Skip signature verification if assume-valid
                 // CRITICAL: Use overlay (includes outputs from previous transactions in this block)
-                // Wrap in block to ensure input_utxos and its references go out of scope before mutating overlay
+                // Wrap in block so input_utxos (and prevout_script_pubkeys) refs go out of scope before mutating overlay
                 let script_start = std::time::Instant::now();
                 let script_valid = {
                     let script_valid_result = if is_coinbase(tx) || skip_signatures {
                         true
                     } else {
-                        // OPTIMIZATION #1: Reuse pre-allocated Vecs instead of allocating per transaction
-                        // Clear and resize as needed (cheaper than reallocating)
-                        // OPTIMIZATION #2: Move prevout_script_pubkeys_reusable inside block so it goes out of scope
-                        // before mutating overlay (fixes borrow checker issue)
+                        // OPTIMIZATION #1: Reuse prevout_values; prevout_script_pubkeys per-tx (refs into overlay)
                         prevout_values_reusable.clear();
                         let mut prevout_script_pubkeys_reusable: Vec<&ByteString> = Vec::with_capacity(input_utxos.len().max(256));
-                        
                         if prevout_values_reusable.capacity() < input_utxos.len() {
                             prevout_values_reusable.reserve(input_utxos.len() - prevout_values_reusable.capacity());
                         }
-                        
-                        // Populate reusable Vecs
                         for opt_utxo in &input_utxos {
                             prevout_values_reusable.push(opt_utxo.map(|utxo| utxo.value).unwrap_or(0));
                         }
@@ -772,36 +774,23 @@ fn connect_block_inner(
                                 .filter(|&mtp| mtp > 0);
                             // Cache witness lookup once per transaction
                             let tx_witnesses: Option<&Vec<Witness>> = witnesses.get(i);
-                            // Check if transaction has witness data (optimization: just check presence, no flattening)
-                            let has_witness = tx_witnesses.map(|w: &Vec<Witness>| !w.is_empty()).unwrap_or(false);
+                            // Has real witness data (any non-empty witness) — so we enable SCRIPT_VERIFY_WITNESS and BIP143 only for SegWit txs
+                            let has_witness = tx_witnesses.map(|w: &Vec<Witness>| w.iter().any(|wit| !is_witness_empty(wit))).unwrap_or(false);
                             let flags = calculate_script_flags_for_block(tx, has_witness, height, network);
                             
-                            // OPTIMIZATION #8: Pre-extract all witness stacks in parallel to avoid repeated .get() calls
-                            // This eliminates the .and_then(|w| w.get(j)) overhead inside the parallel iteration
-                            let witness_stacks: Vec<Option<&Witness>> = {
-                                #[cfg(feature = "rayon")]
-                                {
-                                    if let Some(tx_wits) = tx_witnesses {
-                                        use rayon::prelude::*;
-                                        (0..tx.inputs.len())
-                                            .into_par_iter()
-                                            .map(|j| tx_wits.get(j))
-                                            .collect()
-                                    } else {
-                                        vec![None; tx.inputs.len()]
-                                    }
+                            // OPTIMIZATION #8: Reuse block-level vec for witness stacks (no per-tx alloc)
+                            witness_stacks_reusable.clear();
+                            witness_stacks_reusable.reserve(tx.inputs.len());
+                            if let Some(tx_wits) = tx_witnesses {
+                                for j in 0..tx.inputs.len() {
+                                    witness_stacks_reusable.push(tx_wits.get(j));
                                 }
-                                #[cfg(not(feature = "rayon"))]
-                                {
-                                    if let Some(tx_wits) = tx_witnesses {
-                                        (0..tx.inputs.len())
-                                            .map(|j| tx_wits.get(j))
-                                            .collect()
-                                    } else {
-                                        vec![None; tx.inputs.len()]
-                                    }
+                            } else {
+                                for _ in 0..tx.inputs.len() {
+                                    witness_stacks_reusable.push(None);
                                 }
-                            };
+                            }
+                            let witness_stacks = &witness_stacks_reusable;
                             
                             // OPTIMIZATION: Precompute BIP143 hashes once per transaction for SegWit transactions
                             // This avoids redundant computation of hashPrevouts, hashSequence, hashOutputs
@@ -817,55 +806,57 @@ fn connect_block_inner(
                                 None
                             };
                             
-                            // OPTIMIZATION: Use block-level collectors for maximum batching efficiency
-                            // All signatures from all transactions are collected, then verified in one batch at block end
-                            // This allows batching across ALL transactions, not just per transaction
-                            #[cfg(all(feature = "production", feature = "rayon"))]
+                            #[cfg(feature = "production")]
                             let schnorr_collector = block_schnorr_collector.clone();
-                            #[cfg(all(feature = "production", feature = "rayon"))]
+                            #[cfg(feature = "production")]
                             let ecdsa_collector = block_ecdsa_collector.clone();
+                            #[cfg(not(feature = "production"))]
+                            let schnorr_collector = Arc::new(crate::bip348::SchnorrSignatureCollector::new());
+                            #[cfg(not(feature = "production"))]
+                            let ecdsa_collector = Arc::new(crate::script::EcdsaSignatureCollector::new());
                             
-                            // For non-production or non-rayon, create per-transaction collectors
-                            #[cfg(not(all(feature = "production", feature = "rayon")))]
-                            let schnorr_collector = Arc::new(Mutex::new(crate::bip348::SchnorrSignatureCollector::new()));
-                            #[cfg(not(all(feature = "production", feature = "rayon")))]
-                            let ecdsa_collector = Arc::new(Mutex::new(crate::script::EcdsaSignatureCollector::new()));
-                            
-                            // Verify all inputs in parallel, collecting signatures for batch verification
-                            let script_results: Vec<bool> = input_utxos.par_iter().enumerate().map(|(j, opt_utxo)| {
-                                if let Some(utxo) = opt_utxo {
-                                    let script_pubkey = &utxo.script_pubkey;
-                                    let input = &tx.inputs[j];
-                                    let witness_elem = witness_stacks.get(j).copied().flatten();
-                                    
-                                    // Verify script and collect signatures for batch verification
-                                    verify_script_with_context_full(
-                                        &input.script_sig,
-                                        script_pubkey,
-                                        witness_elem,
-                                        flags,
-                                        tx,
-                                        j,
-                                        &prevout_values_reusable,
-                                        &prevout_script_pubkeys_reusable,
-                                        Some(height),
-                                        median_time_past,
-                                        network,
-                                        crate::script::SigVersion::Base,
-                                        #[cfg(feature = "production")] {
-                                            // Thread-safe signature collection
-                                            Some(&mut *schnorr_collector.lock().unwrap())
-                                        },
-                                        #[cfg(feature = "production")] {
-                                            Some(&mut *ecdsa_collector.lock().unwrap())
-                                        },
-                                        #[cfg(not(feature = "production"))] None,
-                                        #[cfg(not(feature = "production"))] None,
-                                    ).unwrap_or(false)
-                                } else {
-                                    false
-                                }
-                            }).collect();
+                            // ECDSA: composite index (base << 16) | sub so batch result order is correct under par_iter.
+                            let base = ecdsa_index_base;
+                            let counters = &ecdsa_sub_counters[..];
+                            let script_results: Vec<bool> = input_utxos
+                                .par_iter()
+                                .enumerate()
+                                .map(|(j, opt_utxo)| {
+                                    if let Some(utxo) = opt_utxo {
+                                        let script_pubkey = &utxo.script_pubkey;
+                                        let input = &tx.inputs[j];
+                                        let witness_elem = witness_stacks.get(j).copied().flatten();
+                                        let witness_for_script = witness_elem.and_then(|w| if is_witness_empty(w) { None } else { Some(w) });
+                                        let idx_base = base + j;
+                                        #[cfg(feature = "production")]
+                                        let ecdsa_key = Some((idx_base, &counters[idx_base]));
+                                        #[cfg(not(feature = "production"))]
+                                        let ecdsa_key = None;
+                                        verify_script_with_context_full(
+                                            &input.script_sig,
+                                            script_pubkey,
+                                            witness_for_script,
+                                            flags,
+                                            tx,
+                                            j,
+                                            &prevout_values_reusable,
+                                            &prevout_script_pubkeys_reusable,
+                                            Some(height),
+                                            median_time_past,
+                                            network,
+                                            crate::script::SigVersion::Base,
+                                            #[cfg(feature = "production")] Some(&*schnorr_collector),
+                                            #[cfg(feature = "production")] Some(&*ecdsa_collector),
+                                            #[cfg(not(feature = "production"))] None,
+                                            #[cfg(not(feature = "production"))] None,
+                                            #[cfg(feature = "production")] ecdsa_key,
+                                            #[cfg(not(feature = "production"))] None,
+                                        ).unwrap_or(false)
+                                    } else {
+                                        false
+                                    }
+                                })
+                                .collect();
                             
                             // OPTIMIZATION: For block-level batching, defer verification to block end
                             // For per-transaction batching, verify immediately
@@ -875,9 +866,8 @@ fn connect_block_inner(
                             let batch_valid = {
                                 // Per-transaction batch verification (fallback)
                                 let mut valid = true;
-                                let schnorr = schnorr_collector.lock().unwrap();
-                                if !schnorr.is_empty() {
-                                    match schnorr.verify_batch() {
+                                if !schnorr_collector.is_empty() {
+                                    match schnorr_collector.verify_batch() {
                                         Ok(batch_results) => {
                                             let invalid_count = batch_results.iter().filter(|&&v| !v).count();
                                             if invalid_count > 0 {
@@ -889,11 +879,8 @@ fn connect_block_inner(
                                         }
                                     }
                                 }
-                                drop(schnorr);
-                                
-                                let ecdsa = ecdsa_collector.lock().unwrap();
-                                if !ecdsa.is_empty() {
-                                    match ecdsa.verify_batch() {
+                                if !ecdsa_collector.is_empty() {
+                                    match ecdsa_collector.verify_batch() {
                                         Ok(batch_results) => {
                                             let invalid_count = batch_results.iter().filter(|&&v| !v).count();
                                             if invalid_count > 0 {
@@ -916,8 +903,7 @@ fn connect_block_inner(
                         let all_valid = {
                             // Cache witness lookup once per transaction
                             let tx_witnesses = witnesses.get(i);
-                            // Calculate flags once outside loop (optimization)
-                            let has_witness = tx_witnesses.map(|w| !w.is_empty()).unwrap_or(false);
+                            let has_witness = tx_witnesses.map(|w| w.iter().any(|wit| !is_witness_empty(wit))).unwrap_or(false);
                             let flags = calculate_script_flags_for_block(tx, has_witness, height, network);
                             let median_time_past = time_context
                                 .map(|ctx| ctx.median_time_past)
@@ -928,11 +914,12 @@ fn connect_block_inner(
                                     let script_pubkey = &utxo.script_pubkey;
                                     let input = &tx.inputs[j];
                                     let witness_elem = tx_witnesses.and_then(|w| w.get(j));
+                                    let witness_for_script = witness_elem.and_then(|w| if is_witness_empty(w) { None } else { Some(w) });
 
                                     if !verify_script_with_context_full(
                                         &input.script_sig,
                                         script_pubkey,
-                                        witness_elem,
+                                        witness_for_script,
                                         flags,
                                         tx,
                                         j,
@@ -942,7 +929,9 @@ fn connect_block_inner(
                                         median_time_past,
                                         network,
                                         crate::script::SigVersion::Base,
-                                        #[cfg(all(feature = "production", feature = "csfs"))] None, // Non-production path: no collector
+                                        #[cfg(feature = "production")] None,
+                                        #[cfg(feature = "production")] None,
+                                        #[cfg(feature = "production")] None,
                                     ).unwrap_or(false) {
                                         valid = false;
                                         break;
@@ -959,17 +948,18 @@ fn connect_block_inner(
                         prevout_values_reusable.clear();
                         all_valid
                     };
-                    // input_utxos and prevout_script_pubkeys_reusable go out of scope here,
-                    // releasing all references to overlay before we mutate it
+                    // input_utxos and prevout_script_pubkeys_reusable go out of scope here, releasing overlay refs
                     script_valid_result
                 };
                 total_script_time += script_start.elapsed();
+                #[cfg(feature = "production")]
+                {
+                    ecdsa_index_base += tx.inputs.len();
+                }
 
                 // CRITICAL: Apply this transaction to overlay so next transaction can see its outputs
                 // OPTIMIZATION #2: Use apply_transaction_to_overlay_no_undo during validation
                 // Undo entries are discarded (lines 806-809) and rebuilt in Phase 5 (line 1518)
-                // This eliminates unnecessary cloning of OutPoint and UTXO data
-                // Use pre-computed tx_id from batch computation
                 let tx_id = tx_ids[i];
                 apply_transaction_to_overlay_no_undo(&mut overlay, tx, tx_id, height);
                 // Note: Undo entries are created later in Phase 5 when applying to real UTXO set
@@ -1016,90 +1006,121 @@ fn connect_block_inner(
                     .checked_add(fee)
                     .ok_or_else(|| make_fee_overflow_error(Some(i)))?;
             }
-            // CRITICAL: Log profiling BEFORE batch verification (which might return early)
+            // Total time so far (script + structure + overlay); batch verification runs next and is NOT included yet.
             let validation_elapsed = validation_start.elapsed();
             let total_inputs: usize = block.transactions.iter().filter(|tx| !is_coinbase(tx)).map(|tx| tx.inputs.len()).sum();
-            eprintln!("[PERF] Block {}: total={:?}, structure={:?}, input_lookup={:?}, check_inputs={:?}, script={:?}, overlay_apply={:?}, txs={}, inputs={}", 
-                height, 
-                validation_elapsed, 
-                total_tx_structure_time,
-                total_input_lookup_time, 
-                total_check_tx_inputs_time,
-                total_script_time,
-                total_overlay_apply_time,
-                block.transactions.len(),
-                total_inputs
-            );
-            
-            // OPTIMIZATION: Batch verify ALL signatures from ALL transactions in one large batch
-            // This maximizes the efficiency of batch verification (2-3x speedup)
-            // rayon is included in production, so just check production
+            #[cfg(feature = "production")]
+            {
+                let (p2pkh, p2sh, p2wpkh, p2wsh, interp) = crate::script::get_and_reset_fast_path_counts();
+                let total = p2pkh + p2sh + p2wpkh + p2wsh + interp;
+                if total > 0 {
+                    let pct = |n: u64| (100.0 * n as f64 / total as f64).round() as u32;
+                    eprintln!(
+                        "[FAST_PATH] Block {}: p2pkh={}% p2sh={}% p2wpkh={}% p2wsh={}% interpreter={}% (n={})",
+                        height, pct(p2pkh), pct(p2sh), pct(p2wpkh), pct(p2wsh), pct(interp), total
+                    );
+                }
+            }
+            // OPTIMIZATION: Batch verify ALL signatures; run Schnorr and ECDSA in parallel
             #[cfg(feature = "production")]
             {
                 let batch_start = std::time::Instant::now();
-                let schnorr = block_schnorr_collector.lock().unwrap();
-                if !schnorr.is_empty() {
-                    match schnorr.verify_batch() {
-                        Ok(batch_results) => {
-                            let invalid_count = batch_results.iter().filter(|&&v| !v).count();
-                            if invalid_count > 0 {
-                                eprintln!("[BATCH] Block {}: {} Schnorr signatures, {} invalid", height, batch_results.len(), invalid_count);
-                                drop(schnorr);
-                                return Ok((
-                                    ValidationResult::Invalid(format!("Invalid Schnorr signature in block")),
-                                    utxo_set,
-                                    crate::reorganization::BlockUndoLog::new(),
-                                ));
-                            } else {
-                                eprintln!("[BATCH] Block {}: {} Schnorr signatures verified successfully", height, batch_results.len());
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("[BATCH] Block {}: Schnorr batch verification failed: {:?}", height, e);
-                            drop(schnorr);
-                            return Ok((
-                                ValidationResult::Invalid(format!("Schnorr batch verification failed: {:?}", e)),
-                                utxo_set,
-                                crate::reorganization::BlockUndoLog::new(),
-                            ));
-                        }
-                    }
+                let (schnorr_result, ecdsa_result) = rayon::join(
+                    || {
+                        if block_schnorr_collector.is_empty() { Ok(Vec::new()) } else { block_schnorr_collector.verify_batch() }
+                    },
+                    || {
+                        if block_ecdsa_collector.is_empty() { Ok(Vec::new()) } else { block_ecdsa_collector.verify_batch() }
+                    },
+                );
+                if let Err(e) = schnorr_result {
+                    eprintln!("[BATCH] Block {}: Schnorr batch verification failed: {:?}", height, e);
+                    return Ok((
+                        ValidationResult::Invalid(format!("Schnorr batch verification failed: {:?}", e)),
+                        utxo_set,
+                        crate::reorganization::BlockUndoLog::new(),
+                    ));
                 }
-                drop(schnorr);
-                
-                let ecdsa = block_ecdsa_collector.lock().unwrap();
-                if !ecdsa.is_empty() {
-                    match ecdsa.verify_batch() {
-                        Ok(batch_results) => {
-                            let invalid_count = batch_results.iter().filter(|&&v| !v).count();
-                            if invalid_count > 0 {
-                                eprintln!("[BATCH] Block {}: {} ECDSA signatures, {} invalid", height, batch_results.len(), invalid_count);
-                                drop(ecdsa);
-                                return Ok((
-                                    ValidationResult::Invalid(format!("Invalid ECDSA signature in block")),
-                                    utxo_set,
-                                    crate::reorganization::BlockUndoLog::new(),
-                                ));
-                            } else {
-                                let batch_time = batch_start.elapsed();
-                                eprintln!("[BATCH] Block {}: {} ECDSA signatures verified successfully in {:?}", height, batch_results.len(), batch_time);
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("[BATCH] Block {}: ECDSA batch verification failed: {:?}", height, e);
-                            drop(ecdsa);
-                            return Ok((
-                                ValidationResult::Invalid(format!("ECDSA batch verification failed: {:?}", e)),
-                                utxo_set,
-                                crate::reorganization::BlockUndoLog::new(),
-                            ));
-                        }
-                    }
+                let schnorr_results = schnorr_result.unwrap();
+                if schnorr_results.iter().any(|&v| !v) {
+                    let n = schnorr_results.len();
+                    let invalid = schnorr_results.iter().filter(|&&v| !v).count();
+                    eprintln!("[BATCH] Block {}: {} Schnorr signatures, {} invalid", height, n, invalid);
+                    return Ok((
+                        ValidationResult::Invalid(format!("Invalid Schnorr signature in block")),
+                        utxo_set,
+                        crate::reorganization::BlockUndoLog::new(),
+                    ));
                 }
-                drop(ecdsa);
+                if !schnorr_results.is_empty() {
+                    eprintln!("[BATCH] Block {}: {} Schnorr signatures verified successfully", height, schnorr_results.len());
+                }
+                if let Err(e) = ecdsa_result {
+                    eprintln!("[BATCH] Block {}: ECDSA batch verification failed: {:?}", height, e);
+                    return Ok((
+                        ValidationResult::Invalid(format!("ECDSA batch verification failed: {:?}", e)),
+                        utxo_set,
+                        crate::reorganization::BlockUndoLog::new(),
+                    ));
+                }
+                let ecdsa_results = ecdsa_result.unwrap();
+                if ecdsa_results.iter().any(|&v| !v) {
+                    let n = ecdsa_results.len();
+                    let invalid = ecdsa_results.iter().filter(|&&v| !v).count();
+                    eprintln!("[BATCH] Block {}: {} ECDSA signatures, {} invalid", height, n, invalid);
+                    return Ok((
+                        ValidationResult::Invalid(format!("Invalid ECDSA signature in block")),
+                        utxo_set,
+                        crate::reorganization::BlockUndoLog::new(),
+                    ));
+                }
+                if !ecdsa_results.is_empty() {
+                    eprintln!("[BATCH] Block {}: {} ECDSA signatures verified successfully in {:?}", height, ecdsa_results.len(), batch_start.elapsed());
+                }
                 let total_batch_time = batch_start.elapsed();
                 if total_batch_time.as_millis() > 10 {
                     eprintln!("[BATCH_PERF] Block {}: Total batch verification time: {:?}", height, total_batch_time);
+                }
+                // PERF total = validation (script/structure/overlay) + batch — this is the real cost per block (why we see ~70–100 b/s on heavy blocks).
+                let total_with_batch = validation_elapsed + total_batch_time;
+                eprintln!("[PERF] Block {}: total={:?} (script={:?} batch={:?}), structure={:?}, input_lookup={:?}, check_inputs={:?}, overlay_apply={:?}, txs={}, inputs={}",
+                    height,
+                    total_with_batch,
+                    total_script_time,
+                    total_batch_time,
+                    total_tx_structure_time,
+                    total_input_lookup_time,
+                    total_check_tx_inputs_time,
+                    total_overlay_apply_time,
+                    block.transactions.len(),
+                    total_inputs
+                );
+                let total_ns = total_with_batch.as_nanos() as f64;
+                if total_ns > 0.0 {
+                    let pct = |d: std::time::Duration| (100.0 * d.as_nanos() as f64 / total_ns).min(100.0);
+                    let script_pct = pct(total_script_time);
+                    let batch_pct = pct(total_batch_time);
+                    let input_lookup_pct = pct(total_input_lookup_time);
+                    let check_inputs_pct = pct(total_check_tx_inputs_time);
+                    let overlay_pct = pct(total_overlay_apply_time);
+                    let structure_pct = pct(total_tx_structure_time);
+                    let total_ms = total_with_batch.as_secs_f64() * 1000.0;
+                    if ((120_000..=145_000).contains(&height) || (180_000..=195_000).contains(&height))
+                        && height % 100 == 0
+                    {
+                        eprintln!(
+                            "[PERF_CLIFF] Block {}: total={:.1}ms | script={:.0}% batch={:.0}% input_lookup={:.0}% check_inputs={:.0}% overlay={:.0}% structure={:.0}% | txs={} inputs={}",
+                            height, total_ms, script_pct, batch_pct, input_lookup_pct, check_inputs_pct, overlay_pct, structure_pct,
+                            block.transactions.len(), total_inputs
+                        );
+                    }
+                    if total_ms > 20.0 {
+                        eprintln!(
+                            "[PERF_SLOW] Block {}: total={:.1}ms | script={:.0}% batch={:.0}% input_lookup={:.0}% check_inputs={:.0}% overlay={:.0}% structure={:.0}% | txs={} inputs={}",
+                            height, total_ms, script_pct, batch_pct, input_lookup_pct, check_inputs_pct, overlay_pct, structure_pct,
+                            block.transactions.len(), total_inputs
+                        );
+                    }
                 }
             }
             
@@ -1265,8 +1286,7 @@ fn connect_block_inner(
                     // Cache witness lookup once per transaction
                     let script_start = std::time::Instant::now();
                     let tx_witnesses = witnesses.get(i);
-                    // Calculate flags once outside loop (optimization)
-                    let has_witness = tx_witnesses.map(|w| !w.is_empty()).unwrap_or(false);
+                    let has_witness = tx_witnesses.map(|w| w.iter().any(|wit| !is_witness_empty(wit))).unwrap_or(false);
                     let flags = calculate_script_flags_for_block(tx, has_witness, height, network);
                     let median_time_past = time_context
                         .map(|ctx| ctx.median_time_past)
@@ -1275,11 +1295,12 @@ fn connect_block_inner(
                         // Reuse input_utxos instead of overlay.get()
                         if let Some(utxo) = input_utxos.get(j).and_then(|opt| *opt) {
                             let witness_elem = tx_witnesses.and_then(|w| w.get(j));
+                            let witness_for_script = witness_elem.and_then(|w| if is_witness_empty(w) { None } else { Some(w) });
 
                             if !verify_script_with_context_full(
                                 &input.script_sig,
                                 &utxo.script_pubkey,
-                                witness_elem,
+                                witness_for_script,
                                 flags,
                                 tx,
                                 j,
@@ -1289,8 +1310,9 @@ fn connect_block_inner(
                                 median_time_past,
                                 network,
                                 crate::script::SigVersion::Base,
-                                #[cfg(feature = "production")] Some(&mut schnorr_collector),
-                                #[cfg(feature = "production")] Some(&mut ecdsa_collector),
+                                #[cfg(feature = "production")] Some(&schnorr_collector),
+                                #[cfg(feature = "production")] Some(&ecdsa_collector),
+                                #[cfg(feature = "production")] None,
                             )? {
                                 return Ok((
                                     ValidationResult::Invalid(format!(
@@ -1461,7 +1483,7 @@ fn connect_block_inner(
 
                 // Cache witness lookup once per transaction
                 let tx_witnesses = witnesses.get(i);
-                let has_witness = tx_witnesses.map(|w| !w.is_empty()).unwrap_or(false);
+                let has_witness = tx_witnesses.map(|w| w.iter().any(|wit| !is_witness_empty(wit))).unwrap_or(false);
                 let flags = calculate_script_flags_for_block(tx, has_witness, height, network);
                 let median_time_past = time_context
                     .map(|ctx| ctx.median_time_past)
@@ -1469,9 +1491,9 @@ fn connect_block_inner(
 
                 // OPTIMIZATION: Collect signatures for batch verification
                 #[cfg(feature = "production")]
-                let mut schnorr_collector = crate::bip348::SchnorrSignatureCollector::new();
+                let schnorr_collector = crate::bip348::SchnorrSignatureCollector::new();
                 #[cfg(feature = "production")]
-                let mut ecdsa_collector = crate::script::EcdsaSignatureCollector::new();
+                let ecdsa_collector = crate::script::EcdsaSignatureCollector::new();
 
                 for (j, input) in tx.inputs.iter().enumerate() {
                     // Bounds checking assertion: Input index must be valid
@@ -1495,12 +1517,13 @@ fn connect_block_inner(
                         // witnesses is Vec<Vec<Witness>> where each Vec<Witness> is for one transaction
                         // and each Witness is for one input
                         let witness_stack = tx_witnesses.and_then(|tx_wits| tx_wits.get(j));
+                        let witness_for_script = witness_stack.and_then(|w| if is_witness_empty(w) { None } else { Some(w) });
 
                         // Use verify_script_with_context_full for BIP65/112 support
                         if !verify_script_with_context_full(
                             &input.script_sig,
                             &utxo.script_pubkey,
-                            witness_stack, // Pass full witness stack (Option<&Witness>)
+                            witness_for_script,
                             flags,
                             tx,
                             j, // Input index
@@ -1510,8 +1533,9 @@ fn connect_block_inner(
                             median_time_past, // Median time-past for timestamp CLTV validation (BIP113)
                             network,          // Network for BIP66 and BIP147 activation heights
                             crate::script::SigVersion::Base,
-                            #[cfg(feature = "production")] Some(&mut schnorr_collector),
-                            #[cfg(feature = "production")] Some(&mut ecdsa_collector),
+                            #[cfg(feature = "production")] Some(&schnorr_collector),
+                            #[cfg(feature = "production")] Some(&ecdsa_collector),
+                            #[cfg(feature = "production")] None,
                         )? {
                             return Ok((
                                 ValidationResult::Invalid(format!(
@@ -1737,8 +1761,7 @@ fn connect_block_inner(
         !block.transactions.is_empty(),
         "Block must have at least one transaction for sigop calculation"
     );
-    // Check if first transaction has witness data (optimization: just check presence, no flattening)
-    let has_witness = witnesses.first().map(|w| !w.is_empty()).unwrap_or(false);
+    let has_witness = witnesses.iter().any(|w| w.iter().any(|wit| !is_witness_empty(wit)));
     // Safe: assertion above guarantees transactions is not empty
     let flags = calculate_script_flags_for_block(
         block.transactions.first().expect("Block must have at least one transaction"),
@@ -2680,6 +2703,7 @@ mod property_tests {
     }
 
     // Transaction Arbitrary is implemented in src/transaction.rs to avoid conflicts
+    // UtxoSet (FxHashMap with production) has no Arbitrary; use strategy below
 
     /// Property test: apply_transaction preserves UTXO set consistency
     proptest! {
@@ -2737,7 +2761,7 @@ mod property_tests {
                 }
                 tx
             }),
-            utxo_set in any::<UtxoSet>(),
+            utxo_set in prop::collection::vec((any::<OutPoint>(), any::<UTXO>()), 0..50).prop_map(|v| v.into_iter().collect::<UtxoSet>()),
             height in 0u64..1000u64
         ) {
 
@@ -2777,7 +2801,7 @@ mod property_tests {
         #[test]
         fn prop_connect_block_coinbase(
             block in any::<Block>(),
-            utxo_set in any::<UtxoSet>(),
+            utxo_set in prop::collection::vec((any::<OutPoint>(), any::<UTXO>()), 0..50).prop_map(|v| v.into_iter().collect::<UtxoSet>()),
             height in 0u64..1000u64
         ) {
             // Bound for tractability
@@ -2800,8 +2824,9 @@ mod property_tests {
                 }
             }
 
-            let witnesses: Vec<Witness> = bounded_block.transactions.iter().map(|_| Vec::new()).collect();
-            let result = connect_block(&bounded_block, &witnesses, utxo_set, height, None, bounded_block.header.timestamp, crate::types::Network::Mainnet);
+            // One Vec<Witness> per tx (one Witness per input)
+            let witnesses: Vec<Vec<Witness>> = bounded_block.transactions.iter().map(|tx| (0..tx.inputs.len()).map(|_| Vec::new()).collect()).collect();
+            let result = connect_block(&bounded_block, &witnesses[..], utxo_set, height, None, bounded_block.header.timestamp, crate::types::Network::Mainnet);
 
             match result {
                 Ok((validation_result, _, _undo_log)) => {
@@ -2854,7 +2879,7 @@ mod property_tests {
     proptest! {
         #[test]
         fn prop_utxo_set_operations_consistent(
-            utxo_set in any::<UtxoSet>(),
+            utxo_set in prop::collection::vec((any::<OutPoint>(), any::<UTXO>()), 0..50).prop_map(|v| v.into_iter().collect::<UtxoSet>()),
             outpoint in any::<OutPoint>(),
             utxo in any::<UTXO>()
         ) {
@@ -2945,19 +2970,21 @@ mod tests {
             transactions: vec![coinbase_tx].into_boxed_slice(),
         };
 
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         // Optimization: Pre-allocate witness vectors with capacity
-        let witnesses: Vec<Witness> = block
+        // One Vec<Witness> per tx (one Witness per input)
+        let witnesses: Vec<Vec<Witness>> = block
             .transactions
             .iter()
-            .map(|_| Vec::with_capacity(2))
+            .map(|tx| (0..tx.inputs.len()).map(|_| Vec::with_capacity(2)).collect())
             .collect();
         let (result, new_utxo_set, _undo_log) = connect_block(
             &block,
-            &witnesses,
+            &witnesses[..],
             utxo_set,
             0,
             None,
+            0u64,
             crate::types::Network::Mainnet,
         )
         .unwrap();
@@ -2987,7 +3014,7 @@ mod tests {
             lock_time: 0,
         };
 
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         let (new_utxo_set, _undo_entries) = apply_transaction(&coinbase_tx, utxo_set, 0).unwrap();
 
         assert_eq!(new_utxo_set.len(), 1);
@@ -3030,19 +3057,20 @@ mod tests {
             transactions: vec![coinbase_tx].into_boxed_slice(),
         };
 
-        let utxo_set = UtxoSet::new();
-        // Optimization: Pre-allocate witness vectors with capacity
-        let witnesses: Vec<Witness> = block
+        let utxo_set = UtxoSet::default();
+        // One Vec<Witness> per tx (one Witness per input)
+        let witnesses: Vec<Vec<Witness>> = block
             .transactions
             .iter()
-            .map(|_| Vec::with_capacity(2))
+            .map(|tx| (0..tx.inputs.len()).map(|_| Vec::with_capacity(2)).collect())
             .collect();
         let (result, _, _undo_log) = connect_block(
             &block,
-            &witnesses,
+            &witnesses[..],
             utxo_set,
             0,
             None,
+            0u64,
             crate::types::Network::Mainnet,
         )
         .unwrap();
@@ -3064,19 +3092,20 @@ mod tests {
             transactions: vec![].into_boxed_slice(), // No transactions
         };
 
-        let utxo_set = UtxoSet::new();
-        // Optimization: Pre-allocate witness vectors with capacity
-        let witnesses: Vec<Witness> = block
+        let utxo_set = UtxoSet::default();
+        // One Vec<Witness> per tx (one Witness per input)
+        let witnesses: Vec<Vec<Witness>> = block
             .transactions
             .iter()
-            .map(|_| Vec::with_capacity(2))
+            .map(|tx| (0..tx.inputs.len()).map(|_| Vec::with_capacity(2)).collect())
             .collect();
         let (result, _, _undo_log) = connect_block(
             &block,
-            &witnesses,
+            &witnesses[..],
             utxo_set,
             0,
             None,
+            0u64,
             crate::types::Network::Mainnet,
         )
         .unwrap();
@@ -3117,19 +3146,20 @@ mod tests {
             transactions: vec![regular_tx].into_boxed_slice(), // First tx is not coinbase
         };
 
-        let utxo_set = UtxoSet::new();
-        // Optimization: Pre-allocate witness vectors with capacity
-        let witnesses: Vec<Witness> = block
+        let utxo_set = UtxoSet::default();
+        // One Vec<Witness> per tx (one Witness per input)
+        let witnesses: Vec<Vec<Witness>> = block
             .transactions
             .iter()
-            .map(|_| Vec::with_capacity(2))
+            .map(|tx| (0..tx.inputs.len()).map(|_| Vec::with_capacity(2)).collect())
             .collect();
         let (result, _, _undo_log) = connect_block(
             &block,
-            &witnesses,
+            &witnesses[..],
             utxo_set,
             0,
             None,
+            0u64,
             crate::types::Network::Mainnet,
         )
         .unwrap();
@@ -3170,19 +3200,20 @@ mod tests {
             transactions: vec![coinbase_tx].into_boxed_slice(),
         };
 
-        let utxo_set = UtxoSet::new();
-        // Optimization: Pre-allocate witness vectors with capacity
-        let witnesses: Vec<Witness> = block
+        let utxo_set = UtxoSet::default();
+        // One Vec<Witness> per tx (one Witness per input)
+        let witnesses: Vec<Vec<Witness>> = block
             .transactions
             .iter()
-            .map(|_| Vec::with_capacity(2))
+            .map(|tx| (0..tx.inputs.len()).map(|_| Vec::with_capacity(2)).collect())
             .collect();
         let (result, _, _undo_log) = connect_block(
             &block,
-            &witnesses,
+            &witnesses[..],
             utxo_set,
             0,
             None,
+            0u64,
             crate::types::Network::Mainnet,
         )
         .unwrap();
@@ -3192,7 +3223,7 @@ mod tests {
 
     #[test]
     fn test_apply_transaction_regular() {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
 
         // Add a UTXO first
         let prev_outpoint = OutPoint {
@@ -3259,7 +3290,7 @@ mod tests {
             lock_time: 0,
         };
 
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         let (new_utxo_set, _undo_entries) = apply_transaction(&coinbase_tx, utxo_set, 0).unwrap();
 
         assert_eq!(new_utxo_set.len(), 2);
@@ -3496,7 +3527,7 @@ mod tests {
             transactions: vec![].into_boxed_slice(), // Empty transactions - invalid
         };
 
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         // Optimization: Pre-allocate witness vectors with capacity
         let witnesses: Vec<Vec<Witness>> = block
             .transactions
@@ -3505,10 +3536,11 @@ mod tests {
             .collect();
         let result = connect_block(
             &block,
-            &witnesses,
+            &witnesses[..],
             utxo_set,
             0,
             None,
+            0u64,
             crate::types::Network::Mainnet,
         );
         // The result should be Ok with ValidationResult::Invalid
@@ -3550,7 +3582,7 @@ mod tests {
             transactions: vec![invalid_coinbase].into_boxed_slice(),
         };
 
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         // Optimization: Pre-allocate witness vectors with capacity
         let witnesses: Vec<Vec<Witness>> = block
             .transactions
@@ -3559,10 +3591,11 @@ mod tests {
             .collect();
         let result = connect_block(
             &block,
-            &witnesses,
+            &witnesses[..],
             utxo_set,
             0,
             None,
+            0u64,
             crate::types::Network::Mainnet,
         );
         // The result should be Ok with ValidationResult::Invalid
@@ -3573,7 +3606,7 @@ mod tests {
 
     #[test]
     fn test_apply_transaction_insufficient_funds() {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
 
         // Add a UTXO with insufficient value
         let prev_outpoint = OutPoint {
@@ -3614,7 +3647,7 @@ mod tests {
 
     #[test]
     fn test_apply_transaction_missing_utxo() {
-        let utxo_set = UtxoSet::new(); // Empty UTXO set
+        let utxo_set = UtxoSet::default(); // Empty UTXO set
 
         let tx = Transaction {
             version: 1,
@@ -3712,7 +3745,7 @@ mod tests {
             transactions: vec![coinbase_tx].into_boxed_slice(),
         };
 
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         // Optimization: Pre-allocate witness vectors with capacity
         let witnesses: Vec<Vec<Witness>> = block
             .transactions
@@ -3721,10 +3754,11 @@ mod tests {
             .collect();
         let result = connect_block(
             &block,
-            &witnesses,
+            &witnesses[..],
             utxo_set,
             0,
             None,
+            0u64,
             crate::types::Network::Mainnet,
         );
         // The result should be Ok with ValidationResult::Invalid
@@ -3766,7 +3800,7 @@ mod tests {
             transactions: vec![regular_tx].into_boxed_slice(), // First tx is not coinbase
         };
 
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         // Optimization: Pre-allocate witness vectors with capacity
         let witnesses: Vec<Vec<Witness>> = block
             .transactions
@@ -3775,10 +3809,11 @@ mod tests {
             .collect();
         let result = connect_block(
             &block,
-            &witnesses,
+            &witnesses[..],
             utxo_set,
             0,
             None,
+            0u64,
             crate::types::Network::Mainnet,
         );
         // The result should be Ok with ValidationResult::Invalid
@@ -3789,7 +3824,7 @@ mod tests {
 
     #[test]
     fn test_apply_transaction_multiple_inputs() {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
 
         // Add multiple UTXOs
         let outpoint1 = OutPoint {
@@ -3851,7 +3886,7 @@ mod tests {
 
     #[test]
     fn test_apply_transaction_no_outputs() {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
 
         let prev_outpoint = OutPoint {
             hash: [1; 32],

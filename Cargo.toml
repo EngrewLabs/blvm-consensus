@@ -76,7 +76,8 @@ tokio = { version = "1.35", features = ["rt", "macros"] }
 criterion = "0.5"
 
 [features]
-default = []
+# Production (batch verification, fast paths) is default so tests and dependents compile script paths
+default = ["production"]
 # Enable k256 (uses deprecated generic_array from elliptic_curve, will be fixed when k256 updates)
 k256 = ["dep:k256"]
 

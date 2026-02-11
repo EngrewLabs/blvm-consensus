@@ -37,7 +37,7 @@ fn test_segwit_witness_validation() {
     
     let witness = vec![vec![0x51]]; // Witness stack: OP_1
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -238,7 +238,7 @@ fn test_segwit_p2wpkh_validation() {
         vec![0x51; 33], // Public key (compressed)
     ];
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {
@@ -304,7 +304,7 @@ fn test_segwit_p2wsh_validation() {
         vec![0x51; 100], // Witness script
     ];
     
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [1; 32], index: 0 },
         UTXO {

@@ -1436,6 +1436,38 @@ fn default_adaptive_thresholds() -> WitnessSizeThresholdsSerializable {
     }
 }
 
+impl Default for SpamFilterConfigSerializable {
+    fn default() -> Self {
+        Self {
+            filter_ordinals: default_true(),
+            filter_dust: default_true(),
+            filter_brc20: default_true(),
+            filter_large_witness: default_true(),
+            filter_low_fee_rate: default_false(),
+            filter_high_size_value_ratio: default_true(),
+            filter_many_small_outputs: default_true(),
+            dust_threshold: default_dust_threshold(),
+            min_output_value: default_dust_threshold(),
+            min_fee_rate: default_min_fee_rate(),
+            max_witness_size: default_max_witness_size(),
+            max_size_value_ratio: default_max_size_value_ratio(),
+            max_small_outputs: default_max_small_outputs(),
+            use_adaptive_thresholds: default_true(),
+            adaptive_thresholds: default_adaptive_thresholds(),
+            filter_taproot_spam: default_true(),
+            max_taproot_control_size: default_max_taproot_control_size(),
+            reject_taproot_annexes: default_true(),
+            filter_large_total_witness: default_false(),
+            max_total_witness_size: default_max_total_witness_size(),
+            use_improved_envelope_detection: default_true(),
+            use_json_validation_brc20: default_true(),
+            require_utxo_for_fee_rate: default_false(),
+            min_fee_rate_large_tx: default_min_fee_rate_large_tx(),
+            large_tx_threshold_bytes: default_large_tx_threshold_bytes(),
+        }
+    }
+}
+
 impl From<SpamFilterConfigSerializable> for SpamFilterConfig {
     fn from(serializable: SpamFilterConfigSerializable) -> Self {
         SpamFilterConfig {

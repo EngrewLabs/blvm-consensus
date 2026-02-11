@@ -59,7 +59,7 @@ pub fn klee_check_block_harness() {
         transactions: vec![], // TODO: Symbolic transactions
     };
     
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
     let _result = connect_block(&block, &witnesses, utxo_set, klee_int("height"), None, 0u64, crate::types::Network::Mainnet);
 }

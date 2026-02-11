@@ -430,6 +430,9 @@ pub const PUSH_20_BYTES: u8 = 0x14;
 /// Push 32 bytes (used in P2WSH and P2TR: OP_0/OP_1 0x20 <32-byte-hash>)
 pub const PUSH_32_BYTES: u8 = 0x20;
 
+/// Push 36 bytes (used in tests / OP_RETURN outputs)
+pub const PUSH_36_BYTES: u8 = 0x24;
+
 // ============================================================================
 // PROTOCOL CONSTANTS
 // ============================================================================

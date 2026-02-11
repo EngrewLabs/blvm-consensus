@@ -69,7 +69,7 @@ pub async fn replay_historical_blocks(
     config: &ReplayConfig,
 ) -> Result<ReplayResult, Box<dyn std::error::Error>> {
     let start_time = std::time::Instant::now();
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     let mut blocks_validated = 0u64;
     let mut blocks_failed = Vec::new();
     let mut checkpoint_results = Vec::new();
@@ -281,7 +281,7 @@ mod tests {
     
     #[test]
     fn test_utxo_set_hash_calculation() {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         
         // Add some UTXOs
         let outpoint1 = OutPoint { hash: [1; 32], index: 0 };
@@ -300,7 +300,7 @@ mod tests {
     
     #[test]
     fn test_checkpoint_verification() {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         let expected_hash = calculate_utxo_set_hash(&utxo_set);
         
         assert!(verify_checkpoint(&utxo_set, &expected_hash));

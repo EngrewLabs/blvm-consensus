@@ -1,11 +1,11 @@
 #![no_main]
-use bllvm_consensus::taproot::{
+use blvm_consensus::taproot::{
     compute_taproot_signature_hash, compute_taproot_tweak, extract_taproot_output_key,
     is_taproot_output, validate_taproot_script, validate_taproot_script_path,
     validate_taproot_transaction, validate_taproot_key_aggregation,
 };
-use bllvm_consensus::types::{Hash, Transaction, TransactionOutput};
-use bllvm_consensus::witness::Witness;
+use blvm_consensus::types::{Hash, Transaction, TransactionOutput};
+use blvm_consensus::witness::Witness;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -193,8 +193,8 @@ fuzz_target!(|data: &[u8]| {
                 };
                 offset += 4;
 
-                inputs.push(bllvm_consensus::types::TransactionInput {
-                    prevout: bllvm_consensus::types::OutPoint { hash, index },
+                inputs.push(blvm_consensus::types::TransactionInput {
+                    prevout: blvm_consensus::types::OutPoint { hash, index },
                     script_sig: vec![].into(),
                     sequence: 0xffffffff,
                 });

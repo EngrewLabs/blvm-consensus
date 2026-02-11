@@ -76,7 +76,7 @@ mod tests {
             transactions: vec![coinbase].into(),
         };
 
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         let result = compare_block_validation_local(&block, &utxo_set, 0, crate::types::Network::Mainnet);
         
         // Block should validate (basic structure is valid)

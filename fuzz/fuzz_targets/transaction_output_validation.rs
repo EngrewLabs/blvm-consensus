@@ -1,7 +1,7 @@
 #![no_main]
-use bllvm_consensus::constants::MAX_MONEY;
-use bllvm_consensus::transaction::check_transaction;
-use bllvm_consensus::types::{Transaction, TransactionInput, TransactionOutput};
+use blvm_consensus::constants::MAX_MONEY;
+use blvm_consensus::transaction::check_transaction;
+use blvm_consensus::types::{Transaction, TransactionInput, TransactionOutput};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -43,7 +43,7 @@ fuzz_target!(|data: &[u8]| {
             let tx = Transaction {
                 version: 1,
                 inputs: vec![TransactionInput {
-                    prevout: bllvm_consensus::types::OutPoint {
+                    prevout: blvm_consensus::types::OutPoint {
                         hash: [1; 32],
                         index: 0,
                     },
@@ -88,7 +88,7 @@ fuzz_target!(|data: &[u8]| {
         let tx = Transaction {
             version: 1,
             inputs: vec![TransactionInput {
-                prevout: bllvm_consensus::types::OutPoint {
+                prevout: blvm_consensus::types::OutPoint {
                     hash: [1; 32],
                     index: 0,
                 },
@@ -151,7 +151,7 @@ fuzz_target!(|data: &[u8]| {
         let tx = Transaction {
             version: 1,
             inputs: vec![TransactionInput {
-                prevout: bllvm_consensus::types::OutPoint {
+                prevout: blvm_consensus::types::OutPoint {
                     hash: [1; 32],
                     index: 0,
                 },
@@ -170,7 +170,7 @@ fuzz_target!(|data: &[u8]| {
     let tx_empty_outputs = Transaction {
         version: 1,
         inputs: vec![TransactionInput {
-            prevout: bllvm_consensus::types::OutPoint {
+            prevout: blvm_consensus::types::OutPoint {
                 hash: [1; 32],
                 index: 0,
             },
@@ -186,7 +186,7 @@ fuzz_target!(|data: &[u8]| {
     let tx_zero_value = Transaction {
         version: 1,
         inputs: vec![TransactionInput {
-            prevout: bllvm_consensus::types::OutPoint {
+            prevout: blvm_consensus::types::OutPoint {
                 hash: [1; 32],
                 index: 0,
             },
@@ -205,7 +205,7 @@ fuzz_target!(|data: &[u8]| {
     let tx_negative_value = Transaction {
         version: 1,
         inputs: vec![TransactionInput {
-            prevout: bllvm_consensus::types::OutPoint {
+            prevout: blvm_consensus::types::OutPoint {
                 hash: [1; 32],
                 index: 0,
             },
@@ -226,7 +226,7 @@ fuzz_target!(|data: &[u8]| {
         let tx_large_script = Transaction {
             version: 1,
             inputs: vec![TransactionInput {
-                prevout: bllvm_consensus::types::OutPoint {
+                prevout: blvm_consensus::types::OutPoint {
                     hash: [1; 32],
                     index: 0,
                 },
@@ -246,7 +246,7 @@ fuzz_target!(|data: &[u8]| {
     let tx_overflow = Transaction {
         version: 1,
         inputs: vec![TransactionInput {
-            prevout: bllvm_consensus::types::OutPoint {
+            prevout: blvm_consensus::types::OutPoint {
                 hash: [1; 32],
                 index: 0,
             },

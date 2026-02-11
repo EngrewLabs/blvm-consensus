@@ -699,7 +699,7 @@ proptest! {
         num_outputs in 1usize..5usize
     ) {
         // Create transaction and UTXO set
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         let inputs: Vec<TransactionInput> = (0..num_inputs).map(|i| {
                 let outpoint = OutPoint {
                     hash: [i as u8; 32],
@@ -760,7 +760,7 @@ proptest! {
 
         if sum.is_none() {
             // Overflow would occur - create transaction that triggers it
-            let mut utxo_set = UtxoSet::new();
+            let mut utxo_set = UtxoSet::default();
             let mut inputs = Vec::new();
 
             for (i, &value) in input_values.iter().enumerate() {
@@ -934,7 +934,7 @@ proptest! {
         };
 
         // Connect block1
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         let witnesses1: Vec<Vec<Witness>> = block1.transactions.iter().map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect()).collect();
         let result1 = block::connect_block(&block1, &witnesses1, utxo_set, height1 as u64, None, 0u64, Network::Mainnet);
 
@@ -1038,7 +1038,7 @@ proptest! {
         }
 
         // Calculate supply before reorganization
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         let supply_before: i64 = utxo_set
             .values()
             .map(|utxo| utxo.value)
@@ -1175,7 +1175,7 @@ proptest! {
         };
 
         // Connect block1
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         let witnesses1: Vec<Vec<Witness>> = block1.transactions.iter().map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect()).collect();
         let result1 = block::connect_block(&block1, &witnesses1, utxo_set, height1 as u64, None, 0u64, Network::Mainnet);
 
@@ -1251,7 +1251,7 @@ proptest! {
         };
 
         // Connect block
-        let utxo_set_before = UtxoSet::new();
+        let utxo_set_before = UtxoSet::default();
         let witnesses: Vec<Vec<Witness>> = block.transactions.iter().map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect()).collect();
         let result = block::connect_block(&block, &witnesses, utxo_set_before.clone(), height as u64, None, 0u64, Network::Mainnet);
 
@@ -1944,7 +1944,7 @@ proptest! {
         };
 
         // Empty UTXO set (all inputs missing)
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
 
         let result = economic::calculate_fee(&tx, &utxo_set);
 
@@ -1978,7 +1978,7 @@ proptest! {
         use blvm_consensus::constants::MAX_MONEY;
 
         // Create transaction with large values to test overflow
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
 
         // Add UTXOs with large values (but bounded to MAX_MONEY)
         for i in 0..input_count {

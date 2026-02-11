@@ -1,6 +1,6 @@
-use bllvm_consensus::block::connect_block;
-use bllvm_consensus::segwit::Witness;
-use bllvm_consensus::{types::Network, Block, BlockHeader, Transaction, UtxoSet};
+use blvm_consensus::block::connect_block;
+use blvm_consensus::segwit::Witness;
+use blvm_consensus::{types::Network, Block, BlockHeader, Transaction, UtxoSet};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 fn create_test_block() -> Block {
@@ -25,7 +25,7 @@ fn create_test_block() -> Block {
 
 fn benchmark_connect_block(c: &mut Criterion) {
     let block = create_test_block();
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let witnesses: Vec<Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
 
     c.bench_function("connect_block", |b| {
@@ -73,7 +73,7 @@ fn benchmark_connect_block_multi_tx(c: &mut Criterion) {
         transactions: transactions.into(),
     };
 
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let witnesses: Vec<Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
 
     c.bench_function("connect_block_multi_tx", |b| {

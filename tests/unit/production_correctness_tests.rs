@@ -64,7 +64,7 @@ mod tests {
     fn test_production_block_validation_parity() {
         // Test block validation with production features
         let block = create_test_block();
-        let utxo_set = UtxoSet::new();
+        let utxo_set = UtxoSet::default();
         let height = 0;
         
         let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
@@ -74,7 +74,7 @@ mod tests {
         assert!(matches!(result, ValidationResult::Valid | ValidationResult::Invalid(_)));
         
         // Verify deterministic behavior
-        let utxo_set2 = UtxoSet::new();
+        let utxo_set2 = UtxoSet::default();
         let (result2, _) = connect_block(&block, &witnesses, utxo_set2, height, None, 0u64, crate::types::Network::Mainnet).unwrap();
         assert_eq!(format!("{:?}", result), format!("{:?}", result2),
                    "Block validation must be deterministic");

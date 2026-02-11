@@ -206,7 +206,7 @@ fn test_cve_2018_17144_double_spend_in_block() {
     use blvm_consensus::block::connect_block;
 
     // Create a UTXO that will be spent twice
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     let prevout = OutPoint {
         hash: [1; 32],
         index: 0,
@@ -329,7 +329,7 @@ fn test_pre_segwit_block_validation() {
         transactions: vec![].into_boxed_slice(),
     };
 
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
 
     // Block should validate at pre-SegWit height
     // (Note: This is a placeholder - actual validation would check witness data)
@@ -370,7 +370,7 @@ fn test_post_segwit_block_validation() {
         transactions: vec![].into_boxed_slice(),
     };
 
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
 
     // Block should validate at post-SegWit height
     let witnesses = vec![];
@@ -410,7 +410,7 @@ fn test_post_taproot_block_validation() {
         transactions: vec![].into_boxed_slice(),
     };
 
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
 
     // Block should validate at post-Taproot height
     let witnesses = vec![];

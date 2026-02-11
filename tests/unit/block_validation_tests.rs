@@ -42,7 +42,7 @@ fn create_valid_coinbase_block() -> Block {
 #[test]
 fn test_connect_block_empty_transactions() {
     let block = create_invalid_block();
-    let utxo = UtxoSet::new();
+    let utxo = UtxoSet::default();
     let height = 1;
     
     // Empty block should fail validation
@@ -55,7 +55,7 @@ fn test_connect_block_empty_transactions() {
 #[test]
 fn test_connect_block_invalid_timestamp() {
     let block = create_invalid_block();
-    let utxo = UtxoSet::new();
+    let utxo = UtxoSet::default();
     let height = 1;
     
     // Block with invalid timestamp should be handled
@@ -67,7 +67,7 @@ fn test_connect_block_invalid_timestamp() {
 #[test]
 fn test_connect_block_valid_coinbase() {
     let block = create_valid_coinbase_block();
-    let utxo = UtxoSet::new();
+    let utxo = UtxoSet::default();
     let height = 1;
     
     // Valid coinbase block should be processed
@@ -89,7 +89,7 @@ fn test_apply_transaction_coinbase() {
         lock_time: 0,
     };
     
-    let mut utxo = UtxoSet::new();
+    let mut utxo = UtxoSet::default();
     let height = 1;
     
     // Apply coinbase transaction

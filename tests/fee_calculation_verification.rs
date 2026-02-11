@@ -9,11 +9,10 @@ use blvm_consensus::constants::*;
 use blvm_consensus::transaction::check_tx_inputs;
 use blvm_consensus::types::ValidationResult;
 use blvm_consensus::types::*;
-use std::collections::HashMap;
 
 /// Create a test UTXO set
 fn create_test_utxo_set() -> UtxoSet {
-    let mut utxo_set = HashMap::new();
+    let mut utxo_set = UtxoSet::default();
 
     // Add some test UTXOs
     utxo_set.insert(
@@ -259,7 +258,7 @@ fn test_fee_multiple_outputs() {
 /// Core checks that fee is within MoneyRange
 #[test]
 fn test_fee_maximum_money() {
-    let mut utxo_set = HashMap::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint {
             hash: [1; 32].into(),
@@ -308,7 +307,7 @@ fn test_fee_maximum_money() {
 /// Core uses checked arithmetic to prevent overflow
 #[test]
 fn test_fee_overflow_protection() {
-    let mut utxo_set = HashMap::new();
+    let mut utxo_set = UtxoSet::default();
 
     // Create inputs with large but valid values (within MAX_MONEY) that could overflow if summed
     // Use MAX_MONEY / 2 to ensure we're testing large values while staying within consensus limits
@@ -386,7 +385,7 @@ fn test_coinbase_fee() {
         lock_time: 0,
     };
 
-    let utxo_set = HashMap::new(); // Empty UTXO set (coinbase doesn't need inputs)
+    let utxo_set = UtxoSet::default(); // Empty UTXO set (coinbase doesn't need inputs)
 
     let result = check_tx_inputs(&tx, &utxo_set, 200);
     assert!(result.is_ok(), "check_tx_inputs should succeed");

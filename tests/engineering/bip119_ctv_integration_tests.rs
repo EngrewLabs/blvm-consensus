@@ -488,7 +488,7 @@ fn test_ctv_transaction_validation_passes() {
     tx.outputs[0].script_pubkey = script_pubkey.clone();
 
     // Create UTXO with CTV script
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
     utxo_set.insert(
         OutPoint { hash: [0x01; 32], index: 0 },
         UTXO {

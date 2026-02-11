@@ -1,10 +1,10 @@
 //! Realistic Block Validation Benchmark
 //! Uses more realistic test data for fair comparison with Bitcoin Core's ConnectBlock benchmark
 
-use bllvm_consensus::block::connect_block;
-use bllvm_consensus::segwit::Witness;
-use bllvm_consensus::types::Network;
-use bllvm_consensus::{
+use blvm_consensus::block::connect_block;
+use blvm_consensus::segwit::Witness;
+use blvm_consensus::types::Network;
+use blvm_consensus::{
     Block, BlockHeader, OutPoint, Transaction, TransactionInput, TransactionOutput, UtxoSet,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
@@ -76,7 +76,7 @@ fn create_realistic_test_block(num_txs: usize) -> Block {
 
 fn benchmark_connect_block_realistic(c: &mut Criterion) {
     let block = create_realistic_test_block(100); // 100 transactions (more realistic)
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let witnesses: Vec<Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
 
     c.bench_function("connect_block_realistic_100tx", |b| {
@@ -96,7 +96,7 @@ fn benchmark_connect_block_realistic(c: &mut Criterion) {
 
 fn benchmark_connect_block_realistic_1000tx(c: &mut Criterion) {
     let block = create_realistic_test_block(1000); // 1000 transactions (matches Core benchmark)
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let witnesses: Vec<Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
 
     c.bench_function("connect_block_realistic_1000tx", |b| {

@@ -86,7 +86,7 @@ fuzz_target!(|data: &[u8]| {
         transactions,
     };
 
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
 
     // Should never panic - test robustness
     let _result = connect_block(&block, utxo_set, 0);

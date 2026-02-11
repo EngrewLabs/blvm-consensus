@@ -178,7 +178,7 @@ proptest! {
     ) {
         use sha2::{Sha256, Digest};
         
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         
         // Insert UTXOs in deterministic order
         for i in 0..num_utxos {
@@ -227,7 +227,7 @@ proptest! {
     fn prop_utxo_set_size_bounded(
         num_utxos in 0usize..1000usize
     ) {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         
         for i in 0..num_utxos {
             let outpoint = OutPoint {
@@ -806,7 +806,7 @@ proptest! {
     ) {
         use blvm_consensus::economic;
         
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         let mut total_input_value = 0i64;
         
         // Create inputs with UTXOs
@@ -971,7 +971,7 @@ proptest! {
     fn prop_utxo_set_value_matches_orange_paper_formula(
         num_utxos in 1usize..50usize
     ) {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         let mut utxo_values = Vec::new();
         
         // Insert UTXOs
@@ -1527,7 +1527,7 @@ proptest! {
     ) {
         use blvm_consensus::economic;
         
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         let mut total_input_value = 0i64;
         
         // Create inputs with UTXOs
@@ -1600,7 +1600,7 @@ proptest! {
     ) {
         use blvm_consensus::economic;
         
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         
         // Create inputs with UTXOs
         let mut inputs = Vec::new();
@@ -1963,7 +1963,7 @@ proptest! {
     fn prop_utxo_uniqueness(
         num_utxos in 1usize..50usize
     ) {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         let mut seen_outpoints = std::collections::HashSet::new();
         
         // Insert UTXOs
@@ -2006,7 +2006,7 @@ proptest! {
         num_utxos in 1usize..50usize,
         height in 0u64..(H * 5)
     ) {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         let mut total_utxo_value = 0i64;
         
         // Insert UTXOs with values
@@ -2042,8 +2042,8 @@ proptest! {
     fn prop_utxo_determinism(
         num_utxos in 1usize..20usize
     ) {
-        let mut utxo_set1 = UtxoSet::new();
-        let mut utxo_set2 = UtxoSet::new();
+        let mut utxo_set1 = UtxoSet::default();
+        let mut utxo_set2 = UtxoSet::default();
         
         // Insert same UTXOs in same order
         for i in 0..num_utxos {
@@ -2093,7 +2093,7 @@ proptest! {
         initial_size in 0usize..20usize,
         num_insertions in 1usize..10usize
     ) {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         
         // Insert initial UTXOs
         for i in 0..initial_size {
@@ -2140,7 +2140,7 @@ proptest! {
         num_utxos in 1usize..20usize,
         num_deletions in 1usize..10usize
     ) {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         let mut outpoints = Vec::new();
         
         // Insert UTXOs
@@ -2183,7 +2183,7 @@ proptest! {
     fn prop_utxo_lookup(
         num_utxos in 1usize..50usize
     ) {
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         let mut expected_utxos = std::collections::HashMap::new();
         
         // Insert UTXOs
@@ -2844,7 +2844,7 @@ proptest! {
         use blvm_consensus::transaction::calculate_transaction_size;
         
         let mut mempool = Mempool::new();
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         
         // Create transactions with different fee rates
         let mut transactions = Vec::new();

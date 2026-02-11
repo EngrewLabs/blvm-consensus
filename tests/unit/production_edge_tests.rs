@@ -36,7 +36,7 @@ mod tests {
         };
         
         let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
-        let (result, _) = connect_block(&block, &witnesses, UtxoSet::new(), 0, None, 0u64, crate::types::Network::Mainnet).unwrap();
+        let (result, _) = connect_block(&block, &witnesses, UtxoSet::default(), 0, None, 0u64, crate::types::Network::Mainnet).unwrap();
         assert!(matches!(result, ValidationResult::Valid | ValidationResult::Invalid(_)),
                 "Production mode must handle empty blocks correctly");
     }
@@ -46,7 +46,7 @@ mod tests {
         // Transaction at script input limits (tested with smaller number for practical testing)
         let max_inputs = 10; // Smaller than MAX_INPUTS for test performance
         let mut inputs = Vec::new();
-        let mut utxo_set = UtxoSet::new();
+        let mut utxo_set = UtxoSet::default();
         
         for i in 0..max_inputs {
             let outpoint = OutPoint { hash: [i as u8; 32], index: 0 };

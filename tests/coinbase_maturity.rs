@@ -36,7 +36,7 @@ fn test_coinbase_maturity_exact_boundary() {
     };
 
     // Create UTXO set with coinbase output
-    let _utxo_set = UtxoSet::new();
+    let _utxo_set = UtxoSet::default();
     let _coinbase_outpoint = OutPoint {
         hash: blvm_consensus::block::calculate_tx_id(&coinbase_tx),
         index: 0,
@@ -225,7 +225,7 @@ fn test_coinbase_maturity_block_validation() {
         .into_boxed_slice(),
     };
 
-    let utxo_set = UtxoSet::new();
+    let utxo_set = UtxoSet::default();
     let height = 100;
 
     // Block should be rejected if coinbase spending is immature

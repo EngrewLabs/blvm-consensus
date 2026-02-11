@@ -124,21 +124,7 @@ impl Default for UtxoCommitmentsConfig {
                 max_peers_per_asn: 2,
                 safety_margin: 2016,
             },
-            spam_filter: crate::spam_filter::SpamFilterConfigSerializable {
-                filter_ordinals: true,
-                filter_dust: true,
-                filter_brc20: true,
-                filter_large_witness: true,
-                filter_low_fee_rate: false,
-                filter_high_size_value_ratio: true,
-                filter_many_small_outputs: true,
-                dust_threshold: 546,
-                min_output_value: 546,
-                min_fee_rate: 1,
-                max_witness_size: 1000,
-                max_size_value_ratio: 1000.0,
-                max_small_outputs: 10,
-            },
+            spam_filter: crate::spam_filter::SpamFilterConfigSerializable::default(),
             storage: StorageConfig::default(),
         }
     }

@@ -49,7 +49,7 @@ pub trait UtxoLookup {
     
     /// Check if empty.
     fn is_empty(&self) -> bool {
-        self.is_empty()
+        self.len() == 0
     }
 }
 
@@ -416,7 +416,7 @@ mod tests {
     fn make_utxo(value: i64) -> UTXO {
         UTXO {
             value,
-            script_pubkey: std::sync::Arc::new(vec![crate::opcodes::OP_DUP, crate::opcodes::OP_HASH160]), // P2PKH prefix
+            script_pubkey: vec![crate::opcodes::OP_DUP, crate::opcodes::OP_HASH160].into(), // P2PKH prefix
             height: 1,
             is_coinbase: false,
         }
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn test_overlay_lookup_from_base() {
-        let mut base = UtxoSet::new();
+        let mut base = UtxoSet::default();
         base.insert(make_outpoint(1), make_utxo(1000));
         base.insert(make_outpoint(2), make_utxo(2000));
         
@@ -437,7 +437,7 @@ mod tests {
 
     #[test]
     fn test_overlay_additions() {
-        let base = UtxoSet::new();
+        let base = UtxoSet::default();
         let mut overlay = UtxoOverlay::new(&base);
         
         overlay.insert(make_outpoint(1), make_utxo(1000));
@@ -448,7 +448,7 @@ mod tests {
 
     #[test]
     fn test_overlay_deletions() {
-        let mut base = UtxoSet::new();
+        let mut base = UtxoSet::default();
         base.insert(make_outpoint(1), make_utxo(1000));
         
         let mut overlay = UtxoOverlay::new(&base);
@@ -462,7 +462,7 @@ mod tests {
     #[test]
     fn test_overlay_intra_block_spend() {
         // Simulate spending an output created in the same block
-        let base = UtxoSet::new();
+        let base = UtxoSet::default();
         let mut overlay = UtxoOverlay::new(&base);
         
         // Add output
@@ -481,7 +481,7 @@ mod tests {
 
     #[test]
     fn test_overlay_apply() {
-        let mut base = UtxoSet::new();
+        let mut base = UtxoSet::default();
         base.insert(make_outpoint(1), make_utxo(1000));
         base.insert(make_outpoint(2), make_utxo(2000));
         
@@ -501,7 +501,7 @@ mod tests {
     #[test]
     fn test_overlay_no_clone_on_creation() {
         // This test verifies the design - overlay creation is O(1)
-        let mut base = UtxoSet::new();
+        let mut base = UtxoSet::default();
         for i in 0..10000 {
             base.insert(make_outpoint(i as u8), make_utxo(i as i64));
         }

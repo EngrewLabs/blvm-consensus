@@ -1,8 +1,8 @@
 #![no_main]
-use bllvm_consensus::mining::calculate_merkle_root;
-use bllvm_consensus::segwit::compute_witness_merkle_root;
-use bllvm_consensus::types::{Block, Hash, Transaction, TransactionInput, TransactionOutput};
-use bllvm_consensus::witness::Witness;
+use blvm_consensus::mining::calculate_merkle_root;
+use blvm_consensus::segwit::compute_witness_merkle_root;
+use blvm_consensus::types::{Block, Hash, Transaction, TransactionInput, TransactionOutput};
+use blvm_consensus::witness::Witness;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -68,7 +68,7 @@ fuzz_target!(|data: &[u8]| {
                 offset += 4;
 
                 inputs.push(TransactionInput {
-                    prevout: bllvm_consensus::types::OutPoint { hash, index },
+                    prevout: blvm_consensus::types::OutPoint { hash, index },
                     script_sig: vec![].into(),
                     sequence: 0xffffffff,
                 });
@@ -198,7 +198,7 @@ fuzz_target!(|data: &[u8]| {
 
         // Build block
         let block = Block {
-            header: bllvm_consensus::types::BlockHeader {
+            header: blvm_consensus::types::BlockHeader {
                 version: 1,
                 prev_block_hash: [0; 32],
                 merkle_root: [0; 32],

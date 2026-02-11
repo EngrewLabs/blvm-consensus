@@ -14,7 +14,7 @@ use blvm_consensus::types::{
 /// Test that coinbase outputs cannot be spent before maturity
 #[test]
 fn test_coinbase_immature_rejected() {
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
 
     // Create a coinbase UTXO at height 0
     let coinbase_outpoint = OutPoint {
@@ -58,7 +58,7 @@ fn test_coinbase_immature_rejected() {
 /// Test that coinbase outputs can be spent exactly at maturity
 #[test]
 fn test_coinbase_mature_accepted() {
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
 
     // Create a coinbase UTXO at height 0
     let coinbase_outpoint = OutPoint {
@@ -102,7 +102,7 @@ fn test_coinbase_mature_accepted() {
 /// Test that coinbase outputs can be spent after maturity
 #[test]
 fn test_coinbase_after_maturity_accepted() {
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
 
     // Create a coinbase UTXO at height 0
     let coinbase_outpoint = OutPoint {
@@ -146,7 +146,7 @@ fn test_coinbase_after_maturity_accepted() {
 /// Test that non-coinbase UTXOs are not subject to maturity requirement
 #[test]
 fn test_non_coinbase_no_maturity_requirement() {
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
 
     // Create a non-coinbase UTXO at height 0
     let outpoint = OutPoint {
@@ -190,7 +190,7 @@ fn test_non_coinbase_no_maturity_requirement() {
 /// Test coinbase maturity with different creation heights
 #[test]
 fn test_coinbase_maturity_different_heights() {
-    let mut utxo_set = UtxoSet::new();
+    let mut utxo_set = UtxoSet::default();
 
     // Create a coinbase UTXO at height 50
     let coinbase_outpoint = OutPoint {

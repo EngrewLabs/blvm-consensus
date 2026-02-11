@@ -603,8 +603,10 @@ fn compute_block_hash(header: &BlockHeader) -> Hash {
 /// - discover_diverse_peers(peers) ⊆ peers (no new peers created)
 /// - verify_consensus_commitment(consensus, headers) verifies PoW + supply
 ///
-// Invariants:
+/// Invariants:
 /// - Consensus requires threshold percentage agreement
-// - Diverse peer discovery filters for diversity
+/// - Diverse peer discovery filters for diversity
+#[doc(hidden)]
+const _PEER_CONSENSUS_SPEC: () = ();
 
 // End of module

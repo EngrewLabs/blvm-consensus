@@ -30,7 +30,7 @@ fn test_merkle_root_single_transaction() {
 
 #[test]
 fn test_block_template_creation() {
-    let utxo = blvm_consensus::UtxoSet::new();
+    let utxo = blvm_consensus::UtxoSet::default();
     let mempool_txs = vec![];
     let height = 1;
     let prev_header = BlockHeader {
