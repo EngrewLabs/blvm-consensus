@@ -1,9 +1,9 @@
 //! Block SigOp Cost Limits Verification Tests
 //!
-//! Tests to verify BLLVM's block sigop cost limits match Bitcoin Core exactly.
+//! Tests to verify BLLVM's block sigop cost limits match consensus exactly.
 //! Sigop cost limits are consensus-critical - differences = chain split.
 //!
-//! Core limit:
+//! Consensus limit:
 //! - MAX_BLOCK_SIGOPS_COST = 80,000
 //! - Cost = (legacy_sigops × 4) + (p2sh_sigops × 4) + witness_sigops
 
@@ -36,7 +36,7 @@ fn create_tx_with_sigops(_legacy_sigops: usize) -> Transaction {
 
 /// Test block sigop cost: at maximum (80,000)
 ///
-/// Core allows: block_sigop_cost <= 80,000
+/// Consensus allows: block_sigop_cost <= 80,000
 #[test]
 fn test_block_sigop_cost_at_maximum() {
     // Create a block with transactions that sum to exactly 80,000 sigop cost
@@ -53,7 +53,7 @@ fn test_block_sigop_cost_at_maximum() {
         transactions: vec![create_tx_with_sigops(0), create_tx_with_sigops(0)].into(),
     };
 
-    // Verify MAX_BLOCK_SIGOPS_COST constant matches Core
+    // Verify MAX_BLOCK_SIGOPS_COST constant matches consensus
     assert_eq!(
         MAX_BLOCK_SIGOPS_COST, 80_000,
         "MAX_BLOCK_SIGOPS_COST should be 80,000"
@@ -62,7 +62,7 @@ fn test_block_sigop_cost_at_maximum() {
 
 /// Test block sigop cost: exceeds maximum (80,001)
 ///
-/// Core rejects: block_sigop_cost > 80,000
+/// Consensus rejects: block_sigop_cost > 80,000
 #[test]
 fn test_block_sigop_cost_exceeds_maximum() {
     // This test verifies that blocks exceeding the sigop limit are rejected
@@ -76,7 +76,7 @@ fn test_block_sigop_cost_exceeds_maximum() {
 
 /// Test sigop cost calculation: legacy sigops
 ///
-/// Core: legacy_sigops × 4 = cost
+/// Consensus: legacy_sigops × 4 = cost
 #[test]
 fn test_sigop_cost_legacy() {
     // Legacy sigops are multiplied by 4 in cost calculation
@@ -92,7 +92,7 @@ fn test_sigop_cost_legacy() {
 
 /// Test sigop cost calculation: P2SH sigops
 ///
-/// Core: p2sh_sigops × 4 = cost
+/// Consensus: p2sh_sigops × 4 = cost
 #[test]
 fn test_sigop_cost_p2sh() {
     // P2SH sigops are multiplied by 4 in cost calculation
@@ -107,7 +107,7 @@ fn test_sigop_cost_p2sh() {
 
 /// Test sigop cost calculation: witness sigops
 ///
-/// Core: witness_sigops × 1 = cost (not multiplied)
+/// Consensus: witness_sigops × 1 = cost (not multiplied)
 #[test]
 fn test_sigop_cost_witness() {
     // Witness sigops are NOT multiplied (cost = count)
@@ -122,7 +122,7 @@ fn test_sigop_cost_witness() {
 
 /// Test sigop cost calculation: combined
 ///
-/// Core: total_cost = (legacy × 4) + (p2sh × 4) + witness
+/// Consensus: total_cost = (legacy × 4) + (p2sh × 4) + witness
 #[test]
 fn test_sigop_cost_combined() {
     const LEGACY_SIGOPS: u64 = 5_000;

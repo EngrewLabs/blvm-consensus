@@ -280,11 +280,9 @@ fn test_ctv_opcode_valid_template() {
     script.extend_from_slice(&template_hash);
     script.push(0xba); // OP_CHECKTEMPLATEVERIFY
 
-    // Create prevouts
-    let prevouts = vec![TransactionOutput {
-        value: 1000,
-        script_pubkey: vec![0x51],
-    }];
+    let pv = vec![1000i64];
+    let sp: blvm_consensus::types::ByteString = vec![0x51].into();
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&sp];
 
     // Verify script with context
     let result = verify_script_with_context_full(
@@ -294,11 +292,16 @@ fn test_ctv_opcode_valid_template() {
         0, // flags
         &tx,
         0, // input_index
-        &prevouts,
+        &pv,
+        &psp,
         None, // block_height
         None, // median_time_past
-        crate::types::Network::Mainnet,
-        crate::script::SigVersion::Base,
+        blvm_consensus::types::Network::Mainnet,
+        blvm_consensus::script::SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
 
     // CTV should pass with correct template hash
@@ -333,10 +336,9 @@ fn test_ctv_opcode_invalid_template() {
     script.extend_from_slice(&wrong_hash);
     script.push(0xba); // OP_CHECKTEMPLATEVERIFY
 
-    let prevouts = vec![TransactionOutput {
-        value: 1000,
-        script_pubkey: vec![0x51],
-    }];
+    let pv = vec![1000i64];
+    let sp: blvm_consensus::types::ByteString = vec![0x51].into();
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&sp];
 
     let result = verify_script_with_context_full(
         &tx.inputs[0].script_sig,
@@ -345,11 +347,16 @@ fn test_ctv_opcode_invalid_template() {
         0,
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         None,
         None,
-        crate::types::Network::Mainnet,
-        crate::script::SigVersion::Base,
+        blvm_consensus::types::Network::Mainnet,
+        blvm_consensus::script::SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
 
     // CTV should fail with wrong template hash
@@ -383,10 +390,9 @@ fn test_ctv_opcode_wrong_hash_size() {
     script.extend_from_slice(&wrong_size);
     script.push(0xba); // OP_CHECKTEMPLATEVERIFY
 
-    let prevouts = vec![TransactionOutput {
-        value: 1000,
-        script_pubkey: vec![0x51],
-    }];
+    let pv = vec![1000i64];
+    let sp: blvm_consensus::types::ByteString = vec![0x51].into();
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&sp];
 
     let result = verify_script_with_context_full(
         &tx.inputs[0].script_sig,
@@ -395,11 +401,16 @@ fn test_ctv_opcode_wrong_hash_size() {
         0,
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         None,
         None,
-        crate::types::Network::Mainnet,
-        crate::script::SigVersion::Base,
+        blvm_consensus::types::Network::Mainnet,
+        blvm_consensus::script::SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
 
     // CTV should fail with wrong hash size
@@ -428,10 +439,9 @@ fn test_ctv_opcode_empty_stack() {
     // Script with just OP_CHECKTEMPLATEVERIFY (no hash on stack)
     let script = vec![0xba]; // OP_CHECKTEMPLATEVERIFY
 
-    let prevouts = vec![TransactionOutput {
-        value: 1000,
-        script_pubkey: vec![0x51],
-    }];
+    let pv = vec![1000i64];
+    let sp: blvm_consensus::types::ByteString = vec![0x51].into();
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&sp];
 
     let result = verify_script_with_context_full(
         &tx.inputs[0].script_sig,
@@ -440,11 +450,16 @@ fn test_ctv_opcode_empty_stack() {
         0,
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         None,
         None,
-        crate::types::Network::Mainnet,
-        crate::script::SigVersion::Base,
+        blvm_consensus::types::Network::Mainnet,
+        blvm_consensus::script::SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
 
     // CTV should fail with empty stack
@@ -499,10 +514,8 @@ fn test_ctv_transaction_validation_passes() {
     );
 
     // Verify script
-    let prevouts = vec![TransactionOutput {
-        value: 1000,
-        script_pubkey: tx.outputs[0].script_pubkey.clone(),
-    }];
+    let pv = vec![1000i64];
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&tx.outputs[0].script_pubkey];
 
     let result = verify_script_with_context_full(
         &tx.inputs[0].script_sig,
@@ -511,9 +524,16 @@ fn test_ctv_transaction_validation_passes() {
         0,
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         None,
         None,
+        blvm_consensus::types::Network::Mainnet,
+        blvm_consensus::script::SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
 
     // Should pass: template hash matches
@@ -568,10 +588,8 @@ fn test_ctv_transaction_validation_fails_wrong_structure() {
     script_pubkey.push(0xba);
 
     // Try to validate tx2 with tx1's template hash
-    let prevouts = vec![TransactionOutput {
-        value: 1000,
-        script_pubkey: script_pubkey.clone(),
-    }];
+    let pv = vec![1000i64];
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&script_pubkey];
 
     let result = verify_script_with_context_full(
         &tx2.inputs[0].script_sig,
@@ -580,9 +598,16 @@ fn test_ctv_transaction_validation_fails_wrong_structure() {
         0,
         &tx2,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         None,
         None,
+        blvm_consensus::types::Network::Mainnet,
+        blvm_consensus::script::SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
 
     // Should fail: template hash doesn't match tx2's structure
@@ -726,10 +751,8 @@ fn test_ctv_vault_contract() {
     vault_script.push(0xba); // OP_CHECKTEMPLATEVERIFY
 
     // Verify vault withdrawal matches template
-    let prevouts = vec![TransactionOutput {
-        value: 1000000,
-        script_pubkey: vault_script.clone(),
-    }];
+    let pv = vec![1000000i64];
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&vault_script];
 
     let result = verify_script_with_context_full(
         &tx.inputs[0].script_sig,
@@ -738,9 +761,16 @@ fn test_ctv_vault_contract() {
         0,
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         None,
         None,
+        blvm_consensus::types::Network::Mainnet,
+        blvm_consensus::script::SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
 
     assert!(result.is_ok() && result.unwrap(), "Vault withdrawal should pass with correct template");
@@ -778,7 +808,8 @@ fn test_ctv_payment_channel() {
     channel_script.extend_from_slice(&template_hash);
     channel_script.push(0xba);
 
-    let prevouts = vec![channel_output];
+    let pv = vec![channel_output.value];
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&channel_output.script_pubkey];
 
     let result = verify_script_with_context_full(
         &tx.inputs[0].script_sig,
@@ -787,9 +818,16 @@ fn test_ctv_payment_channel() {
         0,
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         None,
         None,
+        blvm_consensus::types::Network::Mainnet,
+        blvm_consensus::script::SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
 
     assert!(result.is_ok() && result.unwrap(), "Payment channel closure should pass with correct template");
@@ -835,10 +873,8 @@ fn test_ctv_transaction_batching() {
     batch_script.extend_from_slice(&template_hash);
     batch_script.push(0xba);
 
-    let prevouts = vec![TransactionOutput {
-        value: 600000,
-        script_pubkey: batch_script.clone(),
-    }];
+    let pv = vec![600000i64];
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&batch_script];
 
     let result = verify_script_with_context_full(
         &tx.inputs[0].script_sig,
@@ -847,9 +883,16 @@ fn test_ctv_transaction_batching() {
         0,
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         None,
         None,
+        blvm_consensus::types::Network::Mainnet,
+        blvm_consensus::script::SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
 
     assert!(result.is_ok() && result.unwrap(), "Transaction batching should pass with correct template");
@@ -1208,10 +1251,9 @@ fn test_ctv_multiple_ctv_in_script() {
 
     // First CTV should pass, but second will fail (no hash on stack)
     // This tests that CTV consumes the hash from stack
-    let prevouts = vec![TransactionOutput {
-        value: 1000,
-        script_pubkey: vec![0x51],
-    }];
+    let pv = vec![1000i64];
+    let sp: blvm_consensus::types::ByteString = vec![0x51].into();
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&sp];
 
     let result = verify_script_with_context_full(
         &tx.inputs[0].script_sig,
@@ -1220,11 +1262,16 @@ fn test_ctv_multiple_ctv_in_script() {
         0,
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         None,
         None,
-        crate::types::Network::Mainnet,
-        crate::script::SigVersion::Base,
+        blvm_consensus::types::Network::Mainnet,
+        blvm_consensus::script::SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
 
     // Should fail because second CTV has no hash on stack

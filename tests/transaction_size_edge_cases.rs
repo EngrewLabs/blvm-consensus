@@ -1,7 +1,7 @@
 //! Transaction size calculation edge cases
 //!
 //! Tests for consensus-critical transaction size calculation that must match
-//! Bitcoin Core's GetSerializeSize(TX_NO_WITNESS(tx)) exactly.
+//! consensus's GetSerializeSize(TX_NO_WITNESS(tx)) exactly.
 //!
 //! Consensus-critical: Size calculation differences can cause different validation results.
 
@@ -12,7 +12,7 @@ use blvm_consensus::types::{OutPoint, Transaction, TransactionInput, Transaction
 /// Test that calculate_transaction_size matches actual serialization size
 ///
 /// This is the critical test: the size calculation must match the actual
-/// serialized size (without witness data) to match Bitcoin Core's behavior.
+/// serialized size (without witness data) to match consensus's behavior.
 #[test]
 fn test_transaction_size_matches_serialization() {
     // Simple transaction
@@ -180,7 +180,7 @@ fn test_transaction_size_empty_scripts() {
     );
 }
 
-/// Test that size calculation matches Core's TX_NO_WITNESS behavior
+/// Test that size calculation matches specification's TX_NO_WITNESS behavior
 #[test]
 fn test_transaction_size_no_witness() {
     let tx = Transaction {

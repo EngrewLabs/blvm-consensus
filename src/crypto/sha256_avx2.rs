@@ -1,7 +1,7 @@
 //! AVX2-optimized SHA256 implementation
 //!
 //! This module provides 8-way parallel double SHA256 (SHA256D) hashing using AVX2 SIMD instructions.
-//! Ported from Bitcoin Core's sha256_avx2.cpp implementation.
+//! Ported from reference implementation's sha256_avx2.cpp implementation.
 //!
 //! # Performance
 //! - Processes 8 independent SHA256 hashes in parallel
@@ -58,13 +58,13 @@ mod helpers {
 
     #[inline(always)]
     pub unsafe fn add4(x: __m256i, y: __m256i, z: __m256i, w: __m256i) -> __m256i {
-        // Core: Add(x, y, z, w) = Add(Add(x, y), Add(z, w))
+        // Op: Add(x, y, z, w) = Add(Add(x, y), Add(z, w))
         add(add(x, y), add(z, w))
     }
 
     #[inline(always)]
     pub unsafe fn add5(x: __m256i, y: __m256i, z: __m256i, w: __m256i, v: __m256i) -> __m256i {
-        // Core: Add(x, y, z, w, v) = Add(Add(x, y, z), Add(w, v))
+        // Op: Add(x, y, z, w, v) = Add(Add(x, y, z), Add(w, v))
         add(add3(x, y, z), add(w, v))
     }
 
@@ -142,8 +142,8 @@ mod helpers {
 
     #[inline(always)]
     pub unsafe fn inc3(x: &mut __m256i, y: __m256i, z: __m256i) -> __m256i {
-        // Core: Inc(x, y, z) { x = Add(x, y, z); return x; }
-        // Core: Add(x, y, z) = Add(Add(x, y), z)
+        // Op: Inc(x, y, z) { x = Add(x, y, z); return x; }
+        // Op: Add(x, y, z) = Add(Add(x, y), z)
         // So: x = Add(Add(x, y), z)
         *x = add3(*x, y, z);
         *x
@@ -151,8 +151,8 @@ mod helpers {
 
     #[inline(always)]
     pub unsafe fn inc4(x: &mut __m256i, y: __m256i, z: __m256i, w: __m256i) -> __m256i {
-        // Core: Inc(x, y, z, w) { x = Add(x, y, z, w); return x; }
-        // Core: Add(x, y, z, w) = Add(Add(x, y), Add(z, w))
+        // Op: Inc(x, y, z, w) { x = Add(x, y, z, w); return x; }
+        // Op: Add(x, y, z, w) = Add(Add(x, y), Add(z, w))
         // So: x = Add(Add(x, y), Add(z, w))
         *x = add4(*x, y, z, w);
         *x
@@ -164,7 +164,7 @@ mod helpers {
 macro_rules! round {
     ($a:expr, $b:expr, $c:expr, $d:expr, $e:expr, $f:expr, $g:expr, $h:expr, $k:expr) => {{
         use helpers::*;
-        // Core: Add(h, Sigma1(e), Ch(e, f, g), k) = Add(Add(h, Sigma1(e)), Add(Ch(e, f, g), k))
+        // Op: Add(h, Sigma1(e), Ch(e, f, g), k) = Add(Add(h, Sigma1(e)), Add(Ch(e, f, g), k))
         let t1 = add(
             add($h, helpers::sigma1($e)),
             add(helpers::ch($e, $f, $g), $k),
@@ -186,9 +186,9 @@ unsafe fn read8(input: &[u8], offset: usize) -> __m256i {
     }
 
     // _mm256_set_epi32 places first argument at index 7, last at index 0
-    // Core: ReadLE32(chunk + 0) is first arg -> index 7, ReadLE32(chunk + 64) is second arg -> index 6, etc.
+    // ReadLE32(chunk + 0) is first arg -> index 7, ReadLE32(chunk + 64) is second arg -> index 6, etc.
     // So words[0] (chunk + 0) should be first arg -> index 7
-    // But wait - let's verify: Core does ReadLE32(chunk + 0 + offset) as FIRST argument
+    // ReadLE32(chunk + 0 + offset) as FIRST argument
     // So chunk 0 goes to index 7, chunk 1 (chunk + 64) goes to index 6, etc.
     // This means words[0] -> index 7, words[1] -> index 6, ..., words[7] -> index 0
     let ret = _mm256_set_epi32(
@@ -202,7 +202,7 @@ unsafe fn read8(input: &[u8], offset: usize) -> __m256i {
         words[7] as i32, // chunk + 448 -> index 0 (last arg)
     );
 
-    // Byte swap within each 32-bit word using shuffle (matching Core exactly)
+    // Byte swap within each 32-bit word using shuffle (matching reference)
     // SHA256 operates on big-endian 32-bit words internally
     // We read little-endian, so we need to byte-swap each word
     // The shuffle mask 0x0C0D0E0F, 0x08090A0B, 0x04050607, 0x00010203
@@ -220,7 +220,7 @@ unsafe fn read8(input: &[u8], offset: usize) -> __m256i {
 /// Write 8 32-bit words to 8 different output positions
 #[cfg(target_arch = "x86_64")]
 unsafe fn write8(out: &mut [u8], offset: usize, v: __m256i) {
-    // Core's Write8 does: byte-swap with shuffle, then WriteLE32 to each position
+    // Write8: byte-swap with shuffle, then WriteLE32 to each position
     // Byte swap within each 32-bit word using shuffle
     let shuffle_mask = _mm256_set_epi32(
         0x0C0D0E0F, 0x08090A0B, 0x04050607, 0x00010203, 0x0C0D0E0F, 0x08090A0B, 0x04050607,
@@ -228,7 +228,7 @@ unsafe fn write8(out: &mut [u8], offset: usize, v: __m256i) {
     );
     let v = _mm256_shuffle_epi8(v, shuffle_mask);
 
-    // Extract and write to 8 different positions (Core's WriteLE32)
+    // Extract and write to 8 different positions (WriteLE32)
     // Unroll loop because _mm256_extract_epi32 requires compile-time constant index
     let word0 = _mm256_extract_epi32(v, 7) as u32;
     out[offset..offset + 4].copy_from_slice(&word0.to_le_bytes());
@@ -257,7 +257,7 @@ unsafe fn write8(out: &mut [u8], offset: usize, v: __m256i) {
 unsafe fn transform_8way(out: &mut [u8], input: &[u8]) {
     use helpers::*;
 
-    // Initialize state with initial hash values (host byte order, matching Core)
+    // Initialize state with initial hash values (host byte order)
     let mut a = _mm256_set1_epi32(INITIAL_HASH.0[0] as i32);
     let mut b = _mm256_set1_epi32(INITIAL_HASH.0[1] as i32);
     let mut c = _mm256_set1_epi32(INITIAL_HASH.0[2] as i32);
@@ -362,7 +362,7 @@ unsafe fn transform_8way(out: &mut [u8], input: &[u8]) {
     }
 
     // Rounds 16-63: Message schedule
-    // Core: Inc(w0, sigma1(w14), w9, sigma0(w1)) = Add(Add(w0, sigma1(w14)), Add(w9, sigma0(w1)))
+    // Formula: Inc(w0, sigma1(w14), w9, sigma0(w1)) = Add(Add(w0, sigma1(w14)), Add(w9, sigma0(w1)))
     #[cfg(debug_assertions)]
     {
         let w0_before = _mm256_extract_epi32(w0, 0) as u32;
@@ -508,7 +508,7 @@ unsafe fn transform_8way(out: &mut [u8], input: &[u8]) {
         let a_after_round30 = _mm256_extract_epi32(a, 0) as u32;
         println!("DEBUG After round 30: a=0x{a_after_round30:08x}");
     }
-    // Core Transform 1 round 31: Inc(w15, sigma1(w13), w8, sigma0(w0)) - no k(0x100) in Transform 1
+    // Message schedule Transform 1 round 31: Inc(w15, sigma1(w13), w8, sigma0(w0)) - no k(0x100) in Transform 1
     #[cfg(debug_assertions)]
     {
         let a_before_round31 = _mm256_extract_epi32(a, 0) as u32;
@@ -850,9 +850,9 @@ unsafe fn transform_8way(out: &mut [u8], input: &[u8]) {
     let t7 = h;
 
     // Transform 2: Process padding block (0x80000000, zeros, length 0x200)
-    // Core does NOT reset state - it continues with the state from Transform 1!
+    // State is NOT reset - continues from Transform 1
 
-    // Transform 2 uses different K constants (hardcoded in Core)
+    // Transform 2 uses different K constants
     round!(a, b, c, d, e, f, g, h, k(0xc28a2f98));
     round!(h, a, b, c, d, e, f, g, k(0x71374491));
     round!(g, h, a, b, c, d, e, f, k(0xb5c0fbcf));
@@ -1012,7 +1012,7 @@ unsafe fn transform_8way(out: &mut [u8], input: &[u8]) {
     }
 
     // Rounds 16-63: Message schedule with special handling (Transform 2)
-    // Core Transform 2: different pattern than Transform 1
+    // Message schedule Transform 2: different pattern than Transform 1
     #[cfg(debug_assertions)]
     {
         let a_before_16 = _mm256_extract_epi32(a, 0) as u32;
@@ -1043,7 +1043,7 @@ unsafe fn transform_8way(out: &mut [u8], input: &[u8]) {
         let w1_before = _mm256_extract_epi32(w1, 0) as u32;
         println!("DEBUG Transform 3 round 16: d before = 0x{d_before_16:08x} (expected 0x3c3a4027), w0=0x{w0_before:08x}, w1=0x{w1_before:08x}");
     }
-    // Rounds 16-31: Match Core Transform 3 exactly
+    // Rounds 16-31: Match message schedule Transform 3 exactly
     #[cfg(debug_assertions)]
     {
         let w0_before = _mm256_extract_epi32(w0, 0) as u32;
@@ -1124,7 +1124,7 @@ unsafe fn transform_8way(out: &mut [u8], input: &[u8]) {
     );
     round!(b, c, d, e, f, g, h, a, add(k(K_ARRAY.0[31]), w15));
 
-    // Continue with standard message schedule for rounds 32-63 (matching Core Transform 3 pattern)
+    // Continue with standard message schedule for rounds 32-63 (matching Transform 3 pattern)
     #[cfg(debug_assertions)]
     {
         let a_before_32 = _mm256_extract_epi32(a, 0) as u32;
@@ -1361,7 +1361,7 @@ unsafe fn transform_8way(out: &mut [u8], input: &[u8]) {
         helpers::sigma0_small(w14),
     );
     round!(d, e, f, g, h, a, b, c, add(k(K_ARRAY.0[61]), w13));
-    // Core Transform 3 rounds 62-63: Use Add with 5 args, w14/w15 NOT modified (different from Transform 1)
+    // Message schedule Transform 3 rounds 62-63: Use Add with 5 args, w14/w15 NOT modified (different from Transform 1)
     round!(
         c,
         d,
@@ -1398,7 +1398,7 @@ unsafe fn transform_8way(out: &mut [u8], input: &[u8]) {
     );
 
     // Add initial hash values and write output
-    // Core: Add initial hash values before writing output
+    // Add initial hash values before writing output
     #[cfg(debug_assertions)]
     {
         // After round 63: round!(b, c, d, e, f, g, h, a, ...)

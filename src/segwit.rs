@@ -184,6 +184,24 @@ pub fn calculate_block_weight(block: &Block, witnesses: &[Witness]) -> Result<Na
     Ok(total_weight)
 }
 
+/// Calculate block weight from nested witnesses without flattening.
+/// Accepts `&[Vec<Witness>]` where each `Vec<Witness>` is one tx's input witness stacks.
+/// Avoids allocating the flattened structure in the hot block validation path.
+#[inline]
+pub fn calculate_block_weight_from_nested(block: &Block, witnesses: &[Vec<Witness>]) -> Result<Natural> {
+    let mut total_weight = 0;
+    for (i, tx) in block.transactions.iter().enumerate() {
+        let witness_size: Natural = if i < witnesses.len() {
+            witnesses[i].iter().flat_map(|w| w.iter()).map(|e| e.len() as Natural).sum()
+        } else {
+            0
+        };
+        let base_size = (4 + tx.inputs.len() * (32 + 4 + 1 + 4) + tx.outputs.len() * (8 + 1) + 4) as Natural;
+        total_weight += witness::calculate_transaction_weight_segwit(base_size, base_size + witness_size);
+    }
+    Ok(total_weight)
+}
+
 /// Validate SegWit block
 #[spec_locked("11.1")]
 pub fn validate_segwit_block(

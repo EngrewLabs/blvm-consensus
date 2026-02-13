@@ -9,22 +9,22 @@ use serde::{Deserialize, Serialize};
 /// Network message size limits configuration
 ///
 /// These limits protect against DoS attacks by bounding the size of network messages.
-/// All limits match Bitcoin Core's protocol limits.
+/// All limits match Bitcoin protocol defaults.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkMessageLimits {
-    /// Maximum addresses in an addr message (Bitcoin Core: 1000)
+    /// Maximum addresses in an addr message (protocol default: 1000)
     #[serde(default = "default_max_addr_addresses")]
     pub max_addr_addresses: usize,
 
-    /// Maximum inventory items in inv/getdata messages (Bitcoin Core: 50000)
+    /// Maximum inventory items in inv/getdata messages (protocol default: 50000)
     #[serde(default = "default_max_inv_items")]
     pub max_inv_items: usize,
 
-    /// Maximum headers in a headers message (Bitcoin Core: 2000)
+    /// Maximum headers in a headers message (protocol default: 2000)
     #[serde(default = "default_max_headers")]
     pub max_headers: usize,
 
-    /// Maximum user agent length in version message (Bitcoin Core: 256 bytes)
+    /// Maximum user agent length in version message (protocol default: 256 bytes)
     #[serde(default = "default_max_user_agent_length")]
     pub max_user_agent_length: usize,
 }
@@ -60,13 +60,13 @@ impl Default for NetworkMessageLimits {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockValidationConfig {
     /// Assume-valid height: blocks before this height skip signature verification
-    /// (Bitcoin Core's -assumevalid parameter)
+    /// (-assumevalid equivalent)
     /// Default: 0 (validate all blocks - safest option)
     #[serde(default)]
     pub assume_valid_height: u64,
 
     /// Number of recent headers required for median time-past calculation (BIP113)
-    /// Default: 11 (Bitcoin Core standard)
+    /// Default: 11 (BIP113 standard)
     #[serde(default = "default_median_time_past_headers")]
     pub median_time_past_headers: usize,
 
@@ -87,29 +87,29 @@ pub struct BlockValidationConfig {
     pub max_block_sigops_cost_override: u64,
 }
 
-/// Mempool configuration (Bitcoin Core parity)
+/// Mempool configuration
 ///
 /// Controls mempool size limits, fee rates, and transaction expiry.
 /// These are operational parameters, not consensus-critical.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MempoolConfig {
-    /// Maximum mempool size in megabytes (Bitcoin Core: -maxmempool, default 300 MB)
+    /// Maximum mempool size in megabytes (default 300 MB)
     /// Default: 300 MB
     #[serde(default = "default_max_mempool_mb")]
     pub max_mempool_mb: u64,
 
     /// Maximum number of transactions in mempool (alternative to size-based limit)
-    /// Default: 100000 (Bitcoin Core uses size-based limit primarily)
+    /// Default: 100000
     #[serde(default = "default_max_mempool_txs")]
     pub max_mempool_txs: usize,
 
-    /// Mempool transaction expiry in hours (Bitcoin Core: -mempool expiry, default 336 hours = 14 days)
+    /// Mempool transaction expiry in hours (default 336 = 14 days)
     /// Transactions older than this are removed from mempool
     /// Default: 336 (14 days)
     #[serde(default = "default_mempool_expiry_hours")]
     pub mempool_expiry_hours: u64,
 
-    /// Minimum relay fee rate in satoshis per virtual byte (Bitcoin Core: -minrelaytxfee, default 1000 sat/kB = 1 sat/vB)
+    /// Minimum relay fee rate in satoshis per virtual byte (default 1 sat/vB)
     /// Transactions with fee rate below this are not relayed
     /// Default: 1 sat/vB (1000 sat/kB)
     #[serde(default = "default_min_relay_fee_rate")]
@@ -122,11 +122,11 @@ pub struct MempoolConfig {
 
     /// RBF (Replace-By-Fee) minimum fee increment in satoshis (BIP125)
     /// Replacement transactions must pay at least this much more than the original
-    /// Default: 1000 satoshis (Bitcoin Core standard)
+    /// Default: 1000 satoshis
     #[serde(default = "default_rbf_fee_increment")]
     pub rbf_fee_increment: i64,
 
-    /// Maximum OP_RETURN data size in bytes (Bitcoin Core: 80 bytes)
+    /// Maximum OP_RETURN data size in bytes (default 80)
     /// Default: 80 bytes
     #[serde(default = "default_max_op_return_size")]
     pub max_op_return_size: u32,
@@ -306,9 +306,12 @@ impl Default for UtxoCommitmentConfig {
 ///
 /// Controls performance tuning, parallelization, and optimization features.
 /// These are operational parameters that affect performance but not consensus correctness.
+///
+/// IBD batch tuning: When `ibd_chunk_threshold` / `ibd_min_chunk_size` are `None`,
+/// hardware-derived values are used. When `Some(x)`, config overrides hardware.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PerformanceConfig {
-    /// Number of threads for script verification (Bitcoin Core: -par, default: number of CPU cores)
+    /// Number of threads for script verification (default: number of CPU cores)
     /// Default: 0 (auto-detect from CPU count)
     #[serde(default)]
     pub script_verification_threads: usize,
@@ -318,6 +321,16 @@ pub struct PerformanceConfig {
     /// Default: 8 transactions per batch
     #[serde(default = "default_parallel_batch_size")]
     pub parallel_batch_size: usize,
+
+    /// IBD batch: chunk threshold (parallelize when sig count exceeds this).
+    /// None = use hardware-derived; Some(x) = override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ibd_chunk_threshold: Option<usize>,
+
+    /// IBD batch: minimum chunk size for parallel batches.
+    /// None = use hardware-derived; Some(x) = override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ibd_min_chunk_size: Option<usize>,
 
     /// Enable SIMD/vectorization optimizations (if available)
     /// Default: true
@@ -344,6 +357,8 @@ impl Default for PerformanceConfig {
         Self {
             script_verification_threads: 0, // Auto-detect
             parallel_batch_size: 8,
+            ibd_chunk_threshold: None,
+            ibd_min_chunk_size: None,
             enable_simd_optimizations: true,
             enable_cache_optimizations: true,
             enable_batch_utxo_lookups: true,
@@ -520,7 +535,7 @@ pub struct ConsensusConfig {
     #[serde(default)]
     pub block_validation: BlockValidationConfig,
 
-    /// Mempool configuration (Bitcoin Core parity)
+    /// Mempool configuration
     #[serde(default)]
     pub mempool: MempoolConfig,
 
@@ -628,7 +643,7 @@ impl ConsensusConfig {
             }
         }
 
-        // Load mempool configuration (Bitcoin Core parity)
+        // Load mempool configuration
         if let Ok(val) = std::env::var("BLVM_CONSENSUS_MEMPOOL_MAX_MEMPOOL_MB") {
             if let Ok(mb) = val.parse::<u64>() {
                 config.mempool.max_mempool_mb = mb;
@@ -707,6 +722,16 @@ impl ConsensusConfig {
         if let Ok(val) = std::env::var("BLVM_CONSENSUS_PERFORMANCE_ENABLE_BATCH_UTXO_LOOKUPS") {
             if let Ok(enabled) = val.parse::<bool>() {
                 config.performance.enable_batch_utxo_lookups = enabled;
+            }
+        }
+        if let Ok(val) = std::env::var("BLVM_CONSENSUS_PERFORMANCE_IBD_CHUNK_THRESHOLD") {
+            if let Ok(n) = val.parse::<usize>() {
+                config.performance.ibd_chunk_threshold = Some(n);
+            }
+        }
+        if let Ok(val) = std::env::var("BLVM_CONSENSUS_PERFORMANCE_IBD_MIN_CHUNK_SIZE") {
+            if let Ok(n) = val.parse::<usize>() {
+                config.performance.ibd_min_chunk_size = Some(n);
             }
         }
 
@@ -827,28 +852,96 @@ impl ConsensusConfig {
     }
 }
 
-/// Global consensus configuration instance
+/// Global consensus configuration (cached at first use).
 ///
-/// This is initialized from environment variables or config file at startup.
-/// All consensus functions should use this for configurable parameters.
+/// Uses a single OnceLock — from_env() runs once, then we clone. No init_consensus_config;
+/// the node can extend from_env (e.g. config file path in env) later if needed.
+/// CRITICAL: Was re-running 50+ std::env::var() per block before caching.
 static GLOBAL_CONSENSUS_CONFIG: std::sync::OnceLock<ConsensusConfig> = std::sync::OnceLock::new();
 
-/// Initialize global consensus configuration
+/// Initialize global consensus configuration (optional, for tests or future node use).
 ///
-/// This should be called once at startup, before any consensus validation.
-/// If not called, defaults will be used.
+/// If called before any get_consensus_config(), overrides the default from-env config.
+#[allow(dead_code)] // Reserved for when node loads config from file
 pub fn init_consensus_config(config: ConsensusConfig) {
-    GLOBAL_CONSENSUS_CONFIG
-        .set(config)
-        .expect("Consensus config already initialized");
+    let _ = GLOBAL_CONSENSUS_CONFIG.set(config);
 }
 
-/// Get global consensus configuration
+/// Get global consensus configuration by reference (cached; no clone).
 ///
-/// Returns the global config if initialized, otherwise returns defaults.
+/// Prefer this over [`get_consensus_config`] in hot paths to avoid cloning.
+pub fn get_consensus_config_ref() -> &'static ConsensusConfig {
+    GLOBAL_CONSENSUS_CONFIG.get_or_init(ConsensusConfig::from_env)
+}
+
+/// Get global consensus configuration (cached; clone for compatibility).
 pub fn get_consensus_config() -> ConsensusConfig {
-    GLOBAL_CONSENSUS_CONFIG
-        .get()
-        .cloned()
-        .unwrap_or_else(ConsensusConfig::from_env)
+    get_consensus_config_ref().clone()
+}
+
+/// Assume-valid height (cached). Used by block and script hot paths.
+/// Benchmarking: set_assume_valid_height() overrides when feature enabled.
+pub fn get_assume_valid_height() -> u64 {
+    #[cfg(all(feature = "production", feature = "benchmarking"))]
+    {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static OVERRIDE: AtomicU64 = AtomicU64::new(u64::MAX);
+        let v = OVERRIDE.load(Ordering::Relaxed);
+        if v != u64::MAX {
+            return v;
+        }
+    }
+    get_consensus_config_ref().block_validation.assume_valid_height
+}
+
+/// Set assume-valid height for benchmarking (overrides config).
+#[cfg(all(feature = "production", feature = "benchmarking"))]
+pub fn set_assume_valid_height(height: u64) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static OVERRIDE: AtomicU64 = AtomicU64::new(u64::MAX);
+    OVERRIDE.store(height, Ordering::Relaxed);
+}
+
+/// Reset assume-valid override (benchmarking).
+#[cfg(all(feature = "production", feature = "benchmarking"))]
+pub fn reset_assume_valid_height() {
+    set_assume_valid_height(u64::MAX);
+}
+
+/// CCheckQueue-style validation: BLVM_SCRIPT_CHECK_QUEUE=1 to enable. Cached at first use.
+#[cfg(all(feature = "production", feature = "rayon"))]
+pub fn use_script_check_queue() -> bool {
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<bool> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        std::env::var("BLVM_SCRIPT_CHECK_QUEUE")
+            .map(|v| v == "1" || v == "true")
+            .unwrap_or(false)
+    })
+}
+
+/// Initialize Rayon thread pool for script verification using `script_verification_threads`.
+///
+/// Call this at node startup before any block validation. When
+/// `script_verification_threads` > 0, sets the global Rayon pool size.
+/// When 0, Rayon uses its default (num_cpus). Only takes effect once per process.
+#[cfg(all(feature = "production", feature = "rayon"))]
+pub fn init_rayon_for_script_verification() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let config = get_consensus_config_ref();
+        let n = config.performance.script_verification_threads;
+        if n > 0 {
+            if let Err(e) = rayon::ThreadPoolBuilder::new()
+                .num_threads(n)
+                .build_global()
+            {
+                eprintln!(
+                    "Warning: Failed to set Rayon script verification pool to {} threads: {}. Using default.",
+                    n, e
+                );
+            }
+        }
+    });
 }

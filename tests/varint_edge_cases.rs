@@ -1,15 +1,15 @@
 //! Varint encoding edge cases for consensus verification
 //!
 //! Tests for consensus-critical varint encoding that must match
-//! Bitcoin Core's CompactSize encoding byte-for-byte.
+//! consensus's CompactSize encoding byte-for-byte.
 //!
 //! Consensus-critical: Varint encoding differences = network incompatibility
 
 use blvm_consensus::serialization::varint::{decode_varint, encode_varint};
 
-/// Test all boundary values match Bitcoin Core's CompactSize encoding
+/// Test all boundary values match consensus's CompactSize encoding
 ///
-/// Bitcoin Core uses CompactSize encoding:
+/// consensus uses CompactSize encoding:
 /// - Values < 0xfd: single byte
 /// - Values 0xfd-0xffff: 0xfd prefix + 2 bytes (little-endian)
 /// - Values 0x10000-0xffffffff: 0xfe prefix + 4 bytes (little-endian)
@@ -75,9 +75,9 @@ fn test_varint_boundary_values() {
     assert_eq!(bytes, 9);
 }
 
-/// Test that invalid encodings are rejected (Bitcoin Core compatibility)
+/// Test that invalid encodings are rejected (consensus compatibility)
 ///
-/// Bitcoin Core rejects:
+/// consensus rejects:
 /// - Values < 0xfd encoded with 0xfd prefix
 /// - Values <= 0xffff encoded with 0xfe prefix
 /// - Values <= 0xffffffff encoded with 0xff prefix

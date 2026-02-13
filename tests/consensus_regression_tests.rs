@@ -5,7 +5,7 @@
 //! not accidentally reverted or broken in future changes.
 //!
 //! **CRITICAL:** These tests verify consensus-critical behavior. Any failure
-//! indicates a potential consensus divergence from Bitcoin Core.
+//! indicates a potential consensus divergence.
 //!
 //! All fixes were validated through full-chain differential testing (912,723 blocks)
 //! with 0 divergences found.
@@ -84,6 +84,7 @@ fn test_p2sh_scriptsig_push_only_validation() {
         None,
         None,
         None,
+        None, // precomputed_bip143
     );
 
     // Must reject non-push opcode in P2SH scriptSig
@@ -163,6 +164,7 @@ fn test_taproot_empty_scriptsig_requirement() {
         None,
         None,
         None,
+        None, // precomputed_bip143
     );
 
     // Must reject non-empty scriptSig for Taproot
@@ -484,6 +486,7 @@ fn test_script_flags_per_transaction() {
         None,
         None,
         None,
+        None, // precomputed_bip143
     );
 
     // Should not fail due to empty scriptSig (Taproot allows empty scriptSig)
@@ -541,7 +544,7 @@ fn test_segwit_deserialization() {
 
 /// Regression test: Transaction limits must allow up to 100,000 inputs/outputs
 ///
-/// **Bug Fixed:** Limits were set to 1,000, but Bitcoin Core has no explicit limit.
+/// **Bug Fixed:** Limits were set to 1,000, but BIP specification has no explicit limit.
 ///
 /// **Fix:** Changed MAX_INPUTS/MAX_OUTPUTS from 1,000 to 100,000.
 ///
@@ -653,11 +656,11 @@ fn test_taproot_flag_value() {
 // Bug #11: Strict DER Validation
 // ============================================================================
 
-/// Regression test: Strict DER validation must match Bitcoin Core
+/// Regression test: Strict DER validation must match BIP66
 ///
-/// **Bug Fixed:** BIP66 strict DER check didn't match Bitcoin Core exactly.
+/// **Bug Fixed:** BIP66 strict DER check didn't match specification exactly.
 ///
-/// **Fix:** Replaced with direct implementation of Core's IsValidSignatureEncoding.
+/// **Fix:** Replaced with direct implementation of BIP66 IsValidSignatureEncoding.
 ///
 /// **Test:** Verify that strict DER validation works correctly.
 ///

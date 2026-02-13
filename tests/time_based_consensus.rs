@@ -232,7 +232,7 @@ fn test_bip113_median_time_past_few_blocks() {
 /// Test BIP113 median time-past with empty headers
 #[test]
 fn test_bip113_median_time_past_empty() {
-    let headers = Vec::new();
+    let headers: Vec<BlockHeader> = Vec::new();
 
     // Calculate median time-past
     let median = get_median_time_past(&headers);

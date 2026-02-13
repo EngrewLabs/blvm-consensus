@@ -1,6 +1,6 @@
 //! Difficulty Adjustment Verification Tests
 //!
-//! Tests to verify BLLVM's difficulty adjustment matches Bitcoin Core exactly,
+//! Tests to verify BLLVM's difficulty adjustment matches consensus exactly,
 //! including the known off-by-one bug for consensus compatibility.
 //!
 //! Consensus-critical: Difficulty differences = chain split
@@ -11,7 +11,7 @@ use blvm_consensus::types::*;
 
 /// Test difficulty adjustment clamping: timespan < expected_time/4
 ///
-/// Core clamps to expected_time/4, which should result in 4x difficulty increase
+/// Consensus clamps to expected_time/4, which should result in 4x difficulty increase
 #[test]
 fn test_difficulty_clamp_minimum_timespan() {
     // Create 2016 blocks with very short timespan (all at same time)
@@ -57,7 +57,7 @@ fn test_difficulty_clamp_minimum_timespan() {
 
 /// Test difficulty adjustment clamping: timespan > expected_time*4
 ///
-/// Core clamps to expected_time*4, which should result in 4x difficulty decrease
+/// Consensus clamps to expected_time*4, which should result in 4x difficulty decrease
 #[test]
 fn test_difficulty_clamp_maximum_timespan() {
     // Create 2016 blocks with very long timespan
@@ -155,7 +155,7 @@ fn test_difficulty_perfect_timing() {
 
 /// Test difficulty adjustment off-by-one bug
 ///
-/// Core measures (n-1) intervals but compares against n intervals
+/// Consensus measures (n-1) intervals but compares against n intervals
 /// This causes a small adjustment even with perfect timing
 #[test]
 fn test_difficulty_off_by_one_bug() {
@@ -195,7 +195,7 @@ fn test_difficulty_off_by_one_bug() {
     // - Adjustment = (2015 * 600) / (2016 * 600) ≈ 0.9995
     // - So difficulty increases slightly (target decreases, bits decrease)
     // Note: bits are inverse of difficulty - lower bits = higher difficulty
-    // This matches Core's buggy behavior exactly
+    // This matches The specification's buggy behavior exactly
     assert!(new_bits <= original_bits, "Off-by-one bug should cause slight difficulty increase (bits decrease as difficulty increases)");
 }
 

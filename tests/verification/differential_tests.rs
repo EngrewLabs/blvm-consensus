@@ -1,6 +1,6 @@
 //! Differential testing: Compare against multiple reference implementations
 //!
-//! Ensures our optimized implementation matches sha2 crate, Bitcoin Core patterns,
+//! Ensures our optimized implementation matches sha2 crate, consensus patterns,
 //! and NIST test vectors.
 
 use blvm_consensus::crypto::OptimizedSha256;

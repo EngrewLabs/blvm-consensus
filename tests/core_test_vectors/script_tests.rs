@@ -1,9 +1,9 @@
-//! Bitcoin Core script test vector integration
+//! consensus script test vector integration
 //!
-//! Tests script execution using Core's script test vectors.
+//! Tests script execution using specification's script test vectors.
 //! These cover opcode behavior, edge cases, and validation rules.
 //!
-//! Core test vector format (script_valid.json / script_invalid.json):
+//! reference test vector format (script_valid.json / script_invalid.json):
 //! Array of arrays: [[scriptSig_hex, scriptPubKey_hex, flags, expected, description], ...]
 //! - scriptSig_hex: ScriptSig in hex format
 //! - scriptPubKey_hex: ScriptPubKey in hex format
@@ -27,9 +27,9 @@ pub struct ScriptTestVector {
     pub description: String,
 }
 
-/// Load script test vectors from Bitcoin Core JSON format
+/// Load script test vectors from consensus JSON format
 ///
-/// Core uses script_tests.json with format:
+/// Consensus uses script_tests.json with format:
 /// [scriptSig_string, scriptPubKey_string, flags_string, expected_result, description]
 /// 
 /// Script strings can be in human-readable format (e.g., "1 2 EQUAL") or hex format.
@@ -158,7 +158,7 @@ pub fn load_script_test_vectors(dir: &str) -> Result<Vec<ScriptTestVector>, Box<
     Ok(vectors)
 }
 
-/// Run Core script test vectors
+/// Run reference script test vectors
 pub fn run_core_script_tests(vectors: &[ScriptTestVector]) -> Result<(), Box<dyn std::error::Error>> {
     let mut passed = 0;
     let mut failed = 0;
@@ -195,7 +195,7 @@ pub fn run_core_script_tests(vectors: &[ScriptTestVector]) -> Result<(), Box<dyn
         }
     }
     
-    println!("Core script test vectors: {} passed, {} failed", passed, failed);
+    println!("Reference script test vectors: {} passed, {} failed", passed, failed);
     
     if failed > 0 {
         Err(format!("{} test vectors failed", failed).into())

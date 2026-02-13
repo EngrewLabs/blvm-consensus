@@ -1,11 +1,11 @@
 //! Differential Testing Integration
 //!
-//! This module provides integration points for differential testing with Bitcoin Core.
+//! This module provides integration points for differential testing with consensus.
 //! The full implementation is in `blvm-bench`, but this provides basic functionality
 //! for testing within the consensus crate.
 //!
 //! For comprehensive differential testing, use `blvm-bench` which includes:
-//! - Bitcoin Core binary detection and management
+//! - consensus binary detection and management
 //! - Regtest node management
 //! - Full RPC client wrapper
 //! - BIP-specific differential tests
@@ -17,7 +17,7 @@ use blvm_consensus::serialization::block::serialize_block;
 /// Compare transaction validation results
 ///
 /// This is a basic comparison function. For full differential testing with
-/// Bitcoin Core RPC, use `blvm-bench`.
+/// consensus RPC, use `blvm-bench`.
 pub fn compare_transaction_validation_local(
     tx: &Transaction,
 ) -> Result<ValidationResult, Box<dyn std::error::Error>> {
@@ -27,7 +27,7 @@ pub fn compare_transaction_validation_local(
 /// Compare block validation results
 ///
 /// This is a basic comparison function. For full differential testing with
-/// Bitcoin Core RPC, use `blvm-bench`.
+/// consensus RPC, use `blvm-bench`.
 pub fn compare_block_validation_local(
     block: &Block,
     utxo_set: &UtxoSet,

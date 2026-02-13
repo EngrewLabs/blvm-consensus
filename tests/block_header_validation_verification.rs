@@ -1,9 +1,9 @@
 //! Block Header Validation Verification Tests
 //!
-//! Tests to verify BLLVM's block header validation matches Bitcoin Core exactly.
+//! Tests to verify BLLVM's block header validation matches consensus exactly.
 //! Block header validation is consensus-critical - differences = chain split.
 //!
-//! Core checks:
+//! Consensus checks:
 //! - Version >= 1
 //! - Timestamp != 0 (and not too far in future)
 //! - Bits != 0
@@ -29,7 +29,7 @@ fn create_valid_header() -> BlockHeader {
 
 /// Test block header validation: valid header
 ///
-/// Core: Valid header should pass all checks
+/// Consensus: Valid header should pass all checks
 #[test]
 fn test_block_header_valid() {
     let header = create_valid_header();
@@ -46,7 +46,7 @@ fn test_block_header_valid() {
 
 /// Test block header validation: invalid version (0)
 ///
-/// Core rejects: version < 1
+/// Consensus rejects: version < 1
 #[test]
 fn test_block_header_invalid_version_zero() {
     let mut header = create_valid_header();
@@ -58,7 +58,7 @@ fn test_block_header_invalid_version_zero() {
 
 /// Test block header validation: invalid timestamp (0)
 ///
-/// Core rejects: timestamp == 0
+/// Consensus rejects: timestamp == 0
 #[test]
 fn test_block_header_invalid_timestamp_zero() {
     let mut header = create_valid_header();
@@ -70,7 +70,7 @@ fn test_block_header_invalid_timestamp_zero() {
 
 /// Test block header validation: invalid bits (0)
 ///
-/// Core rejects: bits == 0
+/// Consensus rejects: bits == 0
 #[test]
 fn test_block_header_invalid_bits_zero() {
     let mut header = create_valid_header();
@@ -82,7 +82,7 @@ fn test_block_header_invalid_bits_zero() {
 
 /// Test block header validation: invalid merkle root (all zeros)
 ///
-/// Core rejects: merkle_root == [0; 32]
+/// Consensus rejects: merkle_root == [0; 32]
 #[test]
 fn test_block_header_invalid_merkle_root_zero() {
     let mut header = create_valid_header();
@@ -97,7 +97,7 @@ fn test_block_header_invalid_merkle_root_zero() {
 
 /// Test proof of work verification: valid PoW
 ///
-/// Core: hash < target should pass
+/// Consensus: hash < target should pass
 #[test]
 fn test_proof_of_work_valid() {
     // Create a header with valid proof of work
@@ -114,7 +114,7 @@ fn test_proof_of_work_valid() {
 
 /// Test proof of work verification: hash >= target (invalid)
 ///
-/// Core rejects: hash >= target
+/// Consensus rejects: hash >= target
 #[test]
 fn test_proof_of_work_invalid_hash_too_large() {
     // Create a header where hash would be >= target
@@ -132,7 +132,7 @@ fn test_proof_of_work_invalid_hash_too_large() {
 
 /// Test proof of work: target expansion matches header bits
 ///
-/// Core: target = expand_target(bits)
+/// Consensus: target = expand_target(bits)
 #[test]
 fn test_proof_of_work_target_expansion() {
     let header = create_valid_header();
@@ -148,7 +148,7 @@ fn test_proof_of_work_target_expansion() {
 
 /// Test block header: version boundary (1)
 ///
-/// Core: version >= 1 is valid
+/// Consensus: version >= 1 is valid
 #[test]
 fn test_block_header_version_minimum() {
     let mut header = create_valid_header();
@@ -159,7 +159,7 @@ fn test_block_header_version_minimum() {
 
 /// Test block header: timestamp reasonable bounds
 ///
-/// Core: timestamp should be reasonable (not too far in future)
+/// Consensus: timestamp should be reasonable (not too far in future)
 #[test]
 fn test_block_header_timestamp_reasonable() {
     let header = create_valid_header();
@@ -175,7 +175,7 @@ fn test_block_header_timestamp_reasonable() {
 
 /// Test block header: bits valid range
 ///
-/// Core: bits should be in valid range (not 0, not too large)
+/// Consensus: bits should be in valid range (not 0, not too large)
 #[test]
 fn test_block_header_bits_valid_range() {
     let header = create_valid_header();
@@ -191,7 +191,7 @@ fn test_block_header_bits_valid_range() {
 
 /// Test block header: merkle root hash format
 ///
-/// Core: merkle root must be valid 32-byte hash
+/// Consensus: merkle root must be valid 32-byte hash
 #[test]
 fn test_block_header_merkle_root_format() {
     let header = create_valid_header();
@@ -210,7 +210,7 @@ fn test_block_header_merkle_root_format() {
 
 /// Test proof of work: header serialization
 ///
-/// Core: PoW uses double SHA256 of serialized header
+/// Consensus: PoW uses double SHA256 of serialized header
 #[test]
 fn test_proof_of_work_header_serialization() {
     let header = create_valid_header();

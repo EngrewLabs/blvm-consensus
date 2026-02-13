@@ -1,7 +1,7 @@
 //! Script verification flag combination testing
 //!
 //! Tests all script verification flag combinations to ensure consensus correctness.
-//! Bitcoin Core uses 32 different flag combinations, and all must be tested.
+//! consensus uses 32 different flag combinations, and all must be tested.
 //!
 //! Flags tested:
 //! - SCRIPT_VERIFY_P2SH (0x01)

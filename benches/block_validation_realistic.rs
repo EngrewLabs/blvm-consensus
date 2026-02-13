@@ -1,5 +1,5 @@
 //! Realistic Block Validation Benchmark
-//! Uses more realistic test data for fair comparison with Bitcoin Core's ConnectBlock benchmark
+//! Uses more realistic test data for fair comparison with consensus's ConnectBlock benchmark
 
 use blvm_consensus::block::connect_block;
 use blvm_consensus::segwit::Witness;
@@ -10,7 +10,7 @@ use blvm_consensus::{
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 /// Create a realistic test block with actual transactions
-/// Similar to Core's CreateTestBlock which uses 1000 transactions
+/// Similar to specification's CreateTestBlock which uses 1000 transactions
 fn create_realistic_test_block(num_txs: usize) -> Block {
     // Create a coinbase transaction
     let coinbase = Transaction {
@@ -95,7 +95,7 @@ fn benchmark_connect_block_realistic(c: &mut Criterion) {
 }
 
 fn benchmark_connect_block_realistic_1000tx(c: &mut Criterion) {
-    let block = create_realistic_test_block(1000); // 1000 transactions (matches Core benchmark)
+    let block = create_realistic_test_block(1000); // 1000 transactions (reference benchmark)
     let utxo_set = UtxoSet::default();
     let witnesses: Vec<Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
 

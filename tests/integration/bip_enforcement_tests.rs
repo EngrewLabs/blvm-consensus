@@ -65,7 +65,7 @@ fn test_connect_block_rejects_bip30_violation() {
     let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
     
     // connect_block MUST reject this block due to BIP30 violation
-    let result = connect_block(&block, &witnesses, utxo_set, 1, None, 0u64, types::Network::Mainnet);
+    let result = connect_block(&block, &witnesses, utxo_set, 1, None::<&[types::BlockHeader]>, 0u64, types::Network::Mainnet);
     
     match result {
         Ok((ValidationResult::Invalid(reason), _)) => {
@@ -129,7 +129,7 @@ fn test_connect_block_rejects_bip34_violation() {
     let utxo_set = UtxoSet::default();
     
     // connect_block MUST reject this block due to BIP34 violation
-    let result = connect_block(&block, &witnesses, utxo_set, height, None, 0u64, types::Network::Mainnet);
+    let result = connect_block(&block, &witnesses, utxo_set, height, None::<&[types::BlockHeader]>, 0u64, types::Network::Mainnet);
     
     match result {
         Ok((ValidationResult::Invalid(reason), _)) => {
@@ -192,7 +192,7 @@ fn test_connect_block_allows_bip34_before_activation() {
     
     // connect_block should allow this block (BIP34 not active yet)
     // Note: Block may still be invalid for other reasons (PoW, etc.), but BIP34 shouldn't reject it
-    let result = connect_block(&block, &witnesses, utxo_set, height, None, 0u64, types::Network::Mainnet);
+    let result = connect_block(&block, &witnesses, utxo_set, height, None::<&[types::BlockHeader]>, 0u64, types::Network::Mainnet);
     
     // If rejected, it should NOT be due to BIP34
     if let Ok((ValidationResult::Invalid(reason), _)) = result {
@@ -247,7 +247,7 @@ fn test_connect_block_rejects_bip90_violation() {
     let utxo_set = UtxoSet::default();
     
     // connect_block MUST reject this block due to BIP90 violation
-    let result = connect_block(&block, &witnesses, utxo_set, height, None, 0u64, types::Network::Mainnet);
+    let result = connect_block(&block, &witnesses, utxo_set, height, None::<&[types::BlockHeader]>, 0u64, types::Network::Mainnet);
     
     match result {
         Ok((ValidationResult::Invalid(reason), _)) => {
@@ -310,7 +310,7 @@ fn test_connect_block_allows_bip90_valid_version() {
     
     // connect_block should allow this block (BIP90 satisfied)
     // Note: Block may still be invalid for other reasons (PoW, etc.), but BIP90 shouldn't reject it
-    let result = connect_block(&block, &witnesses, utxo_set, height, None, 0u64, types::Network::Mainnet);
+    let result = connect_block(&block, &witnesses, utxo_set, height, None::<&[types::BlockHeader]>, 0u64, types::Network::Mainnet);
     
     // If rejected, it should NOT be due to BIP90
     if let Ok((ValidationResult::Invalid(reason), _)) = result {
@@ -375,7 +375,7 @@ fn test_connect_block_multiple_bip_violations() {
     let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
     
     // connect_block MUST reject this block
-    let result = connect_block(&block, &witnesses, utxo_set, height, None, 0u64, types::Network::Mainnet);
+    let result = connect_block(&block, &witnesses, utxo_set, height, None::<&[types::BlockHeader]>, 0u64, types::Network::Mainnet);
     
     match result {
         Ok((ValidationResult::Invalid(reason), _)) => {
@@ -444,7 +444,7 @@ fn test_bip_check_order() {
     let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
     let utxo_set = UtxoSet::default();
     
-    let result = connect_block(&block, &witnesses, utxo_set, height, None, 0u64, types::Network::Mainnet);
+    let result = connect_block(&block, &witnesses, utxo_set, height, None::<&[types::BlockHeader]>, 0u64, types::Network::Mainnet);
     
     // BIP90 should be caught first (it's checked on header, before transaction checks)
     if let Ok((ValidationResult::Invalid(reason), _)) = result {
@@ -508,6 +508,8 @@ fn test_script_verification_rejects_bip66_violation() {
     let flags = 0x01 | 0x02 | 0x04 | 0x08 | 0x10 | 0x20 | 0x40 | 0x80 | 0x100 | 0x200 | 0x400;
     
     // Script verification should reject this due to invalid DER (BIP66)
+    let pv = vec![prevout.value];
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&prevout.script_pubkey];
     let result = verify_script_with_context_full(
         &script_sig,
         &prevout.script_pubkey,
@@ -515,10 +517,16 @@ fn test_script_verification_rejects_bip66_violation() {
         flags,
         &tx,
         0,
-        &[prevout.clone()],
+        &pv,
+        &psp,
         Some(height),
         None,
         types::Network::Mainnet,
+        SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
     
     // Should fail due to invalid signature/DER
@@ -588,6 +596,8 @@ fn test_script_verification_rejects_bip147_violation() {
     let flags = 0x01 | 0x02 | 0x04 | 0x08 | 0x10 | 0x20 | 0x40 | 0x80 | 0x100 | 0x200 | 0x400;
     
     // Script verification should reject this due to non-empty dummy (BIP147)
+    let pv = vec![prevout.value];
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&prevout.script_pubkey];
     let result = verify_script_with_context_full(
         &script_sig,
         &prevout.script_pubkey,
@@ -595,10 +605,16 @@ fn test_script_verification_rejects_bip147_violation() {
         flags,
         &tx,
         0,
-        &[prevout.clone()],
+        &pv,
+        &psp,
         Some(height),
         None,
         types::Network::Mainnet,
+        SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
     
     // Should fail due to BIP147 violation (non-empty dummy)
@@ -666,6 +682,8 @@ fn test_script_verification_allows_bip147_before_activation() {
     
     // Script verification should allow this before activation
     // (Note: May still fail for other reasons like invalid signatures, but BIP147 shouldn't reject it)
+    let pv = vec![prevout.value];
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&prevout.script_pubkey];
     let result = verify_script_with_context_full(
         &script_sig,
         &prevout.script_pubkey,
@@ -673,10 +691,16 @@ fn test_script_verification_allows_bip147_before_activation() {
         flags,
         &tx,
         0,
-        &[prevout.clone()],
+        &pv,
+        &psp,
         Some(height),
         None,
         types::Network::Mainnet,
+        SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
     
     // Before activation, BIP147 shouldn't reject non-empty dummy

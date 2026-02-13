@@ -32,7 +32,7 @@ fn test_genesis_block_validation() {
         if let Ok((block, witnesses)) = deserialize_block_with_witnesses(&bytes) {
             let utxo_set = UtxoSet::default();
             // connect_block expects &[Witness] where Witness is Vec<ByteString> (one per transaction)
-            let result = connect_block(&block, &witnesses, utxo_set, 0, None, 0u64, Network::Mainnet);
+            let result = connect_block(&block, &witnesses, utxo_set, 0, None::<&[BlockHeader]>, 0u64, Network::Mainnet);
 
             // Genesis block should validate (or fail gracefully with missing context)
             assert!(result.is_ok());
@@ -73,7 +73,7 @@ fn test_segwit_activation_block() {
             &witnesses,
             utxo_set,
             segwit_activation_height,
-            None,
+            None::<&[BlockHeader]>,
             0u64,
             Network::Mainnet,
         );
@@ -121,7 +121,7 @@ fn test_taproot_activation_block() {
             &witnesses,
             utxo_set,
             taproot_activation_height,
-            None,
+            None::<&[BlockHeader]>,
             0u64,
             Network::Mainnet,
         );
@@ -215,7 +215,7 @@ fn test_coinbase_transaction_eras() {
 /// Test mainnet block serialization round-trip
 ///
 /// Verifies that blocks can be serialized and deserialized correctly,
-/// maintaining byte-for-byte compatibility with Bitcoin Core.
+/// maintaining byte-for-byte consensus compatibility.
 #[test]
 fn test_mainnet_block_serialization_roundtrip() {
     use blvm_consensus::serialization::block::{deserialize_block_header, serialize_block_header};
@@ -371,7 +371,7 @@ pub fn validate_mainnet_block(
         &witnesses,
         prev_utxo_set,
         height,
-        None,
+        None::<&[BlockHeader]>,
         0u64,
         Network::Mainnet,
     )

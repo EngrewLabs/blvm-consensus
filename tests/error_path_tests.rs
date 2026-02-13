@@ -73,8 +73,9 @@ fn test_proof_of_work_errors() {
 fn test_script_execution_errors() {
     let consensus = ConsensusProof::new();
 
-    // Test script with too many operations
-    let large_script = vec![OP_1; MAX_SCRIPT_OPS + 1];
+    // Test script with too many non-push operations: OP_1 (push) + OP_DUP×202 exceeds limit
+    let mut large_script = vec![OP_1];
+    large_script.extend(std::iter::repeat(OP_DUP).take(MAX_SCRIPT_OPS + 1));
     let result = consensus.verify_script(&large_script, &vec![OP_1], None, 0);
     assert!(result.is_err()); // Exceeds op limit should error
 }

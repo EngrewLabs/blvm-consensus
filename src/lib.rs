@@ -43,6 +43,7 @@
 
 pub mod config;
 pub mod constants;
+pub mod ibd_tuning;
 pub mod opcodes;
 pub mod orange_paper_constants;
 pub mod orange_paper_property_helpers;
@@ -53,7 +54,7 @@ pub mod types;
 
 use blvm_spec_lock::spec_locked;
 #[cfg(all(feature = "production", feature = "benchmarking"))]
-pub use block::{reset_assume_valid_height, set_assume_valid_height};
+pub use config::{reset_assume_valid_height, set_assume_valid_height};
 #[cfg(feature = "production")]
 pub use script::batch_verify_signatures;
 #[cfg(all(feature = "production", feature = "benchmarking"))]
@@ -98,6 +99,9 @@ pub mod utxo_overlay;
 pub mod witness;
 
 pub mod error;
+
+#[cfg(feature = "profile")]
+pub mod profile_log;
 
 /// Consensus Proof - wrapper struct for consensus validation functions
 ///
@@ -148,7 +152,7 @@ impl ConsensusProof {
             &witnesses,
             utxo_set,
             height,
-            None,
+            None::<&[types::BlockHeader]>,
             network_time,
             types::Network::Mainnet,
         )?;

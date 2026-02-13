@@ -50,14 +50,12 @@ fn test_segwit_witness_validation() {
     // Validate with witness
     let input = &tx.inputs[0];
     let utxo = utxo_set.get(&input.prevout).unwrap();
-    let prevouts = vec![TransactionOutput {
-        value: utxo.value,
-        script_pubkey: utxo.script_pubkey.clone(),
-    }];
-    
+    let pv = vec![utxo.value];
+    let psp: Vec<&crate::types::ByteString> = vec![&utxo.script_pubkey];
+
     // Convert witness to ByteString for script validation
     let witness_script = witness[0].clone();
-    
+
     let result = verify_script_with_context_full(
         &input.script_sig,
         &utxo.script_pubkey,
@@ -65,12 +63,16 @@ fn test_segwit_witness_validation() {
         0, // Flags
         &tx,
         0, // Input index
-        &prevouts,
+        &pv,
+        &psp,
         None, // Block height
         None, // Median time past
         crate::types::Network::Mainnet,
         crate::script::SigVersion::WitnessV0,
-        None, // Median time-past
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
     
     assert!(result.is_ok());
@@ -251,14 +253,12 @@ fn test_segwit_p2wpkh_validation() {
     // Validate P2WPKH with witness
     let input = &tx.inputs[0];
     let utxo = utxo_set.get(&input.prevout).unwrap();
-    let prevouts = vec![TransactionOutput {
-        value: utxo.value,
-        script_pubkey: utxo.script_pubkey.clone(),
-    }];
-    
+    let pv = vec![utxo.value];
+    let psp: Vec<&crate::types::ByteString> = vec![&utxo.script_pubkey];
+
     // For P2WPKH, witness replaces scriptSig
     let witness_script = witness.iter().flat_map(|w| w.iter().cloned()).collect::<Vec<u8>>();
-    
+
     let result = verify_script_with_context_full(
         &input.script_sig,
         &utxo.script_pubkey,
@@ -266,11 +266,16 @@ fn test_segwit_p2wpkh_validation() {
         0,
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         None,
         None,
         crate::types::Network::Mainnet,
         crate::script::SigVersion::WitnessV0,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
     
     assert!(result.is_ok());
@@ -316,13 +321,11 @@ fn test_segwit_p2wsh_validation() {
     
     let input = &tx.inputs[0];
     let utxo = utxo_set.get(&input.prevout).unwrap();
-    let prevouts = vec![TransactionOutput {
-        value: utxo.value,
-        script_pubkey: utxo.script_pubkey.clone(),
-    }];
-    
+    let pv = vec![utxo.value];
+    let psp: Vec<&crate::types::ByteString> = vec![&utxo.script_pubkey];
+
     let witness_script = witness.iter().flat_map(|w| w.iter().cloned()).collect::<Vec<u8>>();
-    
+
     let result = verify_script_with_context_full(
         &input.script_sig,
         &utxo.script_pubkey,
@@ -330,13 +333,18 @@ fn test_segwit_p2wsh_validation() {
         0,
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         None,
         None,
         crate::types::Network::Mainnet,
         crate::script::SigVersion::WitnessV0,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
-    
+
     assert!(result.is_ok());
 }
 

@@ -1,7 +1,7 @@
 //! Proof of Work target expansion/compression tests
 //!
 //! Tests for Bitcoin's compact target representation (SetCompact/GetCompact)
-//! that must match Bitcoin Core exactly.
+//! that must match consensus exactly.
 //!
 //! Consensus-critical: Target expansion differences = chain split
 

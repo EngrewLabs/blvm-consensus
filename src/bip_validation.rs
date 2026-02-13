@@ -281,7 +281,7 @@ pub fn check_bip66(
 
 /// Check if signature is strictly DER-encoded
 /// 
-/// This implements Bitcoin Core's IsValidSignatureEncoding function exactly.
+/// Implements IsValidSignatureEncoding (BIP66 strict DER) exactly.
 /// BIP66 requires strict DER encoding with specific rules:
 /// - Format: 0x30 [total-length] 0x02 [R-length] [R] 0x02 [S-length] [S] [sighash]
 /// - No leading zeros in R or S (unless needed to prevent negative interpretation)

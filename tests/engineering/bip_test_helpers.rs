@@ -136,12 +136,9 @@ pub fn validate_with_context(
     let utxo = utxo_set.get(&input.prevout)
         .ok_or_else(|| ConsensusError::UtxoNotFound("UTXO not found".to_string()))?;
     
-    // Create prevouts for context
-    let prevouts = vec![TransactionOutput {
-        value: utxo.value,
-        script_pubkey: utxo.script_pubkey.clone(),
-    }];
-    
+    let pv = vec![utxo.value];
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&utxo.script_pubkey];
+
     // Verify script with context (now supports block height and median time-past)
     verify_script_with_context_full(
         &input.script_sig,
@@ -150,11 +147,16 @@ pub fn validate_with_context(
         0,    // Flags
         tx,
         0,    // Input index
-        &prevouts,
+        &pv,
+        &psp,
         Some(block_height), // Optional block height
         Some(median_time_past), // Optional median time-past
-        crate::types::Network::Mainnet,
-        crate::script::SigVersion::Base,
+        blvm_consensus::types::Network::Mainnet,
+        blvm_consensus::script::SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     )
 }
 

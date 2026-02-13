@@ -1,6 +1,6 @@
 //! Fee Calculation Verification Tests
 //!
-//! Tests to verify BLLVM's fee calculation matches Bitcoin Core exactly.
+//! Tests to verify BLLVM's fee calculation matches consensus rules.
 //! Fee = sum(inputs) - sum(outputs), must be non-negative and within MoneyRange.
 //!
 //! Consensus-critical: Fee differences = different transaction acceptance
@@ -46,7 +46,7 @@ fn create_test_utxo_set() -> UtxoSet {
 
 /// Test zero fee transaction
 ///
-/// Core allows zero fee transactions (they're valid but may not be relayed)
+/// Consensus allows zero fee transactions (they're valid but may not be relayed)
 #[test]
 fn test_zero_fee_transaction() {
     let utxo_set = create_test_utxo_set();
@@ -83,7 +83,7 @@ fn test_zero_fee_transaction() {
 
 /// Test positive fee transaction
 ///
-/// Core calculates fee = input_sum - output_sum
+/// Fee = input_sum - output_sum fee = input_sum - output_sum
 #[test]
 fn test_positive_fee_transaction() {
     let utxo_set = create_test_utxo_set();
@@ -123,7 +123,7 @@ fn test_positive_fee_transaction() {
 
 /// Test negative fee transaction (should be rejected)
 ///
-/// Core rejects transactions where output_sum > input_sum
+/// Consensus rejects transactions where output_sum > input_sum
 #[test]
 fn test_negative_fee_transaction() {
     let utxo_set = create_test_utxo_set();
@@ -159,7 +159,7 @@ fn test_negative_fee_transaction() {
 
 /// Test fee calculation with multiple inputs
 ///
-/// Core sums all inputs, then subtracts all outputs
+/// Fee calculation: sum all inputs, then subtracts all outputs
 #[test]
 fn test_fee_multiple_inputs() {
     let utxo_set = create_test_utxo_set();
@@ -209,7 +209,7 @@ fn test_fee_multiple_inputs() {
 
 /// Test fee calculation with multiple outputs
 ///
-/// Core sums all outputs, then subtracts from input sum
+/// Fee calculation: sum all outputs, then subtracts from input sum
 #[test]
 fn test_fee_multiple_outputs() {
     let utxo_set = create_test_utxo_set();
@@ -255,7 +255,7 @@ fn test_fee_multiple_outputs() {
 
 /// Test fee calculation with maximum money
 ///
-/// Core checks that fee is within MoneyRange
+/// Consensus checks that fee is within MoneyRange
 #[test]
 fn test_fee_maximum_money() {
     let mut utxo_set = UtxoSet::default();
@@ -304,7 +304,7 @@ fn test_fee_maximum_money() {
 
 /// Test fee calculation overflow protection
 ///
-/// Core uses checked arithmetic to prevent overflow
+/// Consensus uses checked arithmetic to prevent overflow
 #[test]
 fn test_fee_overflow_protection() {
     let mut utxo_set = UtxoSet::default();
@@ -363,7 +363,7 @@ fn test_fee_overflow_protection() {
 
 /// Test coinbase transaction fee (should be 0)
 ///
-/// Core returns fee = 0 for coinbase transactions
+/// Consensus returns fee = 0 for coinbase transactions
 #[test]
 fn test_coinbase_fee() {
     let tx = Transaction {

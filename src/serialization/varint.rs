@@ -9,7 +9,7 @@
 //! - If value <= 0xffffffff: 0xfe prefix + 4 bytes (little-endian)  
 //! - Otherwise: 0xff prefix + 8 bytes (little-endian)
 //!
-//! This must match Bitcoin Core's CVarInt implementation exactly.
+//! This must match consensus's CVarInt implementation exactly.
 
 use crate::error::{ConsensusError, Result};
 use blvm_spec_lock::spec_locked;
@@ -163,7 +163,7 @@ pub fn decode_varint(data: &[u8]) -> Result<(u64, usize)> {
 
             let value = u16::from_le_bytes([data[1], data[2]]) as u64;
 
-            // Bitcoin Core rejects values < 0xfd encoded with 0xfd prefix
+            // consensus rejects values < 0xfd encoded with 0xfd prefix
             if value < 0xfd {
                 return Err(ConsensusError::Serialization(Cow::Owned(
                     VarIntError::InvalidEncoding.to_string(),
@@ -196,7 +196,7 @@ pub fn decode_varint(data: &[u8]) -> Result<(u64, usize)> {
 
             let value = u32::from_le_bytes([data[1], data[2], data[3], data[4]]) as u64;
 
-            // Bitcoin Core rejects values <= 0xffff encoded with 0xfe prefix
+            // consensus rejects values <= 0xffff encoded with 0xfe prefix
             if value <= 0xffff {
                 return Err(ConsensusError::Serialization(Cow::Owned(
                     VarIntError::InvalidEncoding.to_string(),
@@ -231,7 +231,7 @@ pub fn decode_varint(data: &[u8]) -> Result<(u64, usize)> {
                 data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8],
             ]);
 
-            // Bitcoin Core rejects values <= 0xffffffff encoded with 0xff prefix
+            // consensus rejects values <= 0xffffffff encoded with 0xff prefix
             if value <= 0xffffffff {
                 return Err(ConsensusError::Serialization(Cow::Owned(
                     VarIntError::InvalidEncoding.to_string(),

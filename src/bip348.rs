@@ -34,16 +34,17 @@ use secp256k1::{XOnlyPublicKey, Message, schnorr::{Signature, verify_batch}, Sec
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 use blvm_spec_lock::spec_locked;
+#[cfg(feature = "production")]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Collector for Schnorr signatures to enable batch verification
 ///
-/// Collects signatures during script execution and defers verification
-/// until all signatures in a transaction can be batch verified together.
-/// Uses interior Mutex so collect(&self) can be called from parallel workers (maximum parallelization).
+/// Uses lock-free SegQueue so collect(&self) can be called from parallel workers without
+/// mutex contention. Drain + sort by index preserves (tx, input) order for batch results.
 #[cfg(feature = "production")]
 pub struct SchnorrSignatureCollector {
-    /// (tasks, task_indices); Mutex allows collect(&self) from many threads
-    inner: std::sync::Mutex<(Vec<(Vec<u8>, Vec<u8>, Vec<u8>)>, Vec<usize>)>,
+    next_idx: AtomicUsize,
+    tasks: crossbeam_queue::SegQueue<(usize, (Vec<u8>, Vec<u8>, Vec<u8>))>,
 }
 
 #[cfg(feature = "production")]
@@ -58,7 +59,8 @@ impl SchnorrSignatureCollector {
     /// Create a new empty collector
     pub fn new() -> Self {
         Self {
-            inner: std::sync::Mutex::new((Vec::new(), Vec::new())),
+            next_idx: AtomicUsize::new(0),
+            tasks: crossbeam_queue::SegQueue::new(),
         }
     }
 
@@ -66,30 +68,31 @@ impl SchnorrSignatureCollector {
     ///
     /// Returns the index of this task for result mapping
     pub fn collect(&self, message: &[u8], pubkey: &[u8], signature: &[u8]) -> usize {
-        if let Ok(mut guard) = self.inner.lock() {
-            let idx = guard.0.len();
-            guard.0.push((
-                message.to_vec(),
-                pubkey.to_vec(),
-                signature.to_vec(),
-            ));
-            guard.1.push(idx);
-            return idx;
-        }
-        0
+        let idx = self.next_idx.fetch_add(1, Ordering::Relaxed);
+        self.collect_with_index(idx, message, pubkey, signature);
+        idx
+    }
+
+    /// Collect with explicit global index (for CCheckQueue-style parallel script verification).
+    /// Enables deterministic (tx, input) order when workers collect out of order.
+    pub fn collect_with_index(&self, global_index: usize, message: &[u8], pubkey: &[u8], signature: &[u8]) {
+        self.tasks.push((
+            global_index,
+            (message.to_vec(), pubkey.to_vec(), signature.to_vec()),
+        ));
     }
 
     /// Batch verify all collected signatures
     ///
     /// Returns a vector of results, one per collected signature (in collection order)
     pub fn verify_batch(&self) -> Result<Vec<bool>> {
-        let tasks: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)> = match self.inner.lock() {
-            Ok(guard) => guard.0.clone(),
-            Err(_) => return Ok(Vec::new()),
-        };
+        let mut tasks: Vec<(usize, (Vec<u8>, Vec<u8>, Vec<u8>))> =
+            std::iter::from_fn(|| self.tasks.pop()).collect();
         if tasks.is_empty() {
             return Ok(Vec::new());
         }
+        tasks.sort_by_key(|t| t.0);
+        let tasks: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)> = tasks.into_iter().map(|(_, t)| t).collect();
 
         let task_refs: Vec<(&[u8], &[u8], &[u8])> = tasks
             .iter()
@@ -101,24 +104,21 @@ impl SchnorrSignatureCollector {
 
     /// Clear all collected signatures
     pub fn clear(&self) {
-        if let Ok(mut guard) = self.inner.lock() {
-            guard.0.clear();
-            guard.1.clear();
-        }
+        while self.tasks.pop().is_some() {}
+        self.next_idx.store(0, Ordering::Relaxed);
     }
 
     /// Check if collector is empty
     pub fn is_empty(&self) -> bool {
-        self.inner.lock().map(|g| g.0.is_empty()).unwrap_or(true)
+        self.tasks.is_empty()
     }
 
     /// Merge tasks from another collector (for per-thread collection merge).
     #[cfg(feature = "rayon")]
     pub fn extend_from(&self, other: &Self) {
-        if let (Ok(mut self_guard), Ok(other_guard)) = (self.inner.lock(), other.inner.lock()) {
-            let old_len = self_guard.0.len();
-            self_guard.0.extend(other_guard.0.iter().cloned());
-            self_guard.1.extend(old_len..old_len + other_guard.0.len());
+        while let Some((_, task)) = other.tasks.pop() {
+            let new_idx = self.next_idx.fetch_add(1, Ordering::Relaxed);
+            self.tasks.push((new_idx, task));
         }
     }
 }
@@ -156,7 +156,7 @@ impl SchnorrSignatureCollector {
 /// However, secp256k1's `Message::from_digest_slice()` requires exactly 32 bytes.
 /// BIP 340 uses tagged hashes. For CSFS, we hash the message with SHA256 to create
 /// a 32-byte digest, which is then used for BIP 340 verification.
-/// This matches the reference implementation in Bitcoin Core PR #29270.
+/// This matches the reference implementation in BIP348 reference implementation.
 #[spec_locked("5.4.8")]
 pub fn verify_signature_from_stack(
     message: &[u8],
@@ -176,7 +176,7 @@ pub fn verify_signature_from_stack(
     if pubkey.len() == 32 {
         // BIP 340 Schnorr signature verification
         // Message is NOT hashed by BIP 340 spec, but we need 32 bytes for secp256k1
-        // Use SHA256 to hash message to 32 bytes (matches Bitcoin Core PR #29270)
+        // Use SHA256 to hash message to 32 bytes (matches BIP348 reference implementation)
         
         // Signature must be 64 bytes (BIP 340 Schnorr)
         if signature.len() != 64 {
@@ -208,7 +208,7 @@ pub fn verify_signature_from_stack(
         // Create message from bytes
         // BIP 340: Message is NOT hashed (accepts any size)
         // But secp256k1 requires 32 bytes, so we hash with SHA256
-        // This matches Bitcoin Core PR #29270 implementation
+        // This matches BIP348 reference implementation implementation
         let message_hash = Sha256::digest(message);
         let msg = Message::from_digest_slice(&message_hash)
             .map_err(|_| ConsensusError::InvalidSignature("Invalid message".into()))?;
@@ -337,17 +337,26 @@ pub fn batch_verify_signatures_from_stack(
     }
 
     let msg_refs: Vec<&[u8]> = msgs.iter().map(|m| m.as_slice()).collect();
-    const CHUNK_THRESHOLD: usize = 32;
-    const CHUNK_SIZE: usize = 32;
+    // Chunk for parallelism: config override > hardware-derived. See ibd_tuning.
+    let perf = &crate::config::get_consensus_config_ref().performance;
+    let chunk_threshold = crate::ibd_tuning::chunk_threshold_config_or_hardware(perf.ibd_chunk_threshold);
 
     #[cfg(all(feature = "production", feature = "rayon"))]
     let batch_results: Vec<std::result::Result<(), secp256k1::Error>> = {
-        if sigs.len() <= CHUNK_THRESHOLD {
+        if sigs.len() <= chunk_threshold {
             verify_batch(&sigs, &msg_refs, &pubkeys)
         } else {
             let n = sigs.len();
             let num_threads = rayon::current_num_threads().max(1);
-            let num_chunks = ((n + CHUNK_SIZE - 1) / CHUNK_SIZE).max(num_threads).min(n);
+            let min_chunk = crate::ibd_tuning::PIPPENGER_MIN_CHUNK;
+            let max_chunks = n / min_chunk;
+            let num_chunks = if max_chunks >= 2 {
+                num_threads.min(max_chunks)
+            } else if n >= min_chunk {
+                1 // single chunk gets Pippenger; split would give chunks < min_chunk → slow
+            } else {
+                1
+            };
             let chunk_ranges: Vec<(usize, usize)> = (0..num_chunks)
                 .map(|i| {
                     let start = (i * n) / num_chunks;

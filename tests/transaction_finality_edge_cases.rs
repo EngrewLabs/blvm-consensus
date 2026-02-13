@@ -1,6 +1,6 @@
 //! Transaction finality edge cases
 //!
-//! Tests for IsFinalTx logic matching Bitcoin Core exactly.
+//! Tests for IsFinalTx logic matching consensus exactly.
 //!
 //! Consensus-critical: Finality differences = different transaction acceptance
 
@@ -43,7 +43,7 @@ fn test_finality_locktime_zero() {
 
 /// Test that height-based locktime uses < comparison
 ///
-/// Bitcoin Core uses < comparison: if locktime < threshold, then locktime < height
+/// consensus uses < comparison: if locktime < threshold, then locktime < height
 /// This means locktime = height is NOT satisfied (must be locktime < height)
 #[test]
 fn test_finality_height_based_locktime() {
@@ -87,7 +87,7 @@ fn test_finality_height_based_locktime() {
 
 /// Test that timestamp-based locktime uses < comparison
 ///
-/// Bitcoin Core uses < comparison: if locktime >= threshold, then locktime < block_time
+/// consensus uses < comparison: if locktime >= threshold, then locktime < block_time
 #[test]
 fn test_finality_timestamp_based_locktime() {
     let locktime_value = LOCKTIME_THRESHOLD as u64 + 1000; // Timestamp-based locktime

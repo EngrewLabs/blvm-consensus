@@ -1,9 +1,9 @@
 //! Coinbase Transaction Validation Verification Tests
 //!
-//! Tests to verify BLLVM's coinbase validation matches Bitcoin Core exactly.
+//! Tests to verify BLLVM's coinbase validation matches consensus exactly.
 //! Coinbase validation is consensus-critical - differences = chain split.
 //!
-//! Core checks:
+//! Consensus checks:
 //! - First transaction must be coinbase
 //! - Coinbase scriptSig length: 2-100 bytes
 //! - Coinbase output <= fees + subsidy
@@ -40,7 +40,7 @@ fn create_coinbase_tx(_height: u64, output_value: i64) -> Transaction {
 
 /// Test coinbase scriptSig length: minimum (2 bytes)
 ///
-/// Core requires: 2 <= scriptSig.length <= 100
+/// Consensus requires: 2 <= scriptSig.length <= 100
 #[test]
 fn test_coinbase_script_sig_minimum_length() {
     let tx = Transaction {
@@ -71,7 +71,7 @@ fn test_coinbase_script_sig_minimum_length() {
 
 /// Test coinbase scriptSig length: below minimum (1 byte)
 ///
-/// Core rejects: scriptSig.length < 2
+/// Consensus rejects: scriptSig.length < 2
 #[test]
 fn test_coinbase_script_sig_below_minimum() {
     let tx = Transaction {
@@ -107,7 +107,7 @@ fn test_coinbase_script_sig_below_minimum() {
 
 /// Test coinbase scriptSig length: maximum (100 bytes)
 ///
-/// Core allows: scriptSig.length <= 100
+/// Consensus allows: scriptSig.length <= 100
 #[test]
 fn test_coinbase_script_sig_maximum_length() {
     let tx = Transaction {
@@ -142,7 +142,7 @@ fn test_coinbase_script_sig_maximum_length() {
 
 /// Test coinbase scriptSig length: above maximum (101 bytes)
 ///
-/// Core rejects: scriptSig.length > 100
+/// Consensus rejects: scriptSig.length > 100
 #[test]
 fn test_coinbase_script_sig_above_maximum() {
     let tx = Transaction {
@@ -177,7 +177,7 @@ fn test_coinbase_script_sig_above_maximum() {
 
 /// Test coinbase output validation: output = subsidy (no fees)
 ///
-/// Core allows: coinbase_output <= fees + subsidy
+/// Consensus allows: coinbase_output <= fees + subsidy
 #[test]
 fn test_coinbase_output_exact_subsidy() {
     let height = 100;
@@ -195,7 +195,7 @@ fn test_coinbase_output_exact_subsidy() {
 
 /// Test coinbase output validation: output > subsidy (should fail without fees)
 ///
-/// Core rejects: coinbase_output > fees + subsidy
+/// Consensus rejects: coinbase_output > fees + subsidy
 #[test]
 fn test_coinbase_output_exceeds_subsidy() {
     let height = 100;
@@ -215,7 +215,7 @@ fn test_coinbase_output_exceeds_subsidy() {
 
 /// Test coinbase output validation: output = subsidy + fees
 ///
-/// Core allows: coinbase_output <= fees + subsidy
+/// Consensus allows: coinbase_output <= fees + subsidy
 #[test]
 fn test_coinbase_output_with_fees() {
     let height = 100;
@@ -235,7 +235,7 @@ fn test_coinbase_output_with_fees() {
 
 /// Test coinbase output validation: output > MAX_MONEY
 ///
-/// Core rejects: coinbase_output > MAX_MONEY
+/// Consensus rejects: coinbase_output > MAX_MONEY
 #[test]
 fn test_coinbase_output_exceeds_max_money() {
     let coinbase = create_coinbase_tx(100, MAX_MONEY + 1);
@@ -253,7 +253,7 @@ fn test_coinbase_output_exceeds_max_money() {
 
 /// Test coinbase identification: valid coinbase
 ///
-/// Core: coinbase if single input with null prevout
+/// Consensus: coinbase if single input with null prevout
 #[test]
 fn test_coinbase_identification_valid() {
     let tx = Transaction {
@@ -280,7 +280,7 @@ fn test_coinbase_identification_valid() {
 
 /// Test coinbase identification: non-coinbase (multiple inputs)
 ///
-/// Core: not coinbase if multiple inputs
+/// Consensus: not coinbase if multiple inputs
 #[test]
 fn test_coinbase_identification_multiple_inputs() {
     let tx = Transaction {
@@ -320,7 +320,7 @@ fn test_coinbase_identification_multiple_inputs() {
 
 /// Test coinbase identification: non-coinbase (non-null prevout)
 ///
-/// Core: not coinbase if prevout is not null
+/// Consensus: not coinbase if prevout is not null
 #[test]
 fn test_coinbase_identification_non_null_prevout() {
     let tx = Transaction {

@@ -1,7 +1,7 @@
 //! Little-endian serialization verification tests
 //!
 //! Verifies that all serialization in BLLVM uses little-endian byte order
-//! explicitly, matching Bitcoin Core's wire format.
+//! explicitly, matching consensus's wire format.
 //!
 //! Consensus-critical: Endianness differences = network incompatibility
 

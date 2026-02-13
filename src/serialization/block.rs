@@ -1,7 +1,7 @@
 //! Block header wire format serialization/deserialization
 //!
 //! Bitcoin block header wire format specification.
-//! Must match Bitcoin Core's serialization exactly for consensus compatibility.
+//! Must match consensus serialization exactly for consensus compatibility.
 
 use super::transaction::{deserialize_transaction, deserialize_transaction_with_witness, serialize_transaction};
 use super::varint::{decode_varint, encode_varint};

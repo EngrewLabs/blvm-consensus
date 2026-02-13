@@ -635,8 +635,8 @@ fn check_mempool_rules(tx: &Transaction, fee: Integer, mempool: &Mempool) -> Res
         "Fee rate ({fee_rate:.6}) must be non-negative (fee: {fee}, size: {tx_size})"
     );
 
-    // Get minimum fee rate from configuration (Bitcoin Core: -minrelaytxfee)
-    let config = crate::config::get_consensus_config();
+    // Get minimum fee rate from configuration
+    let config = crate::config::get_consensus_config_ref();
     let min_fee_rate = config.mempool.min_relay_fee_rate as f64; // sat/vB
     let min_tx_fee = config.mempool.min_tx_fee; // absolute minimum fee
 
@@ -676,7 +676,7 @@ fn has_conflicts(tx: &Transaction, mempool: &Mempool) -> Result<bool> {
 
 /// Check if transaction is final (Orange Paper Section 9.1 - Transaction Finality)
 ///
-/// Matches Bitcoin Core's IsFinalTx() exactly.
+/// IsFinalTx — locktime/sequence validation (BIP65/68).
 ///
 /// A transaction is final if:
 /// 1. tx.lock_time == 0 (no locktime restriction), OR
@@ -694,7 +694,7 @@ fn has_conflicts(tx: &Transaction, mempool: &Mempool) -> Result<bool> {
 ///
 /// Check if transaction is final (Orange Paper Section 9.1 - Transaction Finality)
 ///
-/// Matches Bitcoin Core's IsFinalTx() exactly.
+/// IsFinalTx — locktime/sequence validation (BIP65/68).
 ///
 /// A transaction is final if:
 /// 1. tx.lock_time == 0 (no locktime restriction), OR
@@ -724,7 +724,7 @@ pub fn is_final_tx(tx: &Transaction, height: Natural, block_time: Natural) -> bo
     }
 
     // Check if locktime is satisfied based on type
-    // Core's logic: if (tx.nLockTime < (tx.nLockTime < LOCKTIME_THRESHOLD ? nBlockHeight : nBlockTime))
+    // If locktime < threshold, compare to block height; else compare to block time
     // This means: locktime < (condition ? height : block_time)
     // So: if locktime < threshold, check locktime < height
     //     if locktime >= threshold, check locktime < block_time
@@ -742,7 +742,7 @@ pub fn is_final_tx(tx: &Transaction, height: Natural, block_time: Natural) -> bo
 
     // Even if locktime isn't satisfied, transaction is final if all inputs have SEQUENCE_FINAL
     // This allows transactions to bypass locktime by setting all sequences to 0xffffffff
-    // Core's behavior: if all inputs have SEQUENCE_FINAL, locktime is ignored
+    // If all inputs have SEQUENCE_FINAL, locktime is ignored
     for input in &tx.inputs {
         if (input.sequence as u32) != SEQUENCE_FINAL {
             return false;
@@ -869,7 +869,7 @@ pub fn calculate_tx_id(tx: &Transaction) -> Hash {
 
 /// Calculate transaction size (simplified)
 // Use the actual serialization-based size calculation from transaction module
-// This ensures consistency and matches Bitcoin Core's GetSerializeSize(TX_NO_WITNESS(tx))
+// Ensures consistency with base serialization size (no witness)
 fn calculate_transaction_size(tx: &Transaction) -> usize {
     use crate::transaction::calculate_transaction_size as tx_size;
     tx_size(tx)

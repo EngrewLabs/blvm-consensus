@@ -45,7 +45,7 @@ pub const MEDIAN_TIME_BLOCKS: usize = 11;
 /// let median = get_median_time_past(&headers);
 /// ```
 #[spec_locked("5.5")]
-pub fn get_median_time_past(headers: &[BlockHeader]) -> u64 {
+pub fn get_median_time_past<H: AsRef<BlockHeader>>(headers: &[H]) -> u64 {
     if headers.is_empty() {
         return 0;
     }
@@ -55,7 +55,7 @@ pub fn get_median_time_past(headers: &[BlockHeader]) -> u64 {
     let recent_headers = &headers[start_idx..];
 
     // Extract timestamps and sort
-    let mut timestamps: Vec<u64> = recent_headers.iter().map(|h| h.timestamp).collect();
+    let mut timestamps: Vec<u64> = recent_headers.iter().map(|h| h.as_ref().timestamp).collect();
 
     timestamps.sort_unstable();
 
@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn test_median_time_empty() {
-        let headers = vec![];
+        let headers: Vec<BlockHeader> = vec![];
         assert_eq!(get_median_time_past(&headers), 0);
     }
 

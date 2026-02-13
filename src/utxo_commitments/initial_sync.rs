@@ -548,7 +548,7 @@ pub fn update_commitments_after_block(
 /// Note: For SegWit transactions, the txid still uses the non-witness serialization
 /// (witness data is excluded from txid calculation).
 ///
-/// This matches Bitcoin Core's transaction ID computation exactly.
+/// This matches consensus transaction ID computation exactly.
 fn compute_tx_id(tx: &Transaction) -> HashType {
     use crate::serialization::transaction::serialize_transaction;
     use sha2::{Digest, Sha256};

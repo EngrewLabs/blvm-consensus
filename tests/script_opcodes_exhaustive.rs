@@ -11,7 +11,7 @@
 
 use blvm_consensus::script::{eval_script, verify_script, SigVersion};
 
-/// Script verification flags from Bitcoin Core
+/// Script verification flags from consensus
 ///
 /// These flags control script verification behavior and must be tested
 /// in all combinations to ensure consensus correctness.
@@ -153,7 +153,7 @@ fn test_script_contexts() {
 /// Verifies that disabled opcodes are rejected correctly.
 #[test]
 fn test_disabled_opcodes() {
-    // Disabled opcodes (from Bitcoin Core)
+    // Disabled opcodes (from consensus)
     // These should be rejected when encountered
     let disabled_opcodes = vec![
         0xba, // OP_RESERVED

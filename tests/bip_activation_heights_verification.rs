@@ -1,6 +1,6 @@
 //! BIP Activation Height Verification Tests
 //!
-//! Tests to verify BLLVM's BIP activation heights match Bitcoin Core exactly.
+//! Tests to verify BLVM's BIP activation heights match consensus.
 //! BIP activation heights are consensus-critical - differences = chain split.
 //!
 //! Critical BIPs:
@@ -14,7 +14,7 @@ use blvm_consensus::types::*;
 
 /// Test BIP34 activation height: before activation
 ///
-/// Core: BIP34 activates at height 227,836 (mainnet)
+/// BIP34 activates at height 227,836 (mainnet)
 #[test]
 fn test_bip34_before_activation() {
     let height = 227_835; // One block before activation
@@ -32,7 +32,7 @@ fn test_bip34_before_activation() {
 
 /// Test BIP34 activation height: at activation
 ///
-/// Core: BIP34 activates at height 227,836 (mainnet)
+/// BIP34 activates at height 227,836 (mainnet)
 #[test]
 fn test_bip34_at_activation() {
     let height = 227_836; // Activation height
@@ -48,7 +48,7 @@ fn test_bip34_at_activation() {
 
 /// Test BIP34 activation height: after activation
 ///
-/// Core: BIP34 enforced after height 227,836 (mainnet)
+/// BIP34 enforced after height 227,836 (mainnet)
 #[test]
 fn test_bip34_after_activation() {
     let height = 227_837; // One block after activation
@@ -64,7 +64,7 @@ fn test_bip34_after_activation() {
 
 /// Test BIP66 activation height: before activation
 ///
-/// Core: BIP66 activates at height 363,725 (mainnet)
+/// BIP66 activates at height 363,725 (mainnet)
 #[test]
 fn test_bip66_before_activation() {
     let height = 363_724; // One block before activation
@@ -79,7 +79,7 @@ fn test_bip66_before_activation() {
 
 /// Test BIP66 activation height: at activation
 ///
-/// Core: BIP66 activates at height 363,725 (mainnet)
+/// BIP66 activates at height 363,725 (mainnet)
 #[test]
 fn test_bip66_at_activation() {
     let height = 363_725; // Activation height
@@ -94,7 +94,7 @@ fn test_bip66_at_activation() {
 
 /// Test BIP66 activation height: after activation
 ///
-/// Core: BIP66 enforced after height 363,725 (mainnet)
+/// BIP66 enforced after height 363,725 (mainnet)
 #[test]
 fn test_bip66_after_activation() {
     let height = 363_726; // One block after activation
@@ -109,7 +109,7 @@ fn test_bip66_after_activation() {
 
 /// Test BIP147 activation height: before activation
 ///
-/// Core: BIP147 activates at height 481,824 (mainnet)
+/// BIP147 activates at height 481,824 (mainnet)
 #[test]
 fn test_bip147_before_activation() {
     let height = 481_823; // One block before activation
@@ -124,7 +124,7 @@ fn test_bip147_before_activation() {
 
 /// Test BIP147 activation height: at activation
 ///
-/// Core: BIP147 activates at height 481,824 (mainnet)
+/// BIP147 activates at height 481,824 (mainnet)
 #[test]
 fn test_bip147_at_activation() {
     let height = 481_824; // Activation height
@@ -139,7 +139,7 @@ fn test_bip147_at_activation() {
 
 /// Test BIP147 activation height: after activation
 ///
-/// Core: BIP147 enforced after height 481,824 (mainnet)
+/// BIP147 enforced after height 481,824 (mainnet)
 #[test]
 fn test_bip147_after_activation() {
     let height = 481_825; // One block after activation
@@ -152,30 +152,30 @@ fn test_bip147_after_activation() {
     );
 }
 
-/// Test BIP activation heights match Core exactly
+/// Test BIP activation heights match consensus
 ///
-/// Core activation heights (mainnet):
+/// Consensus activation heights (mainnet):
 /// - BIP34: 227,836
 /// - BIP66: 363,725
 /// - BIP147: 481,824
 #[test]
-fn test_bip_activation_heights_match_core() {
-    // Verify activation heights match Core exactly
+fn test_bip_activation_heights_match_consensus() {
+    // Verify activation heights match consensus
     const BIP34_ACTIVATION: u64 = 227_836;
     const BIP66_ACTIVATION: u64 = 363_725;
     const BIP147_ACTIVATION: u64 = 481_824;
 
     assert_eq!(
         BIP34_ACTIVATION, 227_836,
-        "BIP34 activation height must match Core"
+        "BIP34 activation height must match consensus"
     );
     assert_eq!(
         BIP66_ACTIVATION, 363_725,
-        "BIP66 activation height must match Core"
+        "BIP66 activation height must match consensus"
     );
     assert_eq!(
         BIP147_ACTIVATION, 481_824,
-        "BIP147 activation height must match Core"
+        "BIP147 activation height must match consensus"
     );
 
     // Verify heights are in ascending order
@@ -191,7 +191,7 @@ fn test_bip_activation_heights_match_core() {
 
 /// Test BIP30: Duplicate coinbase prevention
 ///
-/// Core: BIP30 prevents duplicate coinbase transactions
+/// BIP30 prevents duplicate coinbase transactions
 #[test]
 fn test_bip30_duplicate_coinbase_prevention() {
     // BIP30 prevents spending the same coinbase transaction twice
@@ -203,7 +203,7 @@ fn test_bip30_duplicate_coinbase_prevention() {
 
 /// Test BIP90: Block version enforcement
 ///
-/// Core: BIP90 enforces block version rules
+/// BIP90 enforces block version rules
 #[test]
 fn test_bip90_block_version_enforcement() {
     // BIP90 enforces that block versions follow certain rules

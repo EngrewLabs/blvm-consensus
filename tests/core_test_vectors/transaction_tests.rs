@@ -1,8 +1,8 @@
-//! Bitcoin Core transaction test vector integration
+//! consensus transaction test vector integration
 //!
-//! Tests transaction validation using Core's test vectors.
+//! Tests transaction validation using specification's test vectors.
 //!
-//! Core test vector format (tx_valid.json / tx_invalid.json):
+//! reference test vector format (tx_valid.json / tx_invalid.json):
 //! Array of arrays: [[tx_hex, witness_hex?, flags, expected], ...]
 //! - tx_hex: Transaction in hex format (non-witness serialization)
 //! - witness_hex: Optional witness data in hex format
@@ -25,7 +25,7 @@ pub struct TransactionTestVector {
     pub description: String,
 }
 
-/// Load transaction test vectors from Bitcoin Core JSON format
+/// Load transaction test vectors from consensus JSON format
 ///
 /// Format: JSON array of arrays, each sub-array contains:
 /// [tx_hex, witness_hex?, flags, expected_description]
@@ -155,7 +155,7 @@ pub fn load_transaction_test_vectors(dir: &str) -> Result<Vec<TransactionTestVec
     Ok(vectors)
 }
 
-/// Run Core transaction test vectors
+/// Run reference transaction test vectors
 pub fn run_core_transaction_tests(vectors: &[TransactionTestVector]) -> Result<(), Box<dyn std::error::Error>> {
     let mut passed = 0;
     let mut failed = 0;
@@ -192,7 +192,7 @@ pub fn run_core_transaction_tests(vectors: &[TransactionTestVector]) -> Result<(
         }
     }
     
-    println!("Core transaction test vectors: {} passed, {} failed", passed, failed);
+    println!("Reference transaction test vectors: {} passed, {} failed", passed, failed);
     
     if failed > 0 {
         Err(format!("{} test vectors failed", failed).into())

@@ -1,9 +1,9 @@
 //! Script Execution Limits Verification Tests
 //!
-//! Tests to verify BLLVM's script execution limits match Bitcoin Core exactly.
+//! Tests to verify BLLVM's script execution limits match consensus exactly.
 //! Script limits are consensus-critical - differences = chain split.
 //!
-//! Core limits:
+//! Consensus limits:
 //! - Stack size: 1000 elements
 //! - Operation count: 201 operations
 //! - These must be enforced exactly
@@ -12,26 +12,26 @@ use blvm_consensus::constants::*;
 use blvm_consensus::types::*;
 
 // Note: Script execution testing requires access to execute_script function
-// For now, we verify the constants match Core
+// For now, we verify the constants match consensus
 
-/// Test stack size limit constant matches Core
+/// Test stack size limit constant matches consensus
 ///
-/// Core: MAX_STACK_SIZE = 1000
+/// Consensus: MAX_STACK_SIZE = 1000
 #[test]
 fn test_stack_size_constant() {
-    // Verify constant matches Core
+    // Verify constant matches consensus
     // Note: Actual stack size testing requires script execution
     // This test verifies the constant is correct
     const MAX_STACK_SIZE: usize = 1000;
     assert_eq!(MAX_STACK_SIZE, 1000, "MAX_STACK_SIZE should be 1000");
 }
 
-/// Test operation count limit constant matches Core
+/// Test operation count limit constant matches consensus
 ///
-/// Core: MAX_SCRIPT_OPS = 201
+/// Consensus: MAX_SCRIPT_OPS = 201
 #[test]
 fn test_operation_count_constant() {
-    // Verify constant matches Core
+    // Verify constant matches consensus
     // Note: Actual operation count testing requires script execution
     // This test verifies the constant is correct
     const MAX_SCRIPT_OPS: usize = 201;

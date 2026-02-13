@@ -1,7 +1,7 @@
 //! Historical consensus validation tests
 //!
 //! Tests for historical consensus changes, soft fork activations, and
-//! consensus bugs that were fixed in Bitcoin Core.
+//! consensus bugs that were fixed in the reference implementation.
 //!
 //! This ensures compatibility with blocks from different consensus eras:
 //! - Pre-SegWit (blocks < 481824)
@@ -30,7 +30,7 @@ use blvm_consensus::{
 /// 2. The merkle tree construction duplicates the last transaction hash
 /// 3. Two different transaction sets can produce the same merkle root
 ///
-/// The fix: Bitcoin Core detects when identical hashes are hashed together
+/// The fix: Consensus detects when identical hashes are hashed together
 /// and treats such blocks as invalid. However, the standard Bitcoin protocol
 /// allows this behavior - the vulnerability is that it enables certain attacks.
 ///
@@ -189,7 +189,7 @@ fn test_cve_2012_2459_merkle_duplicate_hash() {
     // The CVE-2012-2459 vulnerability is that with an odd number of transactions,
     // the last hash is duplicated, which can theoretically allow two different
     // transaction sets to produce the same merkle root. However, in practice,
-    // this requires very specific conditions and is mitigated by Bitcoin Core's
+    // this requires very specific conditions and is mitigated by consensus rules
     // additional checks. Our implementation follows the standard Bitcoin protocol
     // behavior, which is correct.
 }
@@ -200,7 +200,7 @@ fn test_cve_2012_2459_merkle_duplicate_hash() {
 /// Specifically, if a block contains two transactions that spend the same UTXO, the second
 /// transaction should be rejected.
 ///
-/// The fix: Bitcoin Core validates that all transactions in a block spend unique UTXOs.
+/// The fix: Consensus validates that all transactions in a block spend unique UTXOs.
 #[test]
 fn test_cve_2018_17144_double_spend_in_block() {
     use blvm_consensus::block::connect_block;
@@ -293,7 +293,7 @@ fn test_cve_2018_17144_double_spend_in_block() {
 
     // Block should be rejected due to double-spend
     let witnesses = vec![vec![], vec![], vec![]]; // Empty witnesses
-    let result = connect_block(&block, &witnesses, utxo_set, 1, None, 0u64, Network::Mainnet);
+    let result = connect_block(&block, &witnesses, utxo_set, 1, None::<&[BlockHeader]>, 0u64, Network::Mainnet);
 
     // Block should be invalid due to double-spend
     if let Ok((validation_result, _, _undo_log)) = result {
@@ -339,7 +339,7 @@ fn test_pre_segwit_block_validation() {
         &witnesses,
         utxo_set,
         pre_segwit_height,
-        None,
+        None::<&[BlockHeader]>,
         0u64,
         Network::Mainnet,
     );
@@ -379,7 +379,7 @@ fn test_post_segwit_block_validation() {
         &witnesses,
         utxo_set,
         post_segwit_height,
-        None,
+        None::<&[BlockHeader]>,
         0u64,
         Network::Mainnet,
     );
@@ -419,7 +419,7 @@ fn test_post_taproot_block_validation() {
         &witnesses,
         utxo_set,
         post_taproot_height,
-        None,
+        None::<&[BlockHeader]>,
         0u64,
         Network::Mainnet,
     );

@@ -3,7 +3,7 @@
 //! Complete set of opcode constants for Bitcoin script execution.
 //! All opcodes are defined with their hex values and descriptive comments.
 //!
-//! Reference: Bitcoin Core `script/script.h` and BIP specifications
+//! Reference: BIP specifications and script/opcode definitions
 
 // ============================================================================
 // PUSH DATA OPCODES (0x00 - 0x4e)

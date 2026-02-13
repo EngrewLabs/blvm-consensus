@@ -1,7 +1,7 @@
 //! Integer overflow edge cases for transaction validation
 //!
 //! Tests for consensus-critical integer overflow handling that must match
-//! Bitcoin Core's MoneyRange() behavior exactly.
+//! consensus's MoneyRange() behavior exactly.
 //!
 //! Consensus-critical: Overflow handling differences can cause different validation results.
 
@@ -14,7 +14,7 @@ use blvm_consensus::types::{
 
 /// Test that output value sum overflow is detected correctly
 ///
-/// Bitcoin Core's behavior:
+/// consensus's behavior:
 /// 1. Check each output: nValue >= 0 && nValue <= MAX_MONEY
 /// 2. Add: nValueOut += txout.nValue (no overflow check)
 /// 3. Check result: MoneyRange(nValueOut) = (nValueOut >= 0 && nValueOut <= MAX_MONEY)

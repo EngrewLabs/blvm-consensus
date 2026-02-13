@@ -1,9 +1,9 @@
-//! Integration tests for Bitcoin Core test vectors
+//! Integration tests for consensus test vectors
 //!
-//! These tests verify consensus correctness by running Core's test vectors
+//! These tests verify consensus correctness by running specification's test vectors
 //! through our validation logic. This provides free verification coverage.
 //!
-//! Test vectors can be downloaded from Bitcoin Core's test framework.
+//! Test vectors can be downloaded from consensus's test framework.
 //! If vectors are not available, tests will skip gracefully.
 
 use blvm_consensus::*;
@@ -12,9 +12,9 @@ use blvm_consensus::serialization::block::deserialize_block_with_witnesses;
 use std::path::PathBuf;
 use std::fs;
 
-/// Test directory for Core test vectors
+/// Test directory for reference test vectors
 /// 
-/// To use this, download Bitcoin Core test vectors to:
+/// To use this, download consensus test vectors to:
 /// `tests/test_data/core_vectors/`
 const CORE_VECTORS_DIR: &str = "tests/test_data/core_vectors";
 
@@ -128,7 +128,7 @@ fn test_core_test_vector_directory_structure() {
         return;
     }
     
-    assert!(base_path.is_dir(), "Core test vector directory should be a directory");
+    assert!(base_path.is_dir(), "Reference test vector directory should be a directory");
 }
 
 #[test]
@@ -194,7 +194,7 @@ fn test_block_vectors_if_available() {
     
     // Test each vector
     for (block, witnesses, should_be_valid) in vectors.iter().take(5) { // Limit to first 5 for speed
-        let result = connect_block(block, witnesses, utxo_set.clone(), height, None, 0u64, crate::types::Network::Mainnet);
+        let result = connect_block(block, witnesses, utxo_set.clone(), height, None::<&[crate::types::BlockHeader]>, 0u64, crate::types::Network::Mainnet);
         
         match result {
             Ok((ValidationResult::Valid, new_utxo_set)) => {

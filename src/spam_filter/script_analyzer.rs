@@ -418,14 +418,15 @@ mod tests {
 
     #[test]
     fn test_detect_multisig() {
-        // 2-of-3 multi-sig: OP_2 <pubkey1> <pubkey2> <pubkey3> OP_3 OP_CHECKMULTISIG
-        let mut script = vec![OP_2];
+        // 2-of-3 multi-sig: OP_3 <pubkey1> <pubkey2> <pubkey3> OP_2 OP_CHECKMULTISIG
+        // Format: OP_n (n keys) <pubkey1>...<pubkeyn> OP_m (m required) OP_CHECKMULTISIG
+        let mut script = vec![OP_3]; // n=3 keys
         // Add 3 pubkeys (33 bytes each)
         for _ in 0..3 {
             script.push(0x21); // push 33 bytes
             script.extend(vec![0u8; 33]);
         }
-        script.push(OP_3);
+        script.push(OP_2); // m=2 required signatures
         script.push(OP_CHECKMULTISIG);
 
         let script_type = ScriptType::detect(&ByteString::from(script));

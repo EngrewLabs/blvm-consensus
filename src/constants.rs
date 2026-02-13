@@ -21,13 +21,13 @@ pub const MAX_BLOCK_WEIGHT: usize = 4_000_000;
 pub const MAX_BLOCK_SIZE: usize = MAX_BLOCK_WEIGHT;
 
 /// Maximum number of inputs per transaction
-// Note: Bitcoin Core has no explicit input limit - only bounded by block weight
-// Setting to a very high value to match Core's behavior
+// Note: consensus has no explicit input limit - only bounded by block weight
+// Setting to a very high value to match consensus behavior
 pub const MAX_INPUTS: usize = 100_000;
 
 /// Maximum number of outputs per transaction
-// Note: Bitcoin Core has no explicit output limit - only bounded by block weight
-// Setting to a very high value to match Core's behavior
+// Note: consensus has no explicit output limit - only bounded by block weight
+// Setting to a very high value to match consensus behavior
 pub const MAX_OUTPUTS: usize = 100_000;
 
 /// Maximum script length
@@ -101,7 +101,7 @@ pub const COINBASE_MATURITY: u64 = 100;
 /// Total sigop cost for a block must not exceed this value.
 /// Sigop cost = (legacy sigops × 4) + (P2SH sigops × 4) + witness sigops
 ///
-/// Reference: Bitcoin Core `consensus.h` MAX_BLOCK_SIGOPS_COST = 80000
+/// Reference: consensus `consensus.h` MAX_BLOCK_SIGOPS_COST = 80000
 pub const MAX_BLOCK_SIGOPS_COST: u64 = 80_000;
 
 /// Witness commitment hash length (BIP141)
@@ -150,12 +150,12 @@ pub const SEGWIT_P2WSH_LENGTH: usize = 32;
 // BIP ACTIVATION HEIGHTS
 // ============================================================================
 // Consensus-critical activation heights. Any change to these values would cause
-// a chain split. These heights are locked via formal proofs to match Bitcoin Core.
+// a chain split. These heights are locked via formal proofs to match consensus.
 
 /// BIP30: Duplicate Coinbase Prevention - Mainnet deactivation height
 ///
 /// BIP30 was disabled after this block to allow duplicate coinbases in blocks 91842 and 91880.
-/// Reference: Bitcoin Core disabled BIP30 after block 91722
+/// Reference: consensus disabled BIP30 after block 91722
 pub const BIP30_DEACTIVATION_MAINNET: u64 = 91722;
 
 /// BIP30: Duplicate Coinbase Prevention - Testnet deactivation height
@@ -187,12 +187,12 @@ pub const BIP16_P2SH_ACTIVATION_REGTEST: u64 = 0;
 /// BIP34: Block Height in Coinbase - Mainnet activation height
 ///
 /// Starting at this block, coinbase scriptSig must contain the block height.
-/// Reference: BIP34, Bitcoin Core activation at block 227,836
+/// Reference: BIP34, consensus activation at block 227,836
 pub const BIP34_ACTIVATION_MAINNET: u64 = 227_836;
 
 /// BIP34: Block Height in Coinbase - Testnet activation height
 ///
-/// Reference: BIP34, Bitcoin Core activation at block 211,111
+/// Reference: BIP34, consensus activation at block 211,111
 pub const BIP34_ACTIVATION_TESTNET: u64 = 211_111;
 
 /// BIP34: Block Height in Coinbase - Regtest activation height
@@ -203,14 +203,14 @@ pub const BIP34_ACTIVATION_REGTEST: u64 = 0;
 /// BIP66: Strict DER Signatures - Mainnet activation height
 ///
 /// Starting at this block, all signatures must use strict DER encoding.
-/// Reference: BIP66, Bitcoin Core activation at block 363,725
+/// Reference: BIP66, consensus activation at block 363,725
 /// Note: The code checks `height < activation_height`, so 363,725 is the first
 /// block where BIP66 is enforced.
 pub const BIP66_ACTIVATION_MAINNET: u64 = 363_725;
 
 /// BIP66: Strict DER Signatures - Testnet activation height
 ///
-/// Reference: BIP66, Bitcoin Core activation at block 330,776
+/// Reference: BIP66, consensus activation at block 330,776
 pub const BIP66_ACTIVATION_TESTNET: u64 = 330_776;
 
 /// BIP66: Strict DER Signatures - Regtest activation height
@@ -221,30 +221,30 @@ pub const BIP66_ACTIVATION_REGTEST: u64 = 0;
 /// BIP65: OP_CHECKLOCKTIMEVERIFY (CLTV) - Mainnet activation height
 ///
 /// Starting at this block, CLTV opcode is enabled.
-/// Reference: BIP65, Bitcoin Core activation at block 388,381
+/// Reference: BIP65, consensus activation at block 388,381
 pub const BIP65_ACTIVATION_MAINNET: u64 = 388_381;
 
 /// BIP147: NULLDUMMY Enforcement - Mainnet activation height
 ///
 /// Starting at this block, dummy stack elements must be empty (OP_0).
-/// Reference: BIP147, Bitcoin Core activation at block 481,824
+/// Reference: BIP147, consensus activation at block 481,824
 pub const BIP147_ACTIVATION_MAINNET: u64 = 481_824;
 
 /// BIP147: NULLDUMMY Enforcement - Testnet activation height
 ///
-/// Reference: BIP147, Bitcoin Core activation at block 834,624
+/// Reference: BIP147, consensus activation at block 834,624
 pub const BIP147_ACTIVATION_TESTNET: u64 = 834_624;
 
 /// SegWit (BIP141) - Mainnet activation height
 ///
 /// Starting at this block, Segregated Witness is active.
-/// Reference: BIP141, Bitcoin Core activation at block 481,824
+/// Reference: BIP141, consensus activation at block 481,824
 pub const SEGWIT_ACTIVATION_MAINNET: u64 = 481_824;
 
 /// Taproot (BIP341) - Mainnet activation height
 ///
 /// Starting at this block, Taproot is active.
-/// Reference: BIP341, Bitcoin Core activation at block 709,632
+/// Reference: BIP341, consensus activation at block 709,632
 pub const TAPROOT_ACTIVATION_MAINNET: u64 = 709_632;
 
 /// CTV (BIP119) - Mainnet activation height

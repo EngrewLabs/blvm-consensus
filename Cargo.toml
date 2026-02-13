@@ -68,7 +68,7 @@ blvm-spec-lock = { git = "https://github.com/BTCDecoded/blvm-spec-lock.git", def
 proptest = "=1.5.0"
 # Fuzzing framework for better test coverage ergonomics
 bolero = "0.11"
-# HTTP client for differential fuzzing vs Bitcoin Core (Phase 2.2)
+# HTTP client for differential fuzzing (Phase 2.2)
 reqwest = { version = "0.11", features = ["json"], default-features = false }
 # Async runtime for differential fuzzing tests
 tokio = { version = "1.35", features = ["rt", "macros"] }
@@ -94,7 +94,7 @@ local-spec-lock = []
 
 # Production performance optimizations
 # This feature enables runtime optimizations like caching and context reuse
-production = ["lru", "rayon", "smallvec", "rustc-hash"]
+production = ["lru", "rayon", "smallvec", "rustc-hash", "crossbeam-queue"]
 
 # Enable rayon for parallelization (optional, can be enabled independently)
 rayon = ["dep:rayon"]
@@ -125,6 +125,9 @@ runtime-invariants = []
 # Enables OP_CHECKTEMPLATEVERIFY opcode support
 ctv = []
 
+# Profiling: eprintln! timing logs (PERF, BATCH, FAST_PATH). NOT for production.
+profile = []
+
 # CSFS (BIP348 CHECKSIGFROMSTACK) - proposed soft fork
 # Enables OP_CHECKSIGFROMSTACK opcode support (Tapscript only)
 csfs = []
@@ -132,6 +135,10 @@ csfs = []
 
 [dependencies.lru]
 version = "0.12"
+optional = true
+
+[dependencies.crossbeam-queue]
+version = "0.3"
 optional = true
 
 [dependencies.rayon]

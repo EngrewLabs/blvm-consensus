@@ -1,7 +1,7 @@
 //! Coinbase maturity edge cases
 //!
 //! Tests for consensus-critical coinbase maturity checking that must match
-//! Bitcoin Core's behavior exactly.
+//! consensus's behavior exactly.
 //!
 //! Consensus-critical: Coinbase maturity differences can cause different validation results.
 

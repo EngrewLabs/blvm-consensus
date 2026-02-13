@@ -1104,7 +1104,7 @@ mod tests {
             &witnesses,
             utxo_set.clone(),
             1,
-            None,
+            None::<&[crate::types::BlockHeader]>,
             0u64,
             crate::types::Network::Regtest,
         )
@@ -1161,7 +1161,7 @@ mod tests {
             &witnesses,
             utxo_set.clone(),
             1,
-            None,
+            None::<&[crate::types::BlockHeader]>,
             0u64,
             crate::types::Network::Regtest,
         )

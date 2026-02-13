@@ -387,7 +387,7 @@ pub fn calculate_merkle_root_from_tx_ids(tx_ids: &[Hash]) -> Result<Hash> {
     merkle_tree_from_hashes(&mut hashes)
 }
 
-/// Core merkle tree building logic. Uses double SHA256 at each level (Bitcoin standard).
+/// Merkle tree building logic. Uses double SHA256 at each level (Bitcoin standard).
 /// Stack-allocates the 64-byte pair buffer to avoid heap allocation per node.
 fn merkle_tree_from_hashes(hashes: &mut Vec<Hash>) -> Result<Hash> {
     let mut mutated = false;

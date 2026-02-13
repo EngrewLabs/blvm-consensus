@@ -56,7 +56,7 @@ pub fn compute_taproot_tweak(internal_pubkey: &[u8; 32], merkle_root: &Hash) -> 
     // Create secp256k1 context (optimized: reuse in production, create new otherwise)
     // Note: Taproot operations need mutable context for add_exp_tweak, so we create new
     // For verification-only operations, use thread-local context
-    let secp = Secp256k1::new();
+    let _secp = Secp256k1::new();
 
     // Parse internal public key (x-only format for Taproot)
     let internal_pk = match XOnlyPublicKey::from_slice(internal_pubkey) {

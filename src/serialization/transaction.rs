@@ -1,7 +1,7 @@
 //! Transaction wire format serialization/deserialization
 //!
 //! Bitcoin transaction wire format specification.
-//! Must match Bitcoin Core's serialization exactly for consensus compatibility.
+//! Must match Bitcoin protocol serialization exactly for consensus compatibility.
 
 use super::varint::{decode_varint, encode_varint};
 use crate::error::{ConsensusError, Result};
@@ -63,25 +63,9 @@ pub fn serialize_transaction(tx: &Transaction) -> Vec<u8> {
     serialize_transaction_inner(tx)
 }
 
-/// Inner serialization function (actual implementation)
+/// Append serialized transaction to buffer (shared logic for into/inner).
 #[inline(always)]
-fn serialize_transaction_inner(tx: &Transaction) -> Vec<u8> {
-    // Pre-allocate buffer with better size estimation
-    // Estimate: version(4) + varint(input_count) + inputs(36*N + scripts) + varint(output_count) + outputs(9*M + scripts) + locktime(4)
-    // Conservative estimate: 4 + 1 + (tx.inputs.len() * 50) + 1 + (tx.outputs.len() * 50) + 4
-    // This avoids reallocations during serialization
-    #[cfg(feature = "production")]
-    let mut result = {
-        // Use preallocated buffer with proven maximum size
-        // This avoids reallocations and uses proven-safe maximum size
-        use crate::optimizations::prealloc_tx_buffer;
-        prealloc_tx_buffer()
-    };
-
-    #[cfg(not(feature = "production"))]
-    let mut result = Vec::new();
-
-    // Version (4 bytes, little-endian) - Bitcoin uses signed 32-bit in wire format
+fn serialize_transaction_append(result: &mut Vec<u8>, tx: &Transaction) {
     result.extend_from_slice(&(tx.version as i32).to_le_bytes());
 
     // Input count (VarInt)
@@ -122,7 +106,32 @@ fn serialize_transaction_inner(tx: &Transaction) -> Vec<u8> {
 
     // Lock time (4 bytes, little-endian) - Bitcoin uses u32 in wire format
     result.extend_from_slice(&(tx.lock_time as u32).to_le_bytes());
+}
 
+/// Serialize transaction into an existing buffer (for thread-local reuse in IBD).
+///
+/// Clears `dst`, writes serialized bytes, returns the length.
+#[inline(always)]
+#[spec_locked("3.2")]
+pub fn serialize_transaction_into(dst: &mut Vec<u8>, tx: &Transaction) -> usize {
+    dst.clear();
+    serialize_transaction_append(dst, tx);
+    dst.len()
+}
+
+/// Inner serialization function (actual implementation)
+#[inline(always)]
+fn serialize_transaction_inner(tx: &Transaction) -> Vec<u8> {
+    #[cfg(feature = "production")]
+    let mut result = {
+        use crate::optimizations::prealloc_tx_buffer;
+        prealloc_tx_buffer()
+    };
+
+    #[cfg(not(feature = "production"))]
+    let mut result = Vec::new();
+
+    serialize_transaction_append(&mut result, tx);
     result
 }
 

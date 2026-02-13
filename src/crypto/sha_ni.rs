@@ -13,7 +13,7 @@
 //! - AMD: All Ryzen (Zen microarchitecture, 2017+)
 //!
 //! # Reference
-//! Based on Intel's SHA-NI reference implementation and Bitcoin Core's sha256_shani.cpp
+//! Based on Intel's SHA-NI reference implementation and the reference sha256_shani.cpp
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
@@ -42,7 +42,7 @@ pub fn is_sha_ni_available() -> bool {
 #[target_feature(enable = "sha,sse2,ssse3,sse4.1")]
 unsafe fn sha256_ni_impl(data: &[u8]) -> [u8; 32] {
     // SHA256 initial hash values (first 32 bits of fractional parts of square roots of first 8 primes)
-    // Following Bitcoin Core's approach: load state in standard order, then shuffle to SHA-NI layout
+    // Following the reference approach: load state in standard order, then shuffle to SHA-NI layout
     // Standard order: [h0, h1, h2, h3, h4, h5, h6, h7]
     // After Shuffle: state0 and state1 are in SHA-NI layout for processing
     let mut state0 = _mm_setr_epi32(
@@ -58,7 +58,7 @@ unsafe fn sha256_ni_impl(data: &[u8]) -> [u8; 32] {
         0x5be0cd19u32 as i32, // h7
     );
 
-    // Shuffle to SHA-NI layout (matches Bitcoin Core's Shuffle function)
+    // Shuffle to SHA-NI layout (matches the reference Shuffle function)
     // Shuffle mask 0xB1 = [1, 0, 3, 2], 0x1B = [3, 0, 1, 2]
     let t1 = _mm_shuffle_epi32(state0, 0xB1); // [h1, h0, h3, h2]
     let t2 = _mm_shuffle_epi32(state1, 0x1B); // [h7, h4, h5, h6]
@@ -82,17 +82,25 @@ unsafe fn sha256_ni_impl(data: &[u8]) -> [u8; 32] {
         0xc67178f2,
     ];
 
-    // Process input data with padding
-    let mut padded = Vec::with_capacity((data.len() + 9).div_ceil(64) * 64);
-    padded.extend_from_slice(data);
-
-    // Add padding: 0x80 byte, then zeros, then 64-bit length
-    padded.push(0x80);
+    // Process input data with padding.
+    // For data.len() <= 55, padded size = 64; else heap-allocate.
     let bit_len = (data.len() as u64) * 8;
-    while padded.len() % 64 != 56 {
-        padded.push(0);
-    }
-    padded.extend_from_slice(&bit_len.to_be_bytes());
+    let padded: Vec<u8> = if data.len() <= 55 {
+        let mut buf = [0u8; 64];
+        buf[..data.len()].copy_from_slice(data);
+        buf[data.len()] = 0x80;
+        buf[56..64].copy_from_slice(&bit_len.to_be_bytes());
+        buf.to_vec()
+    } else {
+        let mut v = Vec::with_capacity((data.len() + 9).div_ceil(64) * 64);
+        v.extend_from_slice(data);
+        v.push(0x80);
+        while v.len() % 64 != 56 {
+            v.push(0);
+        }
+        v.extend_from_slice(&bit_len.to_be_bytes());
+        v
+    };
 
     // Process each 64-byte (512-bit) block
     for chunk in padded.chunks_exact(64) {
@@ -311,28 +319,31 @@ unsafe fn sha256_ni_impl(data: &[u8]) -> [u8; 32] {
         state1 = _mm_add_epi32(state1, state1_save);
     }
 
-    // Unshuffle from SHA-NI layout back to standard layout (matches Bitcoin Core's Unshuffle function)
+    // Unshuffle from SHA-NI layout back to standard layout (matches the reference Unshuffle function)
     // Unshuffle mask 0x1B = [3, 0, 1, 2], 0xB1 = [1, 0, 3, 2]
     let t1 = _mm_shuffle_epi32(state0, 0x1B);
     let t2 = _mm_shuffle_epi32(state1, 0xB1);
     state0 = _mm_blend_epi16(t1, t2, 0xF0);
     state1 = _mm_alignr_epi8(t2, t1, 0x08);
 
-    // DEBUG: Log state values after Unshuffle
-    let s0_0 = _mm_extract_epi32(state0, 0) as u32;
-    let s0_1 = _mm_extract_epi32(state0, 1) as u32;
-    let s0_2 = _mm_extract_epi32(state0, 2) as u32;
-    let s0_3 = _mm_extract_epi32(state0, 3) as u32;
-    let s1_0 = _mm_extract_epi32(state1, 0) as u32;
-    let s1_1 = _mm_extract_epi32(state1, 1) as u32;
-    let s1_2 = _mm_extract_epi32(state1, 2) as u32;
-    let s1_3 = _mm_extract_epi32(state1, 3) as u32;
-
-    // Only log if SHA_NI_DEBUG env var is set to avoid spam in normal operation
-    if std::env::var("SHA_NI_DEBUG").is_ok() {
-        eprintln!("SHA-NI DEBUG: After Unshuffle - state0 = [{s0_0:08x}, {s0_1:08x}, {s0_2:08x}, {s0_3:08x}]");
-        eprintln!("SHA-NI DEBUG: After Unshuffle - state1 = [{s1_0:08x}, {s1_1:08x}, {s1_2:08x}, {s1_3:08x}]");
-        eprintln!("SHA-NI DEBUG: Expected final hash (empty input): e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    // DEBUG: Log state values after Unshuffle (only when SHA_NI_DEBUG=1)
+    // Cached: was std::env::var() per hash — compute_block_tx_ids does ~4000+ sha256/block.
+    {
+        use std::sync::OnceLock;
+        static SHA_NI_DEBUG: OnceLock<bool> = OnceLock::new();
+        if *SHA_NI_DEBUG.get_or_init(|| std::env::var("SHA_NI_DEBUG").is_ok()) {
+            let s0_0 = _mm_extract_epi32(state0, 0) as u32;
+            let s0_1 = _mm_extract_epi32(state0, 1) as u32;
+            let s0_2 = _mm_extract_epi32(state0, 2) as u32;
+            let s0_3 = _mm_extract_epi32(state0, 3) as u32;
+            let s1_0 = _mm_extract_epi32(state1, 0) as u32;
+            let s1_1 = _mm_extract_epi32(state1, 1) as u32;
+            let s1_2 = _mm_extract_epi32(state1, 2) as u32;
+            let s1_3 = _mm_extract_epi32(state1, 3) as u32;
+            eprintln!("SHA-NI DEBUG: After Unshuffle - state0 = [{s0_0:08x}, {s0_1:08x}, {s0_2:08x}, {s0_3:08x}]");
+            eprintln!("SHA-NI DEBUG: After Unshuffle - state1 = [{s1_0:08x}, {s1_1:08x}, {s1_2:08x}, {s1_3:08x}]");
+            eprintln!("SHA-NI DEBUG: Expected final hash (empty input): e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        }
     }
 
     // After Unshuffle, state is back in standard layout: state0=[h0,h1,h2,h3], state1=[h4,h5,h6,h7]

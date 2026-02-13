@@ -33,12 +33,18 @@ use std::collections::HashMap;
 #[cfg(feature = "production")]
 use std::sync::OnceLock;
 
+/// Thread-local buffer for sighash preimage (avoids ~3-6k Vec allocs/block in non-template path)
+#[cfg(feature = "production")]
+thread_local! {
+    static SIGHASH_PREIMAGE_BUF: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(Vec::with_capacity(4096));
+}
+
 /// SIGHASH types for transaction signature verification
 /// 
 /// IMPORTANT: The enum values match the canonical sighash bytes used in sighash computation.
 /// Early Bitcoin allowed sighash type 0x00 (treated as SIGHASH_ALL behavior), which we
 /// Wraps the raw sighash byte from the signature, preserving its exact value for
-/// preimage serialization. Bitcoin Core uses the raw byte directly in the sighash
+/// preimage serialization. consensus uses the raw byte directly in the sighash
 /// preimage — before STRICTENC activation (BIP66), ANY sighash byte was accepted.
 /// The base type is determined by masking with 0x1f: NONE=2, SINGLE=3, else ALL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -55,7 +61,7 @@ impl SighashType {
     pub const SINGLE_ANYONECANPAY: Self = SighashType(0x83);
 
     /// Create from raw sighash byte — accepts ANY value (pre-STRICTENC compatibility).
-    /// Bitcoin Core determines behavior from `byte & 0x1f` and uses the raw byte in the preimage.
+    /// consensus determines behavior from `byte & 0x1f` and uses the raw byte in the preimage.
     pub fn from_byte(byte: u8) -> Self {
         SighashType(byte)
     }
@@ -65,7 +71,7 @@ impl SighashType {
         self.0 as u32
     }
 
-    /// Base sighash type (lower 5 bits), matching Bitcoin Core's `nHashType & 0x1f`
+    /// Base sighash type (lower 5 bits), matching consensus's `nHashType & 0x1f`
     pub fn base_type(&self) -> u8 {
         self.0 & 0x1f
     }
@@ -229,7 +235,7 @@ pub fn calculate_transaction_sighash_with_script_code(
     let hash_single = base_type == 0x03; // SIGHASH_SINGLE
 
     // SIGHASH_SINGLE special case: if input_index >= outputs count,
-    // Bitcoin Core returns the hash 0x0000...0001 (a historical quirk)
+    // consensus returns the hash 0x0000...0001 (a historical quirk)
     if hash_single && input_index >= tx.outputs.len() {
         let mut result = [0u8; 32];
         result[0] = 1; // Little-endian 1
@@ -248,16 +254,48 @@ pub fn calculate_transaction_sighash_with_script_code(
         }
     }
 
-    // Build sighash preimage matching Bitcoin Core's CTransactionSignatureSerializer
+    // Build sighash preimage matching consensus's CTransactionSignatureSerializer
     let estimated_size = 4 + 2 + (tx.inputs.len() * 50) + 2 + (tx.outputs.len() * 30) + 4 + 4;
-    let mut preimage = Vec::with_capacity(estimated_size.min(4096));
+    let capacity = estimated_size.min(4096);
 
+    #[cfg(feature = "production")]
+    let (result, preimage_vec) = SIGHASH_PREIMAGE_BUF.with(|buf_cell| {
+        let mut preimage = buf_cell.borrow_mut();
+        preimage.clear();
+        if preimage.capacity() < capacity {
+            preimage.reserve(capacity);
+        }
+        build_preimage_and_hash(tx, input_index, prevout_values, prevout_script_pubkeys, script_code, sighash_byte, anyone_can_pay, hash_none, hash_single, &mut preimage)
+    });
+
+    #[cfg(not(feature = "production"))]
+    let (result, preimage_vec) = {
+        let mut preimage = Vec::with_capacity(capacity);
+        build_preimage_and_hash(tx, input_index, prevout_values, prevout_script_pubkeys, script_code, sighash_byte, anyone_can_pay, hash_none, hash_single, &mut preimage)
+    };
+
+    result
+}
+
+#[inline]
+fn build_preimage_and_hash(
+    tx: &crate::types::Transaction,
+    input_index: usize,
+    prevout_values: &[i64],
+    prevout_script_pubkeys: &[&crate::types::ByteString],
+    script_code: Option<&[u8]>,
+    sighash_byte: u32,
+    anyone_can_pay: bool,
+    hash_none: bool,
+    hash_single: bool,
+    preimage: &mut Vec<u8>,
+) -> (Result<Hash>, ()) {
     // 1. Transaction version (4 bytes LE)
     preimage.extend_from_slice(&(tx.version as u32).to_le_bytes());
 
     // 2. Input count: ANYONECANPAY → 1, otherwise all inputs
     let n_inputs = if anyone_can_pay { 1 } else { tx.inputs.len() };
-    write_varint_to_vec(&mut preimage, n_inputs as u64);
+    write_varint_to_vec(preimage, n_inputs as u64);
 
     // 3. Inputs
     for i in 0..n_inputs {
@@ -275,7 +313,7 @@ pub fn calculate_transaction_sighash_with_script_code(
                 Some(s) => s,
                 None => prevout_script_pubkeys[actual_i].as_slice(),
             };
-            write_varint_to_vec(&mut preimage, code.len() as u64);
+            write_varint_to_vec(preimage, code.len() as u64);
             preimage.extend_from_slice(code);
         } else {
             preimage.push(0); // empty script
@@ -297,7 +335,7 @@ pub fn calculate_transaction_sighash_with_script_code(
     } else {
         tx.outputs.len()
     };
-    write_varint_to_vec(&mut preimage, n_outputs as u64);
+    write_varint_to_vec(preimage, n_outputs as u64);
 
     // 5. Outputs
     for i in 0..n_outputs {
@@ -308,7 +346,7 @@ pub fn calculate_transaction_sighash_with_script_code(
         } else {
             let output = &tx.outputs[i];
             preimage.extend_from_slice(&output.value.to_le_bytes());
-            write_varint_to_vec(&mut preimage, output.script_pubkey.len() as u64);
+            write_varint_to_vec(preimage, output.script_pubkey.len() as u64);
             preimage.extend_from_slice(&output.script_pubkey);
         }
     }
@@ -324,7 +362,7 @@ pub fn calculate_transaction_sighash_with_script_code(
     let second_hash = Sha256::digest(first_hash);
     let mut result = [0u8; 32];
     result.copy_from_slice(&second_hash);
-    Ok(result)
+    (Ok(result), ())
 }
 
 /// Batch compute sighashes for all inputs of a transaction

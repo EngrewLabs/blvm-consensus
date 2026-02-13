@@ -1,15 +1,15 @@
-//! Bitcoin Core test vector extractor and parser
+//! consensus test vector extractor and parser
 //!
-//! Extracts and parses test vectors from Bitcoin Core's test data directory.
-//! Handles Core's specific JSON formats and converts them to our test format.
+//! Extracts and parses test vectors from consensus's test data directory.
+//! Handles specification's specific JSON formats and converts them to our test format.
 
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 
-/// Extract transaction test vectors from Core's tx_valid.json
+/// Extract transaction test vectors from specification's tx_valid.json
 ///
-/// Core format: Array of arrays with format:
+/// Reference format: Array of arrays with format:
 /// [[[prevout hash, prevout index, prevout scriptPubKey, amount?], ...], serializedTransaction, flags]
 pub fn extract_core_transaction_vectors(core_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let tx_valid_path = PathBuf::from(core_path).join("src/test/data/tx_valid.json");
@@ -58,9 +58,9 @@ pub fn extract_core_transaction_vectors(core_path: &str) -> Result<(), Box<dyn s
     Ok(())
 }
 
-/// Parse script test vectors from Core's script_tests.json
+/// Parse script test vectors from specification's script_tests.json
 ///
-/// Core format: [scriptSig_string, scriptPubKey_string, flags_string, expected_result, description]
+/// Reference format: [scriptSig_string, scriptPubKey_string, flags_string, expected_result, description]
 pub fn extract_core_script_vectors(core_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let script_tests_path = PathBuf::from(core_path).join("src/test/data/script_tests.json");
 
@@ -102,9 +102,9 @@ pub fn extract_core_script_vectors(core_path: &str) -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-/// Parse flags from Core's flag string format
+/// Parse flags from specification's flag string format
 ///
-/// Core uses comma-separated flag names like "P2SH,STRICTENC,DERSIG"
+/// Consensus uses comma-separated flag names like "P2SH,STRICTENC,DERSIG"
 fn parse_flag_string(flags_str: &str) -> u32 {
     let mut flags = 0u32;
 
@@ -146,9 +146,9 @@ fn parse_flags(value: &Value) -> u32 {
     }
 }
 
-/// Convert Core script string to bytes
+/// Convert reference script string to bytes
 ///
-/// Core uses human-readable script format (e.g., "1 2 EQUAL")
+/// Consensus uses human-readable script format (e.g., "1 2 EQUAL")
 /// This needs to be converted to bytecode for our tests.
 fn script_string_to_bytes(script_str: &str) -> Vec<u8> {
     // This is a simplified conversion - actual implementation would need
@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn test_extract_core_vectors() {
-        // Test extraction from Core repository
+        // Test extraction from reference repository
         let core_path = "/home/user/src/bitcoin";
         if std::path::Path::new(core_path).exists() {
             let result = extract_core_transaction_vectors(core_path);

@@ -1,6 +1,6 @@
-//! Integration test for running Core test vectors
+//! Integration test for running reference test vectors
 //!
-//! This test runs all Core test vectors if they are available.
+//! This test runs all reference test vectors if they are available.
 //! If test vectors are not present, the test is skipped.
 
 #[cfg(test)]

@@ -29,7 +29,29 @@
 //! - Memory: O(block_tx_count) instead of O(utxo_set_size)
 
 use crate::types::{OutPoint, UTXO, UtxoSet};
-use std::collections::HashMap;
+#[cfg(feature = "production")]
+use rustc_hash::{FxHashMap, FxHashSet};
+#[cfg(not(feature = "production"))]
+use std::collections::{HashMap as FxHashMap, HashSet as FxHashSet};
+
+/// Fixed-size key for deletions set — avoids OutPoint clone in remove() (~3k inputs/block).
+type OutPointKey = [u8; 40];
+
+#[inline]
+fn outpoint_to_key(op: &OutPoint) -> OutPointKey {
+    let mut key = [0u8; 40];
+    key[..32].copy_from_slice(&op.hash);
+    key[32..40].copy_from_slice(&op.index.to_be_bytes());
+    key
+}
+
+#[inline]
+fn key_to_outpoint(key: &OutPointKey) -> OutPoint {
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&key[..32]);
+    let index = u64::from_be_bytes(key[32..40].try_into().unwrap());
+    OutPoint { hash, index }
+}
 
 /// Trait for UTXO lookups - implemented by both UtxoSet and UtxoOverlay.
 ///
@@ -53,27 +75,36 @@ pub trait UtxoLookup {
     }
 }
 
-/// Implementation for standard UtxoSet (HashMap).
+/// Implementation for standard UtxoSet (HashMap / FxHashMap).
+#[cfg(feature = "production")]
 impl UtxoLookup for UtxoSet {
     #[inline]
     fn get(&self, outpoint: &OutPoint) -> Option<&UTXO> {
-        HashMap::get(self, outpoint)
+        FxHashMap::get(self, outpoint)
     }
-    
     #[inline]
     fn contains_key(&self, outpoint: &OutPoint) -> bool {
-        HashMap::contains_key(self, outpoint)
+        FxHashMap::contains_key(self, outpoint)
     }
-    
     #[inline]
-    fn len(&self) -> usize {
-        HashMap::len(self)
-    }
-    
+    fn len(&self) -> usize { FxHashMap::len(self) }
     #[inline]
-    fn is_empty(&self) -> bool {
-        HashMap::is_empty(self)
+    fn is_empty(&self) -> bool { FxHashMap::is_empty(self) }
+}
+#[cfg(not(feature = "production"))]
+impl UtxoLookup for UtxoSet {
+    #[inline]
+    fn get(&self, outpoint: &OutPoint) -> Option<&UTXO> {
+        std::collections::HashMap::get(self, outpoint)
     }
+    #[inline]
+    fn contains_key(&self, outpoint: &OutPoint) -> bool {
+        std::collections::HashMap::contains_key(self, outpoint)
+    }
+    #[inline]
+    fn len(&self) -> usize { std::collections::HashMap::len(self) }
+    #[inline]
+    fn is_empty(&self) -> bool { std::collections::HashMap::is_empty(self) }
 }
 
 /// Zero-copy overlay for UTXO set modifications during block validation.
@@ -85,9 +116,9 @@ pub struct UtxoOverlay<'a> {
     /// Reference to the base UTXO set (read-only)
     base: &'a UtxoSet,
     /// UTXOs added in this overlay (new outputs from current block)
-    additions: HashMap<OutPoint, UTXO>,
-    /// UTXOs marked as spent in this overlay
-    deletions: std::collections::HashSet<OutPoint>,
+    additions: FxHashMap<OutPoint, UTXO>,
+    /// UTXOs marked as spent in this overlay (OutPointKey to avoid clone in remove hot path)
+    deletions: FxHashSet<OutPointKey>,
     /// OPTIMIZATION #3: Cached flag to skip deletions.contains() check when empty
     has_deletions: bool,
 }
@@ -101,8 +132,8 @@ impl<'a> UtxoOverlay<'a> {
         Self {
             base,
             // Pre-allocate for typical block size (~3000 transactions)
-            additions: HashMap::with_capacity(6000),
-            deletions: std::collections::HashSet::with_capacity(6000),
+            additions: FxHashMap::with_capacity_and_hasher(6000, Default::default()),
+            deletions: FxHashSet::with_capacity_and_hasher(6000, Default::default()),
             has_deletions: false, // OPTIMIZATION #3: Start with no deletions
         }
     }
@@ -112,8 +143,8 @@ impl<'a> UtxoOverlay<'a> {
     pub fn with_capacity(base: &'a UtxoSet, additions_cap: usize, deletions_cap: usize) -> Self {
         Self {
             base,
-            additions: HashMap::with_capacity(additions_cap),
-            deletions: std::collections::HashSet::with_capacity(deletions_cap),
+            additions: FxHashMap::with_capacity_and_hasher(additions_cap, Default::default()),
+            deletions: FxHashSet::with_capacity_and_hasher(deletions_cap, Default::default()),
             has_deletions: false, // OPTIMIZATION #3: Start with no deletions
         }
     }
@@ -123,9 +154,7 @@ impl<'a> UtxoOverlay<'a> {
     /// First checks deletions, then additions, then base set.
     #[inline]
     pub fn get(&self, outpoint: &OutPoint) -> Option<&UTXO> {
-        // OPTIMIZATION #3: Skip deletions check if overlay has no deletions
-        // This avoids HashSet.contains() overhead for the common case
-        if self.has_deletions && self.deletions.contains(outpoint) {
+        if self.has_deletions && self.deletions.contains(&outpoint_to_key(outpoint)) {
             return None;
         }
         
@@ -141,8 +170,7 @@ impl<'a> UtxoOverlay<'a> {
     /// Check if a UTXO exists.
     #[inline]
     pub fn contains_key(&self, outpoint: &OutPoint) -> bool {
-        // OPTIMIZATION #3: Skip deletions check if overlay has no deletions
-        if self.has_deletions && self.deletions.contains(outpoint) {
+        if self.has_deletions && self.deletions.contains(&outpoint_to_key(outpoint)) {
             return false;
         }
         self.additions.contains_key(outpoint) || self.base.contains_key(outpoint)
@@ -151,8 +179,7 @@ impl<'a> UtxoOverlay<'a> {
     /// Add a new UTXO (created by a transaction in this block).
     #[inline]
     pub fn insert(&mut self, outpoint: OutPoint, utxo: UTXO) {
-        // Remove from deletions if re-adding
-        if self.deletions.remove(&outpoint) {
+        if self.deletions.remove(&outpoint_to_key(&outpoint)) {
             // Update flag if deletions set becomes empty
             if self.deletions.is_empty() {
                 self.has_deletions = false;
@@ -173,8 +200,8 @@ impl<'a> UtxoOverlay<'a> {
         // Clone the UTXO before mutating self to avoid borrow checker issues
         let utxo = self.base.get(outpoint).cloned();
         if let Some(utxo_clone) = utxo {
-            self.deletions.insert(outpoint.clone());
-            self.has_deletions = true; // OPTIMIZATION #3: Update flag when first deletion is added
+            self.deletions.insert(outpoint_to_key(outpoint));
+            self.has_deletions = true;
             return Some(utxo_clone);
         }
         
@@ -205,10 +232,8 @@ impl<'a> UtxoOverlay<'a> {
     /// Note: This does clone, but only once per block instead of 3 times.
     pub fn apply_to_base(self) -> UtxoSet {
         let mut result = self.base.clone();
-        
-        // Remove spent UTXOs
-        for outpoint in self.deletions {
-            result.remove(&outpoint);
+        for key in self.deletions {
+            result.remove(&key_to_outpoint(&key));
         }
         
         // Add new UTXOs
@@ -221,13 +246,13 @@ impl<'a> UtxoOverlay<'a> {
 
     /// Get immutable access to additions (for undo log generation).
     #[inline]
-    pub fn additions(&self) -> &HashMap<OutPoint, UTXO> {
+    pub fn additions(&self) -> &FxHashMap<OutPoint, UTXO> {
         &self.additions
     }
 
-    /// Get immutable access to deletions (for undo log generation).
+    /// Get immutable access to deletion keys (for undo log generation).
     #[inline]
-    pub fn deletions(&self) -> &std::collections::HashSet<OutPoint> {
+    pub fn deletions(&self) -> &FxHashSet<OutPointKey> {
         &self.deletions
     }
 
@@ -239,8 +264,9 @@ impl<'a> UtxoOverlay<'a> {
     ///
     /// Returns (additions, deletions) — the net UTXO changes from this block.
     #[inline]
-    pub fn into_changes(self) -> (HashMap<OutPoint, UTXO>, std::collections::HashSet<OutPoint>) {
-        (self.additions, self.deletions)
+    pub fn into_changes(self) -> (FxHashMap<OutPoint, UTXO>, FxHashSet<OutPoint>) {
+        let deletions = self.deletions.into_iter().map(|k| key_to_outpoint(&k)).collect();
+        (self.additions, deletions)
     }
 }
 
@@ -248,23 +274,18 @@ impl<'a> UtxoOverlay<'a> {
 impl<'a> UtxoLookup for UtxoOverlay<'a> {
     #[inline]
     fn get(&self, outpoint: &OutPoint) -> Option<&UTXO> {
-        // Check if deleted in this overlay
-        if self.deletions.contains(outpoint) {
+        if self.has_deletions && self.deletions.contains(&outpoint_to_key(outpoint)) {
             return None;
         }
-        
-        // Check additions first (for intra-block spending)
         if let Some(utxo) = self.additions.get(outpoint) {
             return Some(utxo);
         }
-        
-        // Fall back to base set
         self.base.get(outpoint)
     }
-    
+
     #[inline]
     fn contains_key(&self, outpoint: &OutPoint) -> bool {
-        if self.deletions.contains(outpoint) {
+        if self.has_deletions && self.deletions.contains(&outpoint_to_key(outpoint)) {
             return false;
         }
         self.additions.contains_key(outpoint) || self.base.contains_key(outpoint)
@@ -286,7 +307,7 @@ impl<'a> UtxoLookup for UtxoOverlay<'a> {
 pub type FastUtxoSet = rustc_hash::FxHashMap<OutPoint, UTXO>;
 
 #[cfg(not(feature = "production"))]
-pub type FastUtxoSet = HashMap<OutPoint, UTXO>;
+pub type FastUtxoSet = std::collections::HashMap<OutPoint, UTXO>;
 
 /// Convert standard UtxoSet to FastUtxoSet.
 #[cfg(feature = "production")]

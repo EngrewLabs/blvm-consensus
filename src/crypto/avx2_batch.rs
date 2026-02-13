@@ -1,7 +1,7 @@
 //! AVX2-optimized batch SHA256 hashing
 //!
 //! This module provides 8-way parallel SHA256 hashing using AVX2 SIMD instructions.
-//! This matches Bitcoin Core's approach for batch hashing operations.
+//! This matches consensus approach for batch hashing operations.
 //!
 //! # Performance
 //! - Single hash: Uses sha2 crate with asm (already optimized)

@@ -10,7 +10,7 @@ use blvm_spec_lock::spec_locked;
 ///
 /// Calculate the next work required based on difficulty adjustment using integer arithmetic.
 ///
-/// Algorithm (matches Bitcoin Core exactly, including known off-by-one error):
+/// Difficulty adjustment algorithm (BIP adjustments, including known off-by-one in interval count):
 /// 1. Use the previous block's bits (last block before adjustment)
 /// 2. Calculate timespan between first and last block of adjustment period
 /// 3. Clamp timespan to [expected_time/4, expected_time*4]
@@ -21,7 +21,7 @@ use blvm_spec_lock::spec_locked;
 /// 8. Clamp to MAX_TARGET
 ///
 /// **Known Issue (Bitcoin Compatibility)**: This function measures time for (n-1) intervals
-/// when given n blocks, but compares against n intervals. This matches Bitcoin Core's
+/// when given n blocks, but compares against n intervals. Standard implementation
 /// behavior exactly for consensus compatibility. For corrected behavior, use
 /// `get_next_work_required_corrected()`.
 ///
@@ -292,7 +292,7 @@ impl U256 {
         U256([value, 0, 0, 0])
     }
 
-    /// Get the low 64 bits (equivalent to Bitcoin Core's GetLow64)
+    /// Get the low 64 bits for compact target representation
     /// Returns the least significant 64 bits of the value
     fn get_low_64(&self) -> u64 {
         self.0[0]
@@ -587,9 +587,9 @@ impl Ord for U256 {
 ///
 /// The actual target is: mantissa * 2^(8 * (exponent - 3))
 ///
-/// # Mathematical Specification (Bitcoin Core SetCompact)
+/// # Mathematical Specification (compact target format)
 ///
-/// This implements Bitcoin Core's SetCompact() algorithm exactly.
+/// Implements SetCompact() algorithm for nBits.
 /// The inverse operation is `compress_target()` which implements GetCompact().
 ///
 /// **Round-trip Property (Formally Verified):**
@@ -607,7 +607,7 @@ impl Ord for U256 {
 /// which proves the mathematical specification holds for all valid target values.
 #[spec_locked("7.1")]
 pub fn expand_target(bits: Natural) -> Result<U256> {
-    // Bitcoin Core's SetCompact implementation:
+    // SetCompact implementation:
     // int nSize = nCompact >> 24;
     // uint32_t nWord = nCompact & 0x007fffff;  // 23-bit mantissa (not 24-bit!)
     // if (nSize <= 3) {
@@ -619,12 +619,12 @@ pub fn expand_target(bits: Natural) -> Result<U256> {
     // }
 
     let exponent = (bits >> 24) as u8;
-    // Core uses 0x007fffff (23 bits), but we need to handle the full 24-bit mantissa
-    // The sign bit (0x00800000) is handled separately in Core, but for expansion
+    // Standard uses 0x007fffff (23 bits); we handle the full 24-bit mantissa.
+    // The sign bit (0x00800000) is handled separately for expansion.
     // we use the full mantissa including the sign bit
     let mantissa = bits & 0x00ffffff;
 
-    // Validate target format (Core allows nSize up to 34, but we clamp to 32 for safety)
+    // Validate target format (exponent clamped to 32 for safety)
     if !(3..=32).contains(&exponent) {
         return Err(ConsensusError::InvalidProofOfWork(
             "Invalid target exponent".into(),
@@ -642,7 +642,7 @@ pub fn expand_target(bits: Natural) -> Result<U256> {
         return Ok(U256::zero());
     }
 
-    // Core's logic: if nSize <= 3, right shift; else left shift
+    // If exponent <= 3, right shift; else left shift
     if exponent <= 3 {
         // Target is mantissa >> (8 * (3 - exponent))
         // When exponent = 3: no shift (mantissa as-is)
@@ -669,7 +669,7 @@ pub fn expand_target(bits: Natural) -> Result<U256> {
 /// Compress target to compact representation
 ///
 /// Reverse of expand_target: converts U256 target back to compact bits format.
-/// This implements Bitcoin Core's GetCompact() algorithm exactly.
+/// Implements GetCompact() algorithm for nBits.
 ///
 /// Format: bits = (exponent << 24) | mantissa
 /// - exponent (1 byte): number of bytes needed to represent the target
@@ -678,7 +678,7 @@ pub fn expand_target(bits: Natural) -> Result<U256> {
 /// The target is normalized to the form: mantissa * 256^(exponent - 3)
 /// where mantissa is 23 bits (0x000000 to 0x7fffff) and exponent is in range [3, 34].
 ///
-/// # Mathematical Specification (Bitcoin Core GetCompact/SetCompact)
+/// # Mathematical Specification (GetCompact/SetCompact)
 ///
 /// ∀ target ∈ U256, bits = compress_target(target):
 /// - Let expanded = expand_target(bits)
@@ -687,7 +687,7 @@ pub fn expand_target(bits: Natural) -> Result<U256> {
 ///   (significant bits in words 2, 3 are preserved exactly)
 /// - Precision loss in words 0, 1 is acceptable (compact format limitation)
 ///
-/// This matches Bitcoin Core's behavior where the compact format may lose precision
+/// Compact format may lose precision for very large targets
 /// in lower-order bits but preserves the significant bits required for difficulty validation.
 ///
 /// # Verified by formally verified
@@ -711,7 +711,7 @@ fn compress_target(target: &U256) -> Result<Natural> {
     #[allow(clippy::manual_div_ceil)]
     let n_size = (highest_bit + 1 + 7) / 8;
 
-    // Calculate compact representation (following Bitcoin Core's GetCompact)
+    // Calculate compact representation
     // nCompact is computed as uint64 first, then converted to uint32
     let mut n_compact: u64;
 
@@ -739,10 +739,10 @@ fn compress_target(target: &U256) -> Result<Natural> {
     }
 
     // Convert to u32 mantissa (taking lower 32 bits)
-    // Bitcoin Core does: nCompact = bn.GetLow64() which returns uint64, then uses as uint32
+    // nCompact = GetLow64() which returns uint64, then uses as uint32
     let mantissa = (n_compact & 0x007fffff) as u32;
 
-    // Validate exponent is reasonable (Bitcoin Core allows up to 34, but we clamp to 29 for safety)
+    // Validate exponent is reasonable (clamp to 29 for safety)
     if n_size_final > 29 {
         return Err(ConsensusError::InvalidProofOfWork(
             format!("Target too large: exponent {n_size_final} exceeds maximum 29").into(),

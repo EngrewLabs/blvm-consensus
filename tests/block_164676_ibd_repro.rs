@@ -67,7 +67,7 @@ fn block_164676_connect_block_ibd_repro() {
         &witnesses,
         utxo_set,
         HEIGHT,
-        None,
+        None::<&[blvm_consensus::types::BlockHeader]>,
         0u64,
         Network::Mainnet,
     ).expect("connect_block_ibd");

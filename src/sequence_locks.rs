@@ -1,10 +1,10 @@
 //! Sequence lock calculation functions (BIP68)
 //!
-//! Implements Bitcoin Core's sequence lock calculation for relative locktime.
+//! Implements consensus's sequence lock calculation for relative locktime.
 //! Sequence locks are used to enforce relative locktime constraints using
 //! transaction input sequence numbers.
 //!
-//! Reference: Bitcoin Core `tx_verify.cpp` CalculateSequenceLocks and EvaluateSequenceLocks
+//! Reference: consensus `tx_verify.cpp` CalculateSequenceLocks and EvaluateSequenceLocks
 
 use crate::bip113::get_median_time_past;
 use crate::error::Result;
@@ -42,7 +42,7 @@ const LOCKTIME_VERIFY_SEQUENCE: u32 = 0x01;
 /// Computes the minimum block height and time that must be reached
 /// before the transaction can be included in a block.
 ///
-/// Matches Bitcoin Core's CalculateSequenceLocks() exactly.
+/// Matches consensus's CalculateSequenceLocks() exactly.
 ///
 /// # Arguments
 /// * `tx` - Transaction to calculate locks for
@@ -191,7 +191,7 @@ pub fn calculate_sequence_locks(
 ///
 /// Checks if the current block height and time satisfy the sequence lock constraints.
 ///
-/// Matches Bitcoin Core's EvaluateSequenceLocks() exactly.
+/// Matches consensus's EvaluateSequenceLocks() exactly.
 ///
 /// # Arguments
 /// * `block_height` - Current block height

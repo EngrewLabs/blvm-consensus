@@ -213,20 +213,20 @@ fn test_invalid_der_encoding() {
     assert!(result.is_ok() || result.is_err());
 }
 
-/// Test signature validation edge cases from Core test vectors
+/// Test signature validation edge cases from reference test vectors
 ///
-/// Core's tx_valid.json includes specific signature edge cases:
+/// The specification's tx_valid.json includes specific signature edge cases:
 /// - Invalidly-encoded signatures that OpenSSL accepts
 /// - Signatures with negative ASN.1 integers
 /// - Signatures before/after BIP66 activation
 #[test]
 fn test_core_signature_edge_cases() {
-    // Placeholder for Core test vector integration
-    // Core test vectors include:
+    // Placeholder for reference test vector integration
+    // reference test vectors include:
     // - 23b397edccd3740a74adb603c9756370fafcde9bcc4483eb271ecad09a94dd63
     //   (invalidly-encoded signature that OpenSSL accepts)
     // - Signatures with negative ASN.1 integers (invalid after BIP66)
 
-    // These would be tested when Core test vectors are integrated
+    // These would be tested when reference test vectors are integrated
     assert!(true);
 }

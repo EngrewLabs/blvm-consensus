@@ -1,9 +1,9 @@
 //! Signature operation counting functions
 //!
-//! Implements Bitcoin Core's sigop counting for block validation.
+//! Implements consensus's sigop counting for block validation.
 //! Sigops are counted to enforce MAX_BLOCK_SIGOPS_COST limit (80,000).
 //!
-//! Reference: Bitcoin Core `tx_verify.cpp` and `script.cpp`
+//! Reference: consensus `tx_verify.cpp` and `script.cpp`
 
 use crate::error::Result;
 use crate::opcodes::*;
@@ -22,10 +22,10 @@ const WITNESS_SCALE_FACTOR: u64 = 4;
 /// Count sigops in a script (legacy counting)
 ///
 /// Counts OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_CHECKMULTISIG, OP_CHECKMULTISIGVERIFY.
-/// Matches Bitcoin Core's CScript::GetSigOpCount(bool fAccurate).
+/// Matches consensus's CScript::GetSigOpCount(bool fAccurate).
 ///
 /// Uses GetOp-style iteration: each call to the loop body reads one opcode and
-/// advances past any associated push data, exactly like Bitcoin Core's GetOp().
+/// advances past any associated push data, exactly like consensus's GetOp().
 ///
 /// # Arguments
 /// * `script` - Script to count sigops in
@@ -42,7 +42,7 @@ pub fn count_sigops_in_script(script: &ByteString, accurate: bool) -> u32 {
     while i < script.len() {
         let opcode = script[i];
 
-        // Skip past push data (matches Bitcoin Core's GetOp)
+        // Skip past push data (matches consensus's GetOp)
         if opcode > 0 && opcode < OP_PUSHDATA1 {
             // Direct push: opcode IS the length (1-75 bytes)
             let len = opcode as usize;
@@ -190,7 +190,7 @@ fn extract_redeem_script_from_scriptsig(script_sig: &ByteString) -> Option<ByteS
 /// Get legacy sigop count from transaction
 ///
 /// Counts sigops in scriptSig and scriptPubKey of all inputs and outputs.
-/// Matches Bitcoin Core's GetLegacySigOpCount().
+/// Matches consensus's GetLegacySigOpCount().
 ///
 /// # Arguments
 /// * `tx` - Transaction to count sigops in
@@ -218,7 +218,7 @@ pub fn get_legacy_sigop_count(tx: &Transaction) -> u32 {
 ///
 /// Counts sigops in P2SH redeem scripts. Only counts sigops for outputs
 /// that are P2SH (Pay-to-Script-Hash).
-/// Matches Bitcoin Core's GetP2SHSigOpCount().
+/// Matches consensus's GetP2SHSigOpCount().
 ///
 /// # Arguments
 /// * `tx` - Transaction to count sigops in
@@ -327,7 +327,7 @@ fn count_witness_sigops(
 /// - P2SH sigops × 4 (if P2SH enabled)
 /// - Witness sigops (actual count, not scaled)
 ///
-/// Matches Bitcoin Core's GetTransactionSigOpCost().
+/// Matches consensus's GetTransactionSigOpCost().
 ///
 /// # Arguments
 /// * `tx` - Transaction to count sigops in

@@ -1,7 +1,7 @@
 //! Duplicate Input Detection Verification Tests
 //!
-//! Tests to verify BLLVM's duplicate input detection matches Bitcoin Core exactly.
-//! Core uses std::set, BLLVM uses HashSet - both should detect duplicates correctly.
+//! Tests to verify BLLVM's duplicate input detection matches consensus exactly.
+//! Consensus uses std::set, BLLVM uses HashSet - both should detect duplicates correctly.
 //!
 //! Consensus-critical: Duplicate inputs = inflation bug (CVE-2018-17144)
 
@@ -11,7 +11,7 @@ use blvm_consensus::types::*;
 
 /// Test duplicate inputs with same hash and index
 ///
-/// Core rejects this with "bad-txns-inputs-duplicate"
+/// Consensus rejects this with "bad-txns-inputs-duplicate"
 #[test]
 fn test_duplicate_inputs_same_prevout() {
     let tx = Transaction {
@@ -143,7 +143,7 @@ fn test_duplicate_inputs_different_hash_same_index() {
 
 /// Test multiple duplicate inputs
 ///
-/// Core should reject on first duplicate found
+/// Consensus should reject on first duplicate found
 #[test]
 fn test_multiple_duplicate_inputs() {
     let tx = Transaction {

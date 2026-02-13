@@ -1,4 +1,4 @@
-//! Core Bitcoin types for consensus validation
+//! Essential Bitcoin types for consensus validation
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -259,7 +259,10 @@ pub struct Transaction {
 }
 
 /// Block Header: ℋ = ℤ × ℍ × ℍ × ℕ × ℕ × ℕ
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Default` is only used as a placeholder when extracting the header for BIP113
+/// tracking; the default value is never used for consensus.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct BlockHeader {
     pub version: Integer,
     pub prev_block_hash: Hash,
@@ -267,6 +270,13 @@ pub struct BlockHeader {
     pub timestamp: Natural,
     pub bits: Natural,
     pub nonce: Natural,
+}
+
+impl std::convert::AsRef<BlockHeader> for BlockHeader {
+    #[inline]
+    fn as_ref(&self) -> &BlockHeader {
+        self
+    }
 }
 
 /// Block: ℬ = ℋ × 𝒯𝒳*

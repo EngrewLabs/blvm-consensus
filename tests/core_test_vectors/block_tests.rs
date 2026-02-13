@@ -1,9 +1,9 @@
-//! Bitcoin Core block test vector integration
+//! consensus block test vector integration
 //!
-//! Tests block validation using Core's test vectors.
+//! Tests block validation using specification's test vectors.
 //! These vectors provide comprehensive coverage of edge cases.
 //!
-//! Core test vector format (block_valid.json / block_invalid.json):
+//! reference test vector format (block_valid.json / block_invalid.json):
 //! Array of arrays: [[block_hex, height, prev_utxo_set?, expected], ...]
 //! - block_hex: Block in hex format (with witness data if SegWit)
 //! - height: Block height for validation
@@ -20,14 +20,14 @@ use hex;
 
 /// Load test vectors from a directory
 ///
-/// Expected format: JSON files containing block test vectors from Bitcoin Core
+/// Expected format: JSON files containing block test vectors from consensus
 pub fn load_block_test_vectors(dir: &str) -> Result<Vec<BlockTestVector>, Box<dyn std::error::Error>> {
     let mut vectors = Vec::new();
     let path = PathBuf::from(dir);
     
     if !path.exists() {
         // If test vectors directory doesn't exist, return empty (not an error)
-        // Test vectors need to be downloaded from Bitcoin Core repository
+        // Test vectors need to be downloaded from consensus repository
         return Ok(vectors);
     }
     
@@ -119,7 +119,7 @@ pub fn load_block_test_vectors(dir: &str) -> Result<Vec<BlockTestVector>, Box<dy
     Ok(vectors)
 }
 
-/// Run Core block test vectors
+/// Run reference block test vectors
 pub fn run_core_block_tests(vectors: &[BlockTestVector]) -> Result<(), Box<dyn std::error::Error>> {
     let mut passed = 0;
     let mut failed = 0;
@@ -160,7 +160,7 @@ pub fn run_core_block_tests(vectors: &[BlockTestVector]) -> Result<(), Box<dyn s
         }
     }
     
-    println!("Core block test vectors: {} passed, {} failed", passed, failed);
+    println!("Reference block test vectors: {} passed, {} failed", passed, failed);
     
     if failed > 0 {
         Err(format!("{} test vectors failed", failed).into())

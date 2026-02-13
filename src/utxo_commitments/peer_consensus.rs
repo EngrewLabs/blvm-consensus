@@ -29,7 +29,7 @@ pub struct PeerInfo {
     pub address: IpAddr,
     pub asn: Option<u32>,               // Autonomous System Number
     pub country: Option<String>,        // Country code (ISO 3166-1 alpha-2)
-    pub implementation: Option<String>, // Bitcoin implementation (Bitcoin Core, btcd, etc.)
+    pub implementation: Option<String>, // Node implementation
     pub subnet: u32,                    // /16 subnet for diversity checks
 }
 

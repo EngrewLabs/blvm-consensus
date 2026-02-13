@@ -180,7 +180,7 @@ fn process_inv_message(
     chain_state: &ChainState,
 ) -> Result<NetworkResponse> {
     // Validate inventory count using configurable limit
-    let config = crate::config::get_consensus_config();
+    let config = crate::config::get_consensus_config_ref();
     if inv.inventory.len() > config.network_limits.max_inv_items {
         return Ok(NetworkResponse::Reject(
             "Too many inventory items".to_string(),
@@ -212,7 +212,7 @@ fn process_getdata_message(
     chain_state: &ChainState,
 ) -> Result<NetworkResponse> {
     // Validate request count using configurable limit
-    let config = crate::config::get_consensus_config();
+    let config = crate::config::get_consensus_config_ref();
     if getdata.inventory.len() > config.network_limits.max_inv_items {
         return Ok(NetworkResponse::Reject(
             "Too many getdata items".to_string(),
@@ -266,7 +266,7 @@ fn process_headers_message(
     chain_state: &ChainState,
 ) -> Result<NetworkResponse> {
     // Validate header count using configurable limit
-    let config = crate::config::get_consensus_config();
+    let config = crate::config::get_consensus_config_ref();
     if headers.headers.len() > config.network_limits.max_headers {
         return Ok(NetworkResponse::Reject("Too many headers".to_string()));
     }

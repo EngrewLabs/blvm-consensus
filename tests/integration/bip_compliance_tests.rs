@@ -1,17 +1,17 @@
 //! BIP Compliance Tests
-//! 
-//! Tests for compliance with Bitcoin Core behavior for consensus-critical BIPs.
-//! These tests verify that our BIP implementations match Bitcoin Core's validation logic.
+//!
+//! Tests for compliance with consensus rules for BIPs.
+//! These tests verify that our BIP implementations match BIP specification validation logic.
 
+use blvm_consensus::script::{verify_script_with_context_full, SigVersion};
 use blvm_consensus::*;
-use blvm_consensus::script::verify_script_with_context_full;
 use blvm_consensus::bip113::get_median_time_past;
 use blvm_consensus::constants::LOCKTIME_THRESHOLD;
 
 #[test]
 fn test_bip65_cltv_compliance_basic() {
     // Basic CLTV compliance: transaction locktime must be >= required locktime
-    // This matches Bitcoin Core's validation logic
+    // This matches BIP validation logic
     
     let tx = Transaction {
         version: 1,
@@ -44,10 +44,8 @@ fn test_bip65_cltv_compliance_basic() {
     
     let input = &tx.inputs[0];
     let utxo = utxo_set.get(&input.prevout).unwrap();
-    let prevouts = vec![TransactionOutput {
-        value: utxo.value,
-        script_pubkey: utxo.script_pubkey.clone(),
-    }];
+    let pv = vec![utxo.value];
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&utxo.script_pubkey];
     
     // Should pass: tx.lock_time (500000) >= required (400000)
     let result = verify_script_with_context_full(
@@ -57,19 +55,26 @@ fn test_bip65_cltv_compliance_basic() {
         0,
         &tx,
         0,
-        &prevouts,
-        Some(500000), // Block height for block-height CLTV
+        &pv,
+        &psp,
+        Some(500000), // Block height for CLTV
         None,
+        types::Network::Mainnet,
+        SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
     
     assert!(result.is_ok());
-    // Note: Actual validation in Bitcoin Core would require exact block height context
+    // Note: Full validation would require exact block height context
 }
 
 #[test]
 fn test_bip112_csv_compliance_basic() {
     // Basic CSV compliance: input sequence must be >= required sequence
-    // This matches Bitcoin Core's validation logic
+    // This matches BIP validation logic
     
     let tx = Transaction {
         version: 1,
@@ -102,10 +107,8 @@ fn test_bip112_csv_compliance_basic() {
     
     let input = &tx.inputs[0];
     let utxo = utxo_set.get(&input.prevout).unwrap();
-    let prevouts = vec![TransactionOutput {
-        value: utxo.value,
-        script_pubkey: utxo.script_pubkey.clone(),
-    }];
+    let pv = vec![utxo.value];
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&utxo.script_pubkey];
     
     // Should pass: input sequence (5 blocks) >= required (4 blocks)
     let result = verify_script_with_context_full(
@@ -115,9 +118,16 @@ fn test_bip112_csv_compliance_basic() {
         0,
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         None,
         None,
+        types::Network::Mainnet,
+        SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
     
     assert!(result.is_ok());
@@ -126,7 +136,7 @@ fn test_bip112_csv_compliance_basic() {
 #[test]
 fn test_bip113_median_time_past_compliance() {
     // BIP113 compliance: median time-past uses last 11 blocks
-    // Matches Bitcoin Core's median time calculation
+    // Matches BIP113 median time calculation
     
     let timestamps = vec![
         1000, 1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 2000
@@ -151,7 +161,7 @@ fn test_bip113_median_time_past_compliance() {
 
 #[test]
 fn test_bip65_cltv_type_mismatch_rejection() {
-    // Bitcoin Core rejects CLTV when locktime types don't match
+    // Consensus rejects CLTV when locktime types don't match
     // Block height vs timestamp mismatch should fail
     
     let tx = Transaction {
@@ -185,10 +195,8 @@ fn test_bip65_cltv_type_mismatch_rejection() {
     
     let input = &tx.inputs[0];
     let utxo = utxo_set.get(&input.prevout).unwrap();
-    let prevouts = vec![TransactionOutput {
-        value: utxo.value,
-        script_pubkey: utxo.script_pubkey.clone(),
-    }];
+    let pv = vec![utxo.value];
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&utxo.script_pubkey];
     
     // Should fail: type mismatch (block height vs timestamp)
     let result = verify_script_with_context_full(
@@ -198,9 +206,16 @@ fn test_bip65_cltv_type_mismatch_rejection() {
         0,
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         None,
         None,
+        types::Network::Mainnet,
+        SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
     
     assert!(result.is_ok());
@@ -209,7 +224,7 @@ fn test_bip65_cltv_type_mismatch_rejection() {
 
 #[test]
 fn test_bip112_csv_disabled_sequence_rejection() {
-    // Bitcoin Core rejects CSV when sequence is disabled (0x80000000 bit set)
+    // Consensus rejects CSV when sequence is disabled (0x80000000 bit set)
     
     let tx = Transaction {
         version: 1,
@@ -242,10 +257,8 @@ fn test_bip112_csv_disabled_sequence_rejection() {
     
     let input = &tx.inputs[0];
     let utxo = utxo_set.get(&input.prevout).unwrap();
-    let prevouts = vec![TransactionOutput {
-        value: utxo.value,
-        script_pubkey: utxo.script_pubkey.clone(),
-    }];
+    let pv = vec![utxo.value];
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&utxo.script_pubkey];
     
     // Should fail: sequence disabled
     let result = verify_script_with_context_full(
@@ -255,9 +268,16 @@ fn test_bip112_csv_disabled_sequence_rejection() {
         0,
         &tx,
         0,
-        &prevouts,
+        &pv,
+        &psp,
         None,
         None,
+        types::Network::Mainnet,
+        SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
     
     assert!(result.is_ok());

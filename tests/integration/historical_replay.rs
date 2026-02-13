@@ -114,7 +114,7 @@ pub async fn replay_historical_blocks(
                 // Validate block
                 // connect_block expects &[Witness] where each Witness is Vec<ByteString> (one per transaction)
                 use blvm_consensus::block::connect_block;
-                match connect_block(&block, &witnesses, utxo_set.clone(), current_height, None, 0u64, crate::types::Network::Mainnet) {
+                match connect_block(&block, &witnesses, utxo_set.clone(), current_height, None::<&[crate::types::BlockHeader]>, 0u64, crate::types::Network::Mainnet) {
                     Ok((validation_result, new_utxo_set)) => {
                         match validation_result {
                             blvm_consensus::ValidationResult::Valid => {
@@ -220,7 +220,7 @@ pub fn verify_checkpoint(
 /// Download a block from Bitcoin network (future implementation)
 ///
 /// This function will support downloading blocks from:
-/// - Bitcoin Core RPC (getblock command)
+/// - consensus RPC (getblock command)
 /// - Block explorer APIs (blockstream.info, blockchair.com)
 /// - Public block archives
 ///
@@ -232,7 +232,7 @@ pub async fn download_block_from_network(
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     // TODO: Implement block downloading
     // Options:
-    // 1. Bitcoin Core RPC: call getblock RPC with verbosity=0 to get raw block
+    // 1. consensus RPC: call getblock RPC with verbosity=0 to get raw block
     // 2. Block explorer API: GET /block/{hash}/raw
     // 3. Block archive: Download from pre-indexed archives
     
@@ -322,11 +322,11 @@ mod tests {
 // 3. ✅ Validate blocks sequentially using connect_block - COMPLETE
 // 4. ✅ Track UTXO set state - COMPLETE
 // 5. ✅ Calculate UTXO set hash at known checkpoints - COMPLETE
-// 6. ✅ Compare with Bitcoin Core's known checkpoint hashes - COMPLETE
+// 6. ✅ Compare with consensus's known checkpoint hashes - COMPLETE
 // 7. ✅ Report any divergences - COMPLETE
 //
 // Future Enhancements:
-// - Download blocks from Bitcoin network (Bitcoin Core RPC or block explorer API)
+// - Download blocks from Bitcoin network (consensus RPC or block explorer API)
 // - Support JSON block format (for debugging)
 // - Parallel block validation for old blocks (Phase 4.2 optimization)
 // - Block caching for faster subsequent runs

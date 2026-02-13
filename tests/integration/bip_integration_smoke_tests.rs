@@ -45,7 +45,7 @@ fn smoke_test_bip30_enforced() {
     let utxo_set = UtxoSet::default();
     
     // This should not panic - if BIP checks cause issues, we'll catch them here
-    let _result = connect_block(&block, &witnesses, utxo_set, 227_836, None, 0u64, types::Network::Mainnet);
+    let _result = connect_block(&block, &witnesses, utxo_set, 227_836, None::<&[types::BlockHeader]>, 0u64, types::Network::Mainnet);
     
     // Test passes if no panic occurs (verifies BIP checks are callable)
 }
@@ -84,7 +84,7 @@ fn smoke_test_bip34_enforced() {
     let utxo_set = UtxoSet::default();
     
     // At BIP34 activation height, this should be rejected
-    let result = connect_block(&block, &witnesses, utxo_set, 227_836, None, 0u64, types::Network::Mainnet);
+    let result = connect_block(&block, &witnesses, utxo_set, 227_836, None::<&[types::BlockHeader]>, 0u64, types::Network::Mainnet);
     
     // Should be invalid (BIP34 violation) or error
     match result {
@@ -134,7 +134,7 @@ fn smoke_test_bip90_enforced() {
     let utxo_set = UtxoSet::default();
     
     // At BIP34 activation height, version 1 should be rejected (BIP90)
-    let result = connect_block(&block, &witnesses, utxo_set, 227_836, None, 0u64, types::Network::Mainnet);
+    let result = connect_block(&block, &witnesses, utxo_set, 227_836, None::<&[types::BlockHeader]>, 0u64, types::Network::Mainnet);
     
     // Should be invalid (BIP90 violation) or error
     match result {
@@ -155,7 +155,7 @@ fn smoke_test_bip90_enforced() {
 /// Smoke test: Verify that BIP66 (Strict DER) is enforced
 #[test]
 fn smoke_test_bip66_enforced() {
-    use blvm_consensus::script::verify_script_with_context_full;
+    use blvm_consensus::script::{verify_script_with_context_full, SigVersion};
     
     let height = 363_725; // After BIP66 activation
     
@@ -186,6 +186,8 @@ fn smoke_test_bip66_enforced() {
     let flags = 0x01 | 0x02 | 0x04 | 0x08 | 0x10 | 0x20 | 0x40 | 0x80 | 0x100 | 0x200 | 0x400;
     
     // This should not panic - if BIP66 checks cause issues, we'll catch them here
+    let pv = vec![prevout.value];
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&prevout.script_pubkey];
     let _result = verify_script_with_context_full(
         &vec![],
         &prevout.script_pubkey,
@@ -193,10 +195,16 @@ fn smoke_test_bip66_enforced() {
         flags,
         &tx,
         0,
-        &[prevout],
+        &pv,
+        &psp,
         Some(height),
         None,
         types::Network::Mainnet,
+        SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
     
     // Test passes if no panic occurs (verifies BIP66 checks are callable)
@@ -205,7 +213,7 @@ fn smoke_test_bip66_enforced() {
 /// Smoke test: Verify that BIP147 (NULLDUMMY) is enforced
 #[test]
 fn smoke_test_bip147_enforced() {
-    use blvm_consensus::script::verify_script_with_context_full;
+    use blvm_consensus::script::{verify_script_with_context_full, SigVersion};
     
     let height = 481_825; // After BIP147 activation
     
@@ -244,6 +252,8 @@ fn smoke_test_bip147_enforced() {
     let flags = 0x01 | 0x02 | 0x04 | 0x08 | 0x10 | 0x20 | 0x40 | 0x80 | 0x100 | 0x200 | 0x400;
     
     // This should not panic - if BIP147 checks cause issues, we'll catch them here
+    let pv = vec![prevout.value];
+    let psp: Vec<&blvm_consensus::types::ByteString> = vec![&prevout.script_pubkey];
     let _result = verify_script_with_context_full(
         &vec![],
         &prevout.script_pubkey,
@@ -251,10 +261,16 @@ fn smoke_test_bip147_enforced() {
         flags,
         &tx,
         0,
-        &[prevout],
+        &pv,
+        &psp,
         Some(height),
         None,
         types::Network::Mainnet,
+        SigVersion::Base,
+        None,
+        None,
+        None,
+        None, // precomputed_bip143
     );
     
     // Test passes if no panic occurs (verifies BIP147 checks are callable)

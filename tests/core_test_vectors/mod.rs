@@ -1,10 +1,10 @@
-//! Bitcoin Core Test Vector Integration
+//! consensus Test Vector Integration
 //!
-//! Integrates Bitcoin Core's test vectors to provide free verification coverage.
-//! Test vectors are extracted from Bitcoin Core's test suite and used to verify
+//! Integrates consensus's test vectors to provide free verification coverage.
+//! Test vectors are extracted from consensus's test suite and used to verify
 //! consensus correctness.
 //!
-//! Source: Bitcoin Core test data (`bitcoin/src/test/data/*.json`)
+//! Source: consensus test data (`bitcoin/src/test/data/*.json`)
 
 mod block_tests;
 mod transaction_tests;

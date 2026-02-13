@@ -705,23 +705,24 @@ fn test_monetary_boundaries() {
 
 #[test]
 fn test_script_operation_limits() {
-    // Test script with maximum number of operations
+    // Test script with maximum number of non-push operations (OP_NOP = 0x61 counts)
     let mut script = Vec::new();
     for _ in 0..MAX_SCRIPT_OPS {
-        script.push(0x51); // OP_1
+        script.push(0x61); // OP_NOP - non-push, counts toward limit
     }
 
-    let result = verify_script(&script, &script, None, 0).unwrap();
+    let empty: Vec<u8> = vec![];
+    let result = verify_script(&script, &empty, None, 0).unwrap();
     // Just test it returns a boolean (result is either true or false)
     let _ = result;
 
-    // Test script exceeding operation limit
+    // Test script exceeding operation limit (MAX_SCRIPT_OPS + 1 non-push opcodes)
     let mut large_script = Vec::new();
     for _ in 0..=MAX_SCRIPT_OPS {
-        large_script.push(0x51);
+        large_script.push(0x61); // OP_NOP - non-push, counts toward limit
     }
 
-    let result = verify_script(&large_script, &large_script, None, 0);
+    let result = verify_script(&large_script, &empty, None, 0);
     assert!(result.is_err());
 }
 

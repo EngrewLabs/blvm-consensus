@@ -226,7 +226,7 @@ pub fn check_transaction(tx: &Transaction) -> Result<ValidationResult> {
         }
     }
 
-    // 2b. Check total output sum is in valid range (matches Bitcoin Core's MoneyRange check)
+    // 2b. Check total output sum is in valid range (MoneyRange)
     // MoneyRange(n) = (n >= 0 && n <= MAX_MONEY)
     // Optimization: Use precomputed constant for comparison
     // Invariant assertion: Total output value must be non-negative
@@ -287,10 +287,9 @@ pub fn check_transaction(tx: &Transaction) -> Result<ValidationResult> {
         )));
     }
 
-    // 5. Check transaction size limit (matches Bitcoin Core's CheckTransaction exactly)
-    // Core: GetSerializeSize(TX_NO_WITNESS(tx)) * WITNESS_SCALE_FACTOR > MAX_BLOCK_WEIGHT
+    // 5. Check transaction size limit (consensus CheckTransaction)
+    // GetSerializeSize(TX_NO_WITNESS) * WITNESS_SCALE_FACTOR > MAX_BLOCK_WEIGHT
     // This checks: stripped_size * 4 > 4,000,000, i.e., stripped_size > 1,000,000
-    // Note: Core's comment says "this doesn't take the witness into account, as that hasn't been checked for malleability"
     // calculate_transaction_size returns stripped size (no witness), matching TX_NO_WITNESS
     use crate::constants::MAX_BLOCK_WEIGHT;
     const WITNESS_SCALE_FACTOR: usize = 4;
@@ -491,7 +490,7 @@ pub fn check_tx_inputs_with_utxos<U: UtxoLookup>(
             );
 
             // Check coinbase maturity: coinbase outputs cannot be spent until COINBASE_MATURITY blocks deep
-            // Bitcoin Core: if (coin.IsCoinBase() && nSpendHeight - coin.nHeight < COINBASE_MATURITY)
+            // Consensus: coinbase outputs require COINBASE_MATURITY confirmations
             // We check: if utxo.is_coinbase && height < utxo.height + COINBASE_MATURITY
             if utxo.is_coinbase {
                 use crate::constants::COINBASE_MATURITY;
@@ -567,7 +566,7 @@ pub fn check_tx_inputs_with_utxos<U: UtxoLookup>(
         total_output_value >= 0,
         "Total output value {total_output_value} must be non-negative"
     );
-    // Check that output total doesn't exceed MAX_MONEY (Bitcoin Core check)
+    // Check that output total doesn't exceed MAX_MONEY
     assert!(
         total_output_value <= MAX_MONEY,
         "Total output value {total_output_value} must not exceed MAX_MONEY"
@@ -639,13 +638,13 @@ pub fn is_coinbase(tx: &Transaction) -> bool {
 #[inline(always)]
 ///
 /// This function calculates the size of a transaction when serialized
-/// without witness data, matching Bitcoin Core's GetSerializeSize(TX_NO_WITNESS(tx)).
+/// without witness data (base serialization size).
 ///
 /// CRITICAL: This must match the actual serialized size exactly to ensure
-/// consensus compatibility with Bitcoin Core.
+/// consensus compatibility.
 #[spec_locked("5.1")]
 pub fn calculate_transaction_size(tx: &Transaction) -> usize {
-    // Use actual serialization to match Bitcoin Core's behavior
+    // Use actual serialization for consensus compatibility
     // This replaces the simplified calculation that didn't account for varint encoding
     use crate::serialization::transaction::serialize_transaction;
     serialize_transaction(tx).len()

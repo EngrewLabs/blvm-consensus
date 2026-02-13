@@ -281,14 +281,18 @@ pub mod dead_code_elimination {
 /// Reference: BLVM Optimization Pass 5 - SIMD Vectorization
 #[cfg(feature = "production")]
 pub mod simd_vectorization {
+    use crate::crypto::OptimizedSha256;
     use ripemd::Ripemd160;
     use sha2::{Digest, Sha256};
 
     /// Minimum batch size for parallelization (overhead not worth it for smaller batches)
     const PARALLEL_THRESHOLD: usize = 8;
 
-    /// Chunk size for cache-friendly processing (fits in L1 cache: ~64KB)
-    const CHUNK_SIZE: usize = 16;
+    /// Chunk size for cache-friendly processing. Hardware-derived via ibd_tuning.
+    #[inline]
+    fn chunk_size() -> usize {
+        crate::ibd_tuning::hash_batch_chunk_size()
+    }
 
     /// Batch SHA256: Compute SHA256 for multiple independent inputs
     ///
@@ -329,7 +333,7 @@ pub mod simd_vectorization {
         // Medium batches: chunked sequential processing
         if inputs.len() < PARALLEL_THRESHOLD {
             let mut results = Vec::with_capacity(inputs.len());
-            for chunk in inputs.chunks(CHUNK_SIZE) {
+            for chunk in inputs.chunks(chunk_size()) {
                 for input in chunk {
                     let hash = Sha256::digest(input);
                     let mut result = [0u8; 32];
@@ -357,7 +361,7 @@ pub mod simd_vectorization {
         use rayon::prelude::*;
 
         inputs
-            .par_chunks(CHUNK_SIZE)
+            .par_chunks(chunk_size())
             .map(|chunk| {
                 chunk
                     .iter()
@@ -406,46 +410,37 @@ pub mod simd_vectorization {
         }
 
         // Small batches: sequential processing (overhead not worth it)
+        // Use OptimizedSha256 (SHA-NI when available) instead of sha2
+        let hasher = OptimizedSha256::new();
         if inputs.len() < 4 {
             return inputs
                 .iter()
-                .map(|input| {
-                    let hash = Sha256::digest(&Sha256::digest(input));
-                    let mut bytes = [0u8; 32];
-                    bytes.copy_from_slice(&hash);
-                    super::CacheAlignedHash::new(bytes)
-                })
+                .map(|input| super::CacheAlignedHash::new(hasher.hash256(input)))
                 .collect();
         }
 
         // Medium batches: chunked sequential processing
         if inputs.len() < PARALLEL_THRESHOLD {
             let mut results = Vec::with_capacity(inputs.len());
-            for chunk in inputs.chunks(CHUNK_SIZE) {
+            for chunk in inputs.chunks(chunk_size()) {
                 for input in chunk {
-                    let hash = Sha256::digest(&Sha256::digest(input));
-                    let mut bytes = [0u8; 32];
-                    bytes.copy_from_slice(&hash);
-                    results.push(super::CacheAlignedHash::new(bytes));
+                    results.push(super::CacheAlignedHash::new(hasher.hash256(input)));
                 }
             }
             return results;
         }
 
         // Large batches: parallelized processing using Rayon
+        // Each worker gets SHA-NI via OptimizedSha256 (runtime detection)
         use rayon::prelude::*;
 
         inputs
-            .par_chunks(CHUNK_SIZE)
+            .par_chunks(chunk_size())
             .map(|chunk| {
+                let hasher = OptimizedSha256::new();
                 chunk
                     .iter()
-                    .map(|input| {
-                        let hash = Sha256::digest(&Sha256::digest(input));
-                        let mut bytes = [0u8; 32];
-                        bytes.copy_from_slice(&hash);
-                        super::CacheAlignedHash::new(bytes)
-                    })
+                    .map(|input| super::CacheAlignedHash::new(hasher.hash256(input)))
                     .collect::<Vec<_>>()
             })
             .flatten()
@@ -480,7 +475,7 @@ pub mod simd_vectorization {
         // Medium batches: chunked sequential processing
         if inputs.len() < PARALLEL_THRESHOLD {
             let mut results = Vec::with_capacity(inputs.len());
-            for chunk in inputs.chunks(CHUNK_SIZE) {
+            for chunk in inputs.chunks(chunk_size()) {
                 for input in chunk {
                     let hash = Ripemd160::digest(input);
                     let mut result = [0u8; 20];
@@ -496,7 +491,7 @@ pub mod simd_vectorization {
         use rayon::prelude::*;
 
         inputs
-            .par_chunks(CHUNK_SIZE)
+            .par_chunks(chunk_size())
             .map(|chunk| {
                 chunk
                     .iter()
@@ -543,7 +538,7 @@ pub mod simd_vectorization {
         // Medium batches: chunked sequential processing
         if inputs.len() < PARALLEL_THRESHOLD {
             let mut results = Vec::with_capacity(inputs.len());
-            for chunk in inputs.chunks(CHUNK_SIZE) {
+            for chunk in inputs.chunks(chunk_size()) {
                 for input in chunk {
                     let sha256_hash = Sha256::digest(input);
                     let ripemd160_hash = Ripemd160::digest(sha256_hash);
@@ -560,7 +555,7 @@ pub mod simd_vectorization {
         use rayon::prelude::*;
 
         inputs
-            .par_chunks(CHUNK_SIZE)
+            .par_chunks(chunk_size())
             .map(|chunk| {
                 chunk
                     .iter()
