@@ -9,6 +9,7 @@ use crate::error::Result;
 use crate::opcodes::*;
 use crate::segwit::Witness;
 use crate::types::*;
+use crate::utxo_overlay::UtxoLookup;
 use blvm_spec_lock::spec_locked;
 
 /// Maximum number of public keys in a multisig (for sigop counting)
@@ -222,12 +223,12 @@ pub fn get_legacy_sigop_count(tx: &Transaction) -> u32 {
 ///
 /// # Arguments
 /// * `tx` - Transaction to count sigops in
-/// * `utxo_set` - UTXO set to lookup input prevouts
+/// * `utxo_lookup` - UTXO lookup (UtxoSet or UtxoOverlay)
 ///
 /// # Returns
 /// Total number of P2SH sigops
 #[spec_locked("5.2.2")]
-pub fn get_p2sh_sigop_count(tx: &Transaction, utxo_set: &UtxoSet) -> Result<u32> {
+pub fn get_p2sh_sigop_count<U: UtxoLookup>(tx: &Transaction, utxo_lookup: &U) -> Result<u32> {
     // Coinbase transactions have no P2SH sigops
     use crate::transaction::is_coinbase;
     if is_coinbase(tx) {
@@ -238,7 +239,7 @@ pub fn get_p2sh_sigop_count(tx: &Transaction, utxo_set: &UtxoSet) -> Result<u32>
 
     for input in &tx.inputs {
         // Get the UTXO (scriptPubKey) for this input
-        if let Some(utxo) = utxo_set.get(&input.prevout) {
+        if let Some(utxo) = utxo_lookup.get(&input.prevout) {
             // Check if this is a P2SH output
             if is_pay_to_script_hash(&utxo.script_pubkey) {
                 // Extract redeem script from scriptSig
@@ -263,15 +264,15 @@ pub fn get_p2sh_sigop_count(tx: &Transaction, utxo_set: &UtxoSet) -> Result<u32>
 /// # Arguments
 /// * `tx` - Transaction
 /// * `witnesses` - Witness data for each input (slice of Witness vectors)
-/// * `utxo_set` - UTXO set to lookup scriptPubKeys
+/// * `utxo_lookup` - UTXO lookup (UtxoSet or UtxoOverlay)
 /// * `flags` - Script verification flags
 ///
 /// # Returns
 /// Number of witness sigops
-fn count_witness_sigops(
+fn count_witness_sigops<U: UtxoLookup>(
     tx: &Transaction,
     witnesses: &[Witness],
-    utxo_set: &UtxoSet,
+    utxo_lookup: &U,
     flags: u32,
 ) -> Result<u64> {
     use crate::transaction::is_coinbase;
@@ -288,7 +289,7 @@ fn count_witness_sigops(
     let mut count = 0u64;
 
     for (i, input) in tx.inputs.iter().enumerate() {
-        if let Some(utxo) = utxo_set.get(&input.prevout) {
+        if let Some(utxo) = utxo_lookup.get(&input.prevout) {
             let script_pubkey = &utxo.script_pubkey;
 
             // P2WPKH: OP_0 <20-byte-hash>
@@ -338,10 +339,23 @@ fn count_witness_sigops(
 /// # Returns
 /// Total sigop cost
 #[spec_locked("5.2.2")]
-pub fn get_transaction_sigop_cost(
+pub fn get_transaction_sigop_cost<U: UtxoLookup>(
     tx: &Transaction,
-    utxo_set: &UtxoSet,
+    utxo_lookup: &U,
     witness: Option<&Witness>,
+    flags: u32,
+) -> Result<u64> {
+    let witness_slices = witness.map(std::slice::from_ref);
+    get_transaction_sigop_cost_with_witness_slices(tx, utxo_lookup, witness_slices, flags)
+}
+
+/// Same as get_transaction_sigop_cost but accepts per-input witness slices directly.
+/// Avoids flattening witness data in block validation hot path.
+#[spec_locked("5.2.2")]
+pub fn get_transaction_sigop_cost_with_witness_slices<U: UtxoLookup>(
+    tx: &Transaction,
+    utxo_lookup: &U,
+    witnesses: Option<&[Witness]>,
     flags: u32,
 ) -> Result<u64> {
     // Legacy sigops × witness scale factor
@@ -356,15 +370,13 @@ pub fn get_transaction_sigop_cost(
     // P2SH sigops × witness scale factor (if P2SH enabled)
     if (flags & 0x01) != 0 {
         // SCRIPT_VERIFY_P2SH flag enabled
-        let p2sh_count = get_p2sh_sigop_count(tx, utxo_set)? as u64;
+        let p2sh_count = get_p2sh_sigop_count(tx, utxo_lookup)? as u64;
         total_cost = total_cost.saturating_add(p2sh_count.saturating_mul(WITNESS_SCALE_FACTOR));
     }
 
     // Witness sigops (actual count, not scaled)
-    if let Some(witness) = witness {
-        // Convert single Witness to slice for count_witness_sigops
-        let witness_slice = std::slice::from_ref(witness);
-        let witness_count = count_witness_sigops(tx, witness_slice, utxo_set, flags)?;
+    if let Some(witnesses) = witnesses {
+        let witness_count = count_witness_sigops(tx, witnesses, utxo_lookup, flags)?;
         total_cost = total_cost.saturating_add(witness_count);
     }
 

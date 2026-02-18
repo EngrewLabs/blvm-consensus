@@ -362,6 +362,7 @@ fn benchmark_pow_batching(c: &mut Criterion) {
 #[cfg(feature = "production")]
 fn benchmark_batch_ecdsa_verification(c: &mut Criterion) {
     use blvm_consensus::script::batch_verify_signatures;
+    use blvm_consensus::types::Network;
     use secp256k1::{ecdsa::Signature, Message, Secp256k1};
 
     // Create test verification tasks with fixed test data
@@ -408,7 +409,16 @@ fn benchmark_batch_ecdsa_verification(c: &mut Criterion) {
         }
 
         c.bench_function(&format!("batch_verify_signatures_{}", count), |b| {
-            b.iter(|| black_box(batch_verify_signatures(black_box(&verification_tasks))))
+            b.iter(|| {
+                black_box(
+                    batch_verify_signatures(
+                        black_box(&verification_tasks),
+                        0,  // flags
+                        0,  // height (post-BIP66)
+                        Network::Mainnet,
+                    )
+                )
+            })
         });
 
         // Compare with sequential

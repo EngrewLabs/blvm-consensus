@@ -72,6 +72,7 @@ fn block_ibd_repro() {
         None::<&[blvm_consensus::types::BlockHeader]>,
         0u64,
         Network::Mainnet,
+        None,
     )
     .expect("connect_block_ibd");
 

@@ -55,10 +55,9 @@ hex = "=0.4.3"
 rustc-hash = { version = "2.0", optional = true }
 
 # Spec-lock for mathematical verification
-# CI: Uses git dependency (fallback if local path not available)
-# Local dev: Override with [patch.crates-io] section below (automatically uses local if available)
-# Note: Constants are always available for property tests; #[spec_locked] attributes are metadata for formal verification
-blvm-spec-lock = { git = "https://github.com/BTCDecoded/blvm-spec-lock.git", default-features = false }
+# LOCAL: Uses path (blvm-spec-lock in monorepo)
+# CI: setup-spec-lock.sh clones to ../blvm-spec-lock before build - path works in both contexts
+blvm-spec-lock = { path = "../blvm-spec-lock", default-features = false }
 # Spec-macros for spec_locked attributes (migration in progress - commented out until committed)
 # blvm-spec-macros = { path = "../blvm-spec-macros", optional = true }
 
@@ -195,13 +194,6 @@ strip = false
 lto = "thin"  # Faster than "fat" for iterative benchmarking
 codegen-units = 16  # Faster compilation
 
-# Local development patches (only active when paths exist, ignored in CI)
-# These automatically override git dependencies when developing locally
-# In CI, these paths won't exist, so git dependencies are used instead
-[patch."https://github.com/BTCDecoded/blvm-spec-lock.git"]
-# Use local blvm-spec-lock if available (local dev), otherwise use git (CI)
-blvm-spec-lock = { path = "../blvm-spec-lock" }
-
-# Local fork is used directly above - no patch needed
+# blvm-spec-lock uses path dependency above - no patch needed
 # [patch."https://github.com/secsovereign/rust-secp256k1.git"]
 # secp256k1 = { path = "../secp256k1-fork", default-features = true }

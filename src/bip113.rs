@@ -51,12 +51,15 @@ pub fn get_median_time_past<H: AsRef<BlockHeader>>(headers: &[H]) -> u64 {
     }
 
     // Take the last MEDIAN_TIME_BLOCKS headers (or all if fewer available)
+    // #32: Use stack array instead of heap Vec (max 11 u64s)
     let start_idx = headers.len().saturating_sub(MEDIAN_TIME_BLOCKS);
     let recent_headers = &headers[start_idx..];
-
-    // Extract timestamps and sort
-    let mut timestamps: Vec<u64> = recent_headers.iter().map(|h| h.as_ref().timestamp).collect();
-
+    let n = recent_headers.len().min(MEDIAN_TIME_BLOCKS);
+    let mut timestamps = [0u64; MEDIAN_TIME_BLOCKS];
+    for (i, h) in recent_headers.iter().enumerate().take(n) {
+        timestamps[i] = h.as_ref().timestamp;
+    }
+    let timestamps = &mut timestamps[..n];
     timestamps.sort_unstable();
 
     // Calculate median (middle value)

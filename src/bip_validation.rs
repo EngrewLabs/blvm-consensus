@@ -11,6 +11,26 @@ use crate::transaction::is_coinbase;
 use crate::types::*;
 use blvm_spec_lock::spec_locked;
 
+/// BIP30 index: maps coinbase txid → count of unspent outputs.
+/// When count > 0, a coinbase with that txid has unspent outputs (BIP30 would reject duplicate).
+/// Uses FxHashMap for faster lookups on integer-like keys (#17).
+#[cfg(feature = "production")]
+pub type Bip30Index = rustc_hash::FxHashMap<crate::types::Hash, usize>;
+#[cfg(not(feature = "production"))]
+pub type Bip30Index = std::collections::HashMap<crate::types::Hash, usize>;
+
+/// Build Bip30Index from an existing UTXO set (for IBD resume).
+/// Scans coinbase UTXOs and counts outputs per txid. O(n) over utxo_set.
+pub fn build_bip30_index(utxo_set: &UtxoSet) -> Bip30Index {
+    let mut index = Bip30Index::default();
+    for (outpoint, utxo) in utxo_set.iter() {
+        if utxo.is_coinbase {
+            *index.entry(outpoint.hash).or_insert(0) += 1;
+        }
+    }
+    index
+}
+
 /// BIP30: Duplicate Coinbase Prevention
 ///
 /// Prevents duplicate coinbase transactions (same txid) from being added to the blockchain.
@@ -26,8 +46,19 @@ use blvm_spec_lock::spec_locked;
 /// in blocks 91842 and 91880 (historical bug, grandfathered in).
 ///
 /// Activation: Block 0 (always active until deactivation)
+///
+/// **Optimization**: When `bip30_index` is `Some`, uses O(1) lookup instead of O(n) iteration
+/// over the UTXO set. Caller must maintain the index in sync with UTXO changes.
+/// **#2**: When `coinbase_txid` is `Some`, skips `calculate_tx_id(coinbase)` — caller precomputed.
 #[spec_locked("5.4.1")]
-pub fn check_bip30(block: &Block, utxo_set: &UtxoSet, height: Natural, network: crate::types::Network) -> Result<bool> {
+pub fn check_bip30(
+    block: &Block,
+    utxo_set: &UtxoSet,
+    bip30_index: Option<&Bip30Index>,
+    height: Natural,
+    network: crate::types::Network,
+    coinbase_txid: Option<&Hash>,
+) -> Result<bool> {
     use crate::constants::{BIP30_DEACTIVATION_MAINNET, BIP30_DEACTIVATION_TESTNET, BIP30_DEACTIVATION_REGTEST};
     
     // Check if BIP30 is still active at this height
@@ -50,27 +81,22 @@ pub fn check_bip30(block: &Block, utxo_set: &UtxoSet, height: Natural, network: 
             return Ok(true);
         }
 
-        let txid = calculate_tx_id(tx);
+        let txid = coinbase_txid.copied().unwrap_or_else(|| calculate_tx_id(tx));
 
-        // BIP30: Check if ANY UTXO exists with this txid
-        // This means a previous transaction (coinbase) with this txid already created outputs
-        // that are still unspent. Since coinbase txids should be unique, this is a violation.
-        //
-        // Note: We check ANY UTXO, not just coinbase UTXOs, because:
-        // 1. We're only checking coinbase transactions (verified above)
-        // 2. If a UTXO with this txid exists, it means a previous transaction created it
-        // 3. For coinbases, this should never happen (except blocks 91842/91880)
-        let mut found_duplicate = false;
-        let mut matching_outpoints = Vec::new();
-        for (outpoint, utxo) in utxo_set.iter() {
-            if outpoint.hash == txid {
-                matching_outpoints.push((outpoint.clone(), utxo.is_coinbase));
-                found_duplicate = true;
+        // Fast path: O(1) lookup when index is provided
+        if let Some(index) = bip30_index {
+            if index.get(&txid).map_or(false, |&c| c > 0) {
+                return Ok(false);
             }
+            return Ok(true);
         }
-        
-        if found_duplicate {
-            return Ok(false);
+
+        // Fallback: O(n) iteration when index not available (tests, sync path)
+        // BIP30: Check if ANY UTXO exists with this txid
+        for (outpoint, _utxo) in utxo_set.iter() {
+            if outpoint.hash == txid {
+                return Ok(false);
+            }
         }
     }
 
@@ -560,7 +586,7 @@ mod tests {
         };
 
         let utxo_set = UtxoSet::default();
-        let result = check_bip30(&block, &utxo_set, 0, crate::types::Network::Mainnet).unwrap();
+        let result = check_bip30(&block, &utxo_set, None, 0, crate::types::Network::Mainnet, None).unwrap();
         assert!(result, "BIP30 should pass for new coinbase");
     }
 
@@ -731,7 +757,7 @@ mod tests {
         };
 
         // BIP30 should fail for duplicate coinbase
-        let result = check_bip30(&block, &utxo_set, 0, crate::types::Network::Mainnet).unwrap();
+        let result = check_bip30(&block, &utxo_set, None, 0, crate::types::Network::Mainnet, None).unwrap();
         assert!(!result, "BIP30 should fail for duplicate coinbase");
     }
 

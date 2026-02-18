@@ -39,6 +39,13 @@ thread_local! {
     static SIGHASH_PREIMAGE_BUF: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(Vec::with_capacity(4096));
 }
 
+/// Thread-local buffer for Bip143PrecomputedHashes (prevouts/sequence/outputs serialization)
+/// Reused across hash_prevouts, hash_sequence, hash_outputs to avoid 3 Vec allocs per SegWit tx
+#[cfg(feature = "production")]
+thread_local! {
+    static BIP143_SERIALIZE_BUF: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(Vec::with_capacity(131_072)); // 128KB, covers max tx
+}
+
 /// SIGHASH types for transaction signature verification
 /// 
 /// IMPORTANT: The enum values match the canonical sighash bytes used in sighash computation.
@@ -595,45 +602,87 @@ pub struct Bip143PrecomputedHashes {
 impl Bip143PrecomputedHashes {
     /// Compute precomputed hashes for a transaction.
     /// This is the expensive part - compute once, reuse for all inputs.
+    /// Production: uses thread-local buffer to avoid 3 Vec allocs per SegWit tx.
     #[inline]
     pub fn compute(tx: &Transaction, _prevout_values: &[i64], _prevout_script_pubkeys: &[&crate::types::ByteString]) -> Self {
-        // hashPrevouts = SHA256(SHA256(all outpoints))
-        let hash_prevouts = {
-            let mut data = Vec::with_capacity(tx.inputs.len() * 36);
-            for input in tx.inputs.iter() {
-                data.extend_from_slice(&input.prevout.hash);
-                data.extend_from_slice(&(input.prevout.index as u32).to_le_bytes());
+        #[cfg(feature = "production")]
+        {
+            let hash_prevouts = BIP143_SERIALIZE_BUF.with(|cell| {
+                let mut data = cell.borrow_mut();
+                data.clear();
+                data.reserve(tx.inputs.len() * 36);
+                for input in tx.inputs.iter() {
+                    data.extend_from_slice(&input.prevout.hash);
+                    data.extend_from_slice(&(input.prevout.index as u32).to_le_bytes());
+                }
+                double_sha256(&data)
+            });
+
+            let hash_sequence = BIP143_SERIALIZE_BUF.with(|cell| {
+                let mut data = cell.borrow_mut();
+                data.clear();
+                data.reserve(tx.inputs.len() * 4);
+                for input in tx.inputs.iter() {
+                    data.extend_from_slice(&(input.sequence as u32).to_le_bytes());
+                }
+                double_sha256(&data)
+            });
+
+            let hash_outputs = BIP143_SERIALIZE_BUF.with(|cell| {
+                let mut data = cell.borrow_mut();
+                data.clear();
+                let cap = tx.outputs.iter().map(|o| 8 + 5 + o.script_pubkey.len()).sum::<usize>();
+                data.reserve(cap);
+                for output in tx.outputs.iter() {
+                    data.extend_from_slice(&output.value.to_le_bytes());
+                    write_varint_to_vec(&mut data, output.script_pubkey.len() as u64);
+                    data.extend_from_slice(&output.script_pubkey);
+                }
+                double_sha256(&data)
+            });
+
+            return Self {
+                hash_prevouts,
+                hash_sequence,
+                hash_outputs,
+            };
+        }
+
+        #[cfg(not(feature = "production"))]
+        {
+            // hashPrevouts = SHA256(SHA256(all outpoints))
+            let hash_prevouts = {
+                let mut data = Vec::with_capacity(tx.inputs.len() * 36);
+                for input in tx.inputs.iter() {
+                    data.extend_from_slice(&input.prevout.hash);
+                    data.extend_from_slice(&(input.prevout.index as u32).to_le_bytes());
+                }
+                double_sha256(&data)
+            };
+
+            let hash_sequence = {
+                let mut data = Vec::with_capacity(tx.inputs.len() * 4);
+                for input in tx.inputs.iter() {
+                    data.extend_from_slice(&(input.sequence as u32).to_le_bytes());
+                }
+                double_sha256(&data)
+            };
+
+            let hash_outputs = {
+                let mut data = Vec::with_capacity(tx.outputs.len() * 34);
+                for output in tx.outputs.iter() {
+                    data.extend_from_slice(&output.value.to_le_bytes());
+                    write_varint_to_vec(&mut data, output.script_pubkey.len() as u64);
+                    data.extend_from_slice(&output.script_pubkey);
+                }
+                double_sha256(&data)
+            };
+
+            Self {
+                hash_prevouts,
+                hash_sequence,
+                hash_outputs,
             }
-            double_sha256(&data)
-        };
-
-        // hashSequence = SHA256(SHA256(all sequences))
-        let hash_sequence = {
-            let mut data = Vec::with_capacity(tx.inputs.len() * 4);
-            for input in tx.inputs.iter() {
-                data.extend_from_slice(&(input.sequence as u32).to_le_bytes());
-            }
-            double_sha256(&data)
-        };
-
-        // hashOutputs = SHA256(SHA256(all outputs))
-        let hash_outputs = {
-            let mut data = Vec::with_capacity(tx.outputs.len() * 34); // Estimate
-            for output in tx.outputs.iter() {
-                data.extend_from_slice(&output.value.to_le_bytes());
-                write_varint_to_vec(&mut data, output.script_pubkey.len() as u64);
-                data.extend_from_slice(&output.script_pubkey);
-            }
-            double_sha256(&data)
-        };
-
-        // Note: prevout values/script_pubkeys not needed for precomputed hashes
-        // (only outpoints and sequences are used)
-
-        Self {
-            hash_prevouts,
-            hash_sequence,
-            hash_outputs,
         }
     }
 }

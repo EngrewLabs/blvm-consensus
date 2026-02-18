@@ -348,7 +348,7 @@ pub fn batch_verify_signatures_from_stack(
         } else {
             let n = sigs.len();
             let num_threads = rayon::current_num_threads().max(1);
-            let min_chunk = crate::ibd_tuning::PIPPENGER_MIN_CHUNK;
+            let min_chunk = crate::ibd_tuning::min_chunk_size_config_or_hardware(perf.ibd_min_chunk_size);
             let max_chunks = n / min_chunk;
             let num_chunks = if max_chunks >= 2 {
                 num_threads.min(max_chunks)

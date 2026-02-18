@@ -335,12 +335,12 @@ fn test_bip30_deactivation() {
 
     // Before deactivation (block 91,721): BIP30 should be active
     let height_before = BIP30_DEACTIVATION_MAINNET - 1;
-    let _result_before = check_bip30(&block, &utxo_set, height_before, network);
+    let _result_before = check_bip30(&block, &utxo_set, None, height_before, network, None);
     // Should check BIP30 (may pass or fail depending on UTXO set state)
 
     // After deactivation (block 91,723): BIP30 should be skipped
     let height_after = BIP30_DEACTIVATION_MAINNET + 1;
-    let result_after = check_bip30(&block, &utxo_set, height_after, network);
+    let result_after = check_bip30(&block, &utxo_set, None, height_after, network, None);
     
     // CRITICAL: After deactivation, BIP30 check should always pass
     assert!(result_after.is_ok() && result_after.unwrap(),

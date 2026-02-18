@@ -188,7 +188,23 @@ impl<'a> UtxoOverlay<'a> {
         self.additions.insert(outpoint, utxo);
     }
 
+    /// Mark a UTXO as spent without returning it. Use when the return value is discarded (e.g. IBD path).
+    /// Avoids cloning the UTXO (~50 bytes per input).
+    #[inline]
+    pub fn mark_spent(&mut self, outpoint: &OutPoint) {
+        // Check additions first (intra-block spend)
+        if self.additions.remove(outpoint).is_some() {
+            return;
+        }
+        // Mark as deleted from base set (no clone — caller doesn't need the UTXO)
+        if self.base.contains_key(outpoint) {
+            self.deletions.insert(outpoint_to_key(outpoint));
+            self.has_deletions = true;
+        }
+    }
+
     /// Mark a UTXO as spent (consumed by a transaction in this block).
+    /// Returns the UTXO for undo-log path. Use `mark_spent` when return value is discarded.
     #[inline]
     pub fn remove(&mut self, outpoint: &OutPoint) -> Option<UTXO> {
         // Check additions first (intra-block spend)
@@ -397,10 +413,10 @@ pub fn apply_transaction_to_overlay_no_undo(
 ) {
     use crate::transaction::is_coinbase;
     
-    // Remove spent inputs (except for coinbase)
+    // Remove spent inputs (except for coinbase). Use mark_spent to avoid cloning UTXO.
     if !is_coinbase(tx) {
         for input in &tx.inputs {
-            overlay.remove(&input.prevout);
+            overlay.mark_spent(&input.prevout);
         }
     }
     

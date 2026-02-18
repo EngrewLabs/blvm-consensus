@@ -904,18 +904,25 @@ fn try_verify_p2pk_fast_path(
         return Some(Ok(false));
     }
 
+    // Fast-path: P2PK script_pubkey is 34 or 66 bytes; signature push ≥71. Skip serialize+find_and_delete.
     use crate::transaction_hash::{calculate_transaction_sighash_with_script_code, SighashType};
     let sighash_byte = signature_bytes[signature_bytes.len() - 1];
     let sighash_type = SighashType::from_byte(sighash_byte);
-    let pattern = serialize_push_data(signature_bytes.as_slice());
-    let cleaned = find_and_delete(script_pubkey.as_slice(), &pattern);
+    let deleted_storage;
+    let script_code: &[u8] = if script_pubkey.len() < 71 {
+        script_pubkey.as_slice()
+    } else {
+        let pattern = serialize_push_data(signature_bytes.as_slice());
+        deleted_storage = find_and_delete(script_pubkey.as_slice(), &pattern);
+        deleted_storage.as_ref()
+    };
     let sighash = match calculate_transaction_sighash_with_script_code(
         tx,
         input_index,
         prevout_values,
         prevout_script_pubkeys,
         sighash_type,
-        Some(cleaned.as_ref()),
+        Some(script_code),
     ) {
         Ok(h) => h,
         Err(e) => return Some(Err(e)),
@@ -970,12 +977,7 @@ fn try_verify_p2pkh_fast_path(
     }
     let expected_hash = &script_pubkey[3..23];
 
-    let pushes = parse_script_sig_push_only(script_sig.as_slice())?;
-    if pushes.len() != 2 {
-        return None;
-    }
-    let signature_bytes = &pushes[0];
-    let pubkey_bytes = &pushes[1];
+    let (signature_bytes, pubkey_bytes) = parse_p2pkh_script_sig(script_sig.as_slice())?;
 
     // Pubkey must be 33 (compressed) or 65 (uncompressed) bytes
     if pubkey_bytes.len() != 33 && pubkey_bytes.len() != 65 {
@@ -994,18 +996,26 @@ fn try_verify_p2pkh_fast_path(
     }
 
     // Legacy sighash: scriptCode = FindAndDelete(script_pubkey, serialize(signature))
+    // Fast-path: P2PKH script_pubkey is 25 bytes; signature push is always ≥71 bytes.
+    // FindAndDelete returns script unchanged when pattern > script, so skip alloc.
     use crate::transaction_hash::{calculate_transaction_sighash_with_script_code, SighashType};
     let sighash_byte = signature_bytes[signature_bytes.len() - 1];
     let sighash_type = SighashType::from_byte(sighash_byte);
-    let pattern = serialize_push_data(signature_bytes.as_slice());
-    let cleaned = find_and_delete(script_pubkey.as_slice(), &pattern);
+    let deleted_storage;
+    let script_code: &[u8] = if script_pubkey.len() < 71 {
+        script_pubkey.as_slice()
+    } else {
+        let pattern = serialize_push_data(signature_bytes);
+        deleted_storage = find_and_delete(script_pubkey.as_slice(), &pattern);
+        deleted_storage.as_ref()
+    };
     let sighash = match calculate_transaction_sighash_with_script_code(
         tx,
         input_index,
         prevout_values,
         prevout_script_pubkeys,
         sighash_type,
-        Some(cleaned.as_ref()),
+        Some(script_code),
     ) {
         Ok(h) => h,
         Err(e) => return Some(Err(e)),
@@ -1107,15 +1117,22 @@ fn try_verify_p2sh_fast_path(
                     };
                     let sighash_byte = signature_bytes[signature_bytes.len() - 1];
                     let sighash_type = SighashType::from_byte(sighash_byte);
-                    let pattern = serialize_push_data(signature_bytes);
-                    let cleaned = find_and_delete(redeem.as_slice(), &pattern);
+                    // Fast-path: redeem is 25 bytes; signature push ≥71. FindAndDelete no-op.
+                    let deleted_storage;
+                    let script_code: &[u8] = if redeem.len() < 71 {
+                        redeem.as_slice()
+                    } else {
+                        let pattern = serialize_push_data(signature_bytes);
+                        deleted_storage = find_and_delete(redeem.as_slice(), &pattern);
+                        deleted_storage.as_ref()
+                    };
                     match calculate_transaction_sighash_with_script_code(
                         tx,
                         input_index,
                         prevout_values,
                         prevout_script_pubkeys,
                         sighash_type,
-                        Some(cleaned.as_ref()),
+                        Some(script_code),
                     ) {
                         Ok(sighash) => {
                             let height = block_height.unwrap_or(0);
@@ -1157,15 +1174,22 @@ fn try_verify_p2sh_fast_path(
                 };
                 let sighash_byte = signature_bytes[signature_bytes.len() - 1];
                 let sighash_type = SighashType::from_byte(sighash_byte);
-                let pattern = serialize_push_data(signature_bytes);
-                let cleaned = find_and_delete(redeem.as_slice(), &pattern);
+                // Fast-path: redeem is 34 or 66 bytes; signature push ≥71. FindAndDelete no-op.
+                let deleted_storage;
+                let script_code: &[u8] = if redeem.len() < 71 {
+                    redeem.as_slice()
+                } else {
+                    let pattern = serialize_push_data(signature_bytes);
+                    deleted_storage = find_and_delete(redeem.as_slice(), &pattern);
+                    deleted_storage.as_ref()
+                };
                 match calculate_transaction_sighash_with_script_code(
                     tx,
                     input_index,
                     prevout_values,
                     prevout_script_pubkeys,
                     sighash_type,
-                    Some(cleaned.as_ref()),
+                    Some(script_code),
                 ) {
                     Ok(sighash) => {
                         let height = block_height.unwrap_or(0);
@@ -2618,8 +2642,13 @@ fn eval_script_with_context_full_inner(
                 if let Some(item) = stack.pop() {
                     #[cfg(feature = "production")]
                     {
-                        // Check hash cache first (unless disabled)
-                        if !is_caching_disabled() {
+                        // Fast path: pubkeys (33 or 65 bytes) never repeat in a block — skip cache to
+                        // avoid alloc (compute_hash_cache_key), read lock, and write lock contention
+                        if item.len() == 33 || item.len() == 65 {
+                            let sha256_hash = Sha256::digest(&item);
+                            let ripemd160_hash = Ripemd160::digest(sha256_hash);
+                            stack.push(ripemd160_hash.to_vec());
+                        } else if !is_caching_disabled() {
                             let cache_key = compute_hash_cache_key(&item, true);
                             {
                                 let cache = get_hash_cache().read().unwrap();
@@ -2629,24 +2658,20 @@ fn eval_script_with_context_full_inner(
                                     continue;
                                 }
                             }
+                            let sha256_hash = Sha256::digest(&item);
+                            let ripemd160_hash = Ripemd160::digest(sha256_hash);
+                            let mut hash_vec = Vec::with_capacity(20);
+                            hash_vec.extend_from_slice(&ripemd160_hash);
+                            {
+                                let mut cache = get_hash_cache().write().unwrap();
+                                cache.put(cache_key, hash_vec.clone());
+                            }
+                            stack.push(hash_vec);
+                        } else {
+                            let sha256_hash = Sha256::digest(&item);
+                            let ripemd160_hash = Ripemd160::digest(sha256_hash);
+                            stack.push(ripemd160_hash.to_vec());
                         }
-                        
-                        // Compute hash: SHA256 then RIPEMD160
-                        let sha256_hash = Sha256::digest(&item);
-                        let ripemd160_hash = Ripemd160::digest(sha256_hash);
-                        
-                        // Pre-allocate Vec with known capacity (RIPEMD160 is 20 bytes)
-                        let mut hash_vec = Vec::with_capacity(20);
-                        hash_vec.extend_from_slice(&ripemd160_hash);
-                        
-                        // Cache result
-                        if !is_caching_disabled() {
-                            let cache_key = compute_hash_cache_key(&item, true);
-                            let mut cache = get_hash_cache().write().unwrap();
-                            cache.put(cache_key, hash_vec.clone());
-                        }
-                        
-                        stack.push(hash_vec);
                     }
                     #[cfg(not(feature = "production"))]
                     {
@@ -4019,6 +4044,73 @@ fn execute_opcode_with_context(
     )
 }
 
+/// Zero-allocation parser for P2PKH scriptSig: exactly two data pushes [signature, pubkey].
+/// Returns (sig_slice, pubkey_slice) borrowing into script_sig, or None if invalid.
+#[inline(always)]
+fn parse_p2pkh_script_sig(script_sig: &[u8]) -> Option<(&[u8], &[u8])> {
+    let mut i = 0;
+    let (adv1, s_start, s_end) = parse_one_data_push(script_sig, i)?;
+    i += adv1;
+    if i >= script_sig.len() {
+        return None;
+    }
+    let (adv2, p_start, p_end) = parse_one_data_push(script_sig, i)?;
+    i += adv2;
+    if i != script_sig.len() {
+        return None;
+    }
+    Some((&script_sig[s_start..s_end], &script_sig[p_start..p_end]))
+}
+
+/// Parse a single push opcode at `i`, return (advance, data_start, data_end). Rejects OP_0 and numerics.
+fn parse_one_data_push(script: &[u8], i: usize) -> Option<(usize, usize, usize)> {
+    if i >= script.len() {
+        return None;
+    }
+    let opcode = script[i];
+    let (advance, data_start, data_end) = if opcode == OP_0 {
+        return None;
+    } else if opcode <= 0x4b {
+        let len = opcode as usize;
+        if i + 1 + len > script.len() {
+            return None;
+        }
+        (1 + len, i + 1, i + 1 + len)
+    } else if opcode == OP_PUSHDATA1 {
+        if i + 1 >= script.len() {
+            return None;
+        }
+        let len = script[i + 1] as usize;
+        if i + 2 + len > script.len() {
+            return None;
+        }
+        (2 + len, i + 2, i + 2 + len)
+    } else if opcode == OP_PUSHDATA2 {
+        if i + 2 >= script.len() {
+            return None;
+        }
+        let len = u16::from_le_bytes([script[i + 1], script[i + 2]]) as usize;
+        if i + 3 + len > script.len() {
+            return None;
+        }
+        (3 + len, i + 3, i + 3 + len)
+    } else if opcode == OP_PUSHDATA4 {
+        if i + 4 >= script.len() {
+            return None;
+        }
+        let len = u32::from_le_bytes([
+            script[i + 1], script[i + 2], script[i + 3], script[i + 4],
+        ]) as usize;
+        if i + 5 + len > script.len() {
+            return None;
+        }
+        (5 + len, i + 5, i + 5 + len)
+    } else {
+        return None;
+    };
+    Some((advance, data_start, data_end))
+}
+
 /// Parse script_sig as push-only and return pushed items in order.
 /// Returns None if script contains non-push opcodes or invalid push encoding.
 /// Used by P2PKH fast-path to get [signature, pubkey] without running the interpreter.
@@ -4645,93 +4737,233 @@ fn execute_opcode_with_context_full(
                     .unwrap_or_else(|| prevout_script_pubkeys.get(input_index).map(|p| p.to_vec()).unwrap_or_default())
             };
 
-            let mut sig_index = 0;
-            let mut valid_sigs = 0;
+            use crate::transaction_hash::{calculate_transaction_sighash_with_script_code, SighashType};
 
-            for pubkey_bytes in &pubkeys {
-                if sig_index >= signatures.len() {
-                    break;
+            // Batch path: when n*m >= 4, precompute sighashes once per sig and batch-verify all (pubkey, sig) pairs.
+            #[cfg(feature = "production")]
+            let use_batch = pubkeys.len() * signatures.len() >= 4;
+
+            #[cfg(feature = "production")]
+            let (valid_sigs, _) = if use_batch {
+                // Precompute sighash for each signature (one per sig, not per pubkey-sig pair)
+                let sighashes: Vec<[u8; 32]> = signatures
+                    .iter()
+                    .filter(|s| !s.is_empty())
+                    .map(|sig_bytes| {
+                        let sighash_type = SighashType::from_byte(sig_bytes[sig_bytes.len() - 1]);
+                        calculate_transaction_sighash_with_script_code(
+                            tx,
+                            input_index,
+                            prevout_values,
+                            prevout_script_pubkeys,
+                            sighash_type,
+                            Some(&cleaned_script_for_multisig),
+                        )
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                // Build verification tasks: (pubkey_i, sig_j, sighash_j) for all i,j. Order: j then i (sig_index, pubkey_index)
+                let mut tasks: Vec<(&ByteString, &ByteString, [u8; 32])> = Vec::with_capacity(pubkeys.len() * signatures.len());
+                let mut sig_idx_to_sighash_idx = Vec::with_capacity(signatures.len());
+                let mut sighash_idx = 0usize;
+                for (j, sig_bytes) in signatures.iter().enumerate() {
+                    if sig_bytes.is_empty() {
+                        sig_idx_to_sighash_idx.push(usize::MAX);
+                    } else {
+                        sig_idx_to_sighash_idx.push(sighash_idx);
+                        let sh = sighashes[sighash_idx];
+                        sighash_idx += 1;
+                        for pubkey_bytes in &pubkeys {
+                            tasks.push((pubkey_bytes, sig_bytes, sh));
+                        }
+                    }
                 }
 
-                let signature_bytes = &signatures[sig_index];
-
-                if signature_bytes.is_empty() {
-                    // Empty signature - skip this pubkey
-                    continue;
-                }
-
-                // OPTIMIZATION: Cache length to avoid repeated computation
-                let sig_len = signature_bytes.len();
-                let sighash_byte = signature_bytes[sig_len - 1];
-                let _der_sig = &signature_bytes[..sig_len - 1];
-
-                // Parse sighash type from signature
-                use crate::transaction_hash::{calculate_transaction_sighash_with_script_code, SighashType};
-                let sighash_type = SighashType::from_byte(sighash_byte);
-
-                // Calculate transaction sighash using the cleaned scriptCode (with FindAndDelete applied)
-                let sighash = calculate_transaction_sighash_with_script_code(
-                    tx,
-                    input_index,
-                    prevout_values,
-                    prevout_script_pubkeys,
-                    sighash_type,
-                    Some(&cleaned_script_for_multisig)
-                )?;
-
-                // Verify signature (pass full signature WITH sighash byte)
-                // CRITICAL FIX: Pass full signature to verify_signature because
-                // IsValidSignatureEncoding: signature must include sighash byte
-                #[cfg(feature = "production")]
-                let is_valid = SECP256K1_CONTEXT.with(|secp| {
-                    verify_signature(
-                        secp,
-                        pubkey_bytes,
-                        &signature_bytes, // Pass full signature WITH sighash byte
-                        &sighash,
-                        flags,
-                        height,
-                        network,
-                        sigversion,
-                        #[cfg(feature = "production")] ecdsa_collector.as_deref(),
-                        #[cfg(feature = "production")] ecdsa_global_index,
-                    )
-                })?;
-
-                #[cfg(not(feature = "production"))]
-                let is_valid = {
-                    let secp = Secp256k1::new();
-                    verify_signature(
-                        &secp,
-                        pubkey_bytes,
-                        &signature_bytes, // Pass full signature WITH sighash byte
-                        &sighash,
-                        flags,
-                        height,
-                        network,
-                        sigversion,
-                        #[cfg(feature = "production")] None,
-                        #[cfg(feature = "production")] None,
-                    )?
+                let results = if tasks.is_empty() {
+                    vec![]
+                } else {
+                    let task_refs: Vec<(&[u8], &[u8], [u8; 32])> = tasks
+                        .iter()
+                        .map(|(pk, sig, sh)| (pk.as_slice(), sig.as_slice(), *sh))
+                        .collect();
+                    batch_verify_signatures(&task_refs, flags, height, network)?
                 };
 
-                // NULLFAIL (policy): if enabled and signature is non-empty, failing must be NULLFAIL
-                const SCRIPT_VERIFY_NULLFAIL: u32 = 0x4000;
-                if !is_valid && (flags & SCRIPT_VERIFY_NULLFAIL) != 0 && !signature_bytes.is_empty()
-                {
-                    return Err(ConsensusError::ScriptErrorWithCode {
-                        code: ScriptErrorCode::SigNullFail,
-                        message:
-                            "OP_CHECKMULTISIG: non-null signature must not fail under NULLFAIL"
-                                .into(),
-                    });
+                // Matching: for each pubkey in order, if current sig verifies with this pubkey, advance
+                let mut sig_index = 0;
+                let mut valid_sigs = 0usize;
+                for (i, _pubkey_bytes) in pubkeys.iter().enumerate() {
+                    if sig_index >= signatures.len() {
+                        break;
+                    }
+                    // Skip empty sigs without advancing (same as original)
+                    while sig_index < signatures.len() && signatures[sig_index].is_empty() {
+                        sig_index += 1;
+                    }
+                    if sig_index >= signatures.len() {
+                        break;
+                    }
+                    let sh_idx = sig_idx_to_sighash_idx[sig_index];
+                    if sh_idx == usize::MAX {
+                        continue;
+                    }
+                    let task_idx = sh_idx * pubkeys.len() + i;
+                    if task_idx < results.len() && results[task_idx] {
+                        valid_sigs += 1;
+                        sig_index += 1;
+                    }
                 }
 
-                if is_valid {
-                    valid_sigs += 1;
-                    sig_index += 1;
+                // NULLFAIL: any non-empty sig that didn't match any pubkey must cause failure
+                const SCRIPT_VERIFY_NULLFAIL: u32 = 0x4000;
+                if (flags & SCRIPT_VERIFY_NULLFAIL) != 0 {
+                    for (j, sig_bytes) in signatures.iter().enumerate() {
+                        if sig_bytes.is_empty() {
+                            continue;
+                        }
+                        let sh_idx = sig_idx_to_sighash_idx[j];
+                        if sh_idx == usize::MAX {
+                            continue;
+                        }
+                        let sig_start = sh_idx * pubkeys.len();
+                        let sig_end = (sig_start + pubkeys.len()).min(results.len());
+                        let matched = results[sig_start..sig_end].iter().any(|&r| r);
+                        if !matched {
+                            return Err(ConsensusError::ScriptErrorWithCode {
+                                code: ScriptErrorCode::SigNullFail,
+                                message: "OP_CHECKMULTISIG: non-null signature must not fail under NULLFAIL".into(),
+                            });
+                        }
+                    }
                 }
-            }
+                (valid_sigs, ())
+            } else {
+                let mut sig_index = 0;
+                let mut valid_sigs = 0;
+
+                for pubkey_bytes in &pubkeys {
+                    if sig_index >= signatures.len() {
+                        break;
+                    }
+
+                    let signature_bytes = &signatures[sig_index];
+
+                    if signature_bytes.is_empty() {
+                        continue;
+                    }
+
+                    let sig_len = signature_bytes.len();
+                    let sighash_byte = signature_bytes[sig_len - 1];
+                    let sighash_type = SighashType::from_byte(sighash_byte);
+
+                    let sighash = calculate_transaction_sighash_with_script_code(
+                        tx,
+                        input_index,
+                        prevout_values,
+                        prevout_script_pubkeys,
+                        sighash_type,
+                        Some(&cleaned_script_for_multisig),
+                    )?;
+
+                    #[cfg(feature = "production")]
+                    let is_valid = SECP256K1_CONTEXT.with(|secp| {
+                        verify_signature(
+                            secp,
+                            pubkey_bytes,
+                            signature_bytes,
+                            &sighash,
+                            flags,
+                            height,
+                            network,
+                            sigversion,
+                            ecdsa_collector.as_deref(),
+                            ecdsa_global_index,
+                        )
+                    })?;
+
+                    #[cfg(not(feature = "production"))]
+                    let is_valid = {
+                        let secp = Secp256k1::new();
+                        verify_signature(
+                            &secp,
+                            pubkey_bytes,
+                            signature_bytes,
+                            &sighash,
+                            flags,
+                            height,
+                            network,
+                            sigversion,
+                            #[cfg(feature = "production")] None,
+                            #[cfg(feature = "production")] None,
+                        )?
+                    };
+
+                    const SCRIPT_VERIFY_NULLFAIL: u32 = 0x4000;
+                    if !is_valid && (flags & SCRIPT_VERIFY_NULLFAIL) != 0 && !signature_bytes.is_empty() {
+                        return Err(ConsensusError::ScriptErrorWithCode {
+                            code: ScriptErrorCode::SigNullFail,
+                            message: "OP_CHECKMULTISIG: non-null signature must not fail under NULLFAIL".into(),
+                        });
+                    }
+
+                    if is_valid {
+                        valid_sigs += 1;
+                        sig_index += 1;
+                    }
+                }
+                (valid_sigs, ())
+            };
+
+            #[cfg(not(feature = "production"))]
+            let (valid_sigs, _) = {
+                let mut sig_index = 0;
+                let mut valid_sigs = 0;
+
+                for pubkey_bytes in &pubkeys {
+                    if sig_index >= signatures.len() {
+                        break;
+                    }
+                    let signature_bytes = &signatures[sig_index];
+                    if signature_bytes.is_empty() {
+                        continue;
+                    }
+                    let sig_len = signature_bytes.len();
+                    let sighash_type = SighashType::from_byte(signature_bytes[sig_len - 1]);
+                    let sighash = calculate_transaction_sighash_with_script_code(
+                        tx,
+                        input_index,
+                        prevout_values,
+                        prevout_script_pubkeys,
+                        sighash_type,
+                        Some(&cleaned_script_for_multisig),
+                    )?;
+                    let secp = Secp256k1::new();
+                    let is_valid = verify_signature(
+                        &secp,
+                        pubkey_bytes,
+                        signature_bytes,
+                        &sighash,
+                        flags,
+                        height,
+                        network,
+                        sigversion,
+                        #[cfg(feature = "production")] None,
+                        #[cfg(feature = "production")] None,
+                    )?;
+                    const SCRIPT_VERIFY_NULLFAIL: u32 = 0x4000;
+                    if !is_valid && (flags & SCRIPT_VERIFY_NULLFAIL) != 0 && !signature_bytes.is_empty() {
+                        return Err(ConsensusError::ScriptErrorWithCode {
+                            code: ScriptErrorCode::SigNullFail,
+                            message: "OP_CHECKMULTISIG: non-null signature must not fail under NULLFAIL".into(),
+                        });
+                    }
+                    if is_valid {
+                        valid_sigs += 1;
+                        sig_index += 1;
+                    }
+                }
+                (valid_sigs, ())
+            };
 
             // Push result: 1 if valid_sigs >= m, 0 otherwise
             stack.push(vec![if valid_sigs >= m { 1 } else { 0 }]);
@@ -5104,7 +5336,6 @@ fn execute_opcode_with_context_full(
                     &message_bytes,  // Message (NOT hashed by BIP 340 spec)
                     &pubkey_bytes,   // Pubkey (32 bytes for BIP 340)
                     &signature_bytes, // Signature (64-byte BIP 340 Schnorr)
-                    None, // No collector in non-production mode
                 ).unwrap_or(false);
 
                 if !is_valid {
@@ -5663,7 +5894,6 @@ impl EcdsaSignatureCollector {
         #[cfg(feature = "production")]
         let extract_time = start_time.elapsed();
 
-        use secp256k1::ecdsa;
         #[cfg(feature = "production")]
         let batch_start = std::time::Instant::now();
 
@@ -5676,23 +5906,20 @@ impl EcdsaSignatureCollector {
         let batch_result = {
             use rayon::prelude::*;
             if sigs.len() <= chunk_threshold {
-                match ecdsa::verify_batch(&sigs, &msgs, &pubkeys) {
+                match secp256k1::ecdsa::verify_batch(&sigs, &msgs, &pubkeys) {
                     Ok(()) => Ok(vec![true; n]),
                     Err(_) => Self::ecdsa_fallback_extracted(&sigs, &msgs, &pubkeys),
                 }
             } else {
                 let n = sigs.len();
                 let num_threads = rayon::current_num_threads().max(1);
-                let min_chunk = crate::ibd_tuning::PIPPENGER_MIN_CHUNK;
-                // Only parallelize when each chunk has >= min_chunk sigs (Pippenger/Strauss, not simple_var).
+                let min_chunk = crate::ibd_tuning::min_chunk_size_config_or_hardware(perf.ibd_min_chunk_size);
                 let max_chunks = n / min_chunk;
                 let num_chunks = if max_chunks >= 2 {
                     num_threads.min(max_chunks)
                 } else if n >= min_chunk {
-                    // Single chunk gets Pippenger; splitting would give chunks < min_chunk → slow.
                     1
                 } else {
-                    // n < min_chunk: single chunk uses Strauss (n>=64) or simple; no benefit to split.
                     1
                 };
                 let chunk_ranges: Vec<(usize, usize)> = (0..num_chunks)
@@ -5707,7 +5934,7 @@ impl EcdsaSignatureCollector {
                 let chunk_sizes: Vec<usize> = chunk_ranges.iter().map(|(s, e)| e - s).collect();
                 let chunk_results: Vec<std::result::Result<(), _>> = chunk_ranges
                     .into_par_iter()
-                    .map(|(start, end)| ecdsa::verify_batch(&sigs[start..end], &msgs[start..end], &pubkeys[start..end]))
+                    .map(|(start, end)| secp256k1::ecdsa::verify_batch(&sigs[start..end], &msgs[start..end], &pubkeys[start..end]))
                     .collect();
                 #[cfg(all(feature = "production", feature = "profile"))]
                 if n > 50 {
@@ -5722,7 +5949,7 @@ impl EcdsaSignatureCollector {
         };
 
         #[cfg(not(all(feature = "production", feature = "rayon")))]
-        let batch_result = match ecdsa::verify_batch(&sigs, &msgs, &pubkeys) {
+        let batch_result = match secp256k1::ecdsa::verify_batch(&sigs, &msgs, &pubkeys) {
             Ok(()) => Ok(vec![true; n]),
             Err(_) => Self::ecdsa_fallback_extracted(&sigs, &msgs, &pubkeys),
         };
@@ -5796,11 +6023,102 @@ impl EcdsaSignatureCollector {
     }
 }
 
+/// Parse and validate one task for batch verification.
+/// Returns Ok(None) if invalid (encoding, BIP66, etc), Ok(Some(...)) if valid and ready for batch.
+#[cfg(feature = "production")]
+fn parse_task_for_batch(
+    pubkey_bytes: &[u8],
+    signature_bytes: &[u8],
+    sighash: &[u8; 32],
+    flags: u32,
+    height: Natural,
+    network: crate::types::Network,
+) -> Result<Option<(PublicKey, secp256k1::ecdsa::Signature, Message)>> {
+    use secp256k1::ecdsa::Signature;
+
+    if signature_bytes.is_empty() {
+        return Ok(None);
+    }
+    let sig_len = signature_bytes.len();
+    let sighash_byte = signature_bytes[sig_len - 1];
+    let der_sig = &signature_bytes[..sig_len - 1];
+
+    if flags & 0x04 != 0 && !crate::bip_validation::check_bip66(signature_bytes, height, network)? {
+        return Ok(None);
+    }
+    if flags & 0x02 != 0 {
+        let base_sighash = sighash_byte & !0x80;
+        if base_sighash < 0x01 || base_sighash > 0x03 {
+            return Ok(None);
+        }
+    }
+
+    let signature = if flags & 0x04 != 0 {
+        match Signature::from_der(der_sig) {
+            Ok(sig) => sig,
+            Err(_) => return Ok(None),
+        }
+    } else {
+        if let Some(normalized) = normalize_der_signature(der_sig) {
+            match Signature::from_der(&normalized) {
+                Ok(sig) => sig,
+                Err(_) => match Signature::from_der(der_sig) {
+                    Ok(sig) => sig,
+                    Err(_) => return Ok(None),
+                },
+            }
+        } else {
+            match Signature::from_der(der_sig) {
+                Ok(sig) => sig,
+                Err(_) => return Ok(None),
+            }
+        }
+    };
+
+    let original_compact = signature.serialize_compact();
+    let mut normalized_signature = signature;
+    normalized_signature.normalize_s();
+    if flags & 0x08 != 0 {
+        if original_compact != normalized_signature.serialize_compact() {
+            return Ok(None);
+        }
+    }
+
+    if flags & 0x02 != 0 {
+        if pubkey_bytes.len() < 33 {
+            return Ok(None);
+        }
+        if pubkey_bytes[0] == 0x04 {
+            if pubkey_bytes.len() != 65 {
+                return Ok(None);
+            }
+        } else if pubkey_bytes[0] == 0x02 || pubkey_bytes[0] == 0x03 {
+            if pubkey_bytes.len() != 33 {
+                return Ok(None);
+            }
+        } else {
+            return Ok(None);
+        }
+    }
+
+    let pubkey = match PublicKey::from_slice(pubkey_bytes) {
+        Ok(pk) => pk,
+        Err(_) => return Ok(None),
+    };
+    let message = match Message::from_digest_slice(sighash) {
+        Ok(m) => m,
+        Err(_) => return Ok(None),
+    };
+
+    Ok(Some((pubkey, normalized_signature, message)))
+}
+
 /// Phase 6.1: Batch ECDSA signature verification
 ///
 /// Verifies multiple signatures in parallel, providing significant speedup
-/// for blocks with many signatures. Uses Rayon for CPU-core parallelization
-/// when batch size is large enough.
+/// for blocks with many signatures. For 4+ tasks, tries secp256k1::ecdsa::verify_batch
+/// first (single batched EC op); falls back to per-sig verification only when batch
+/// fails or pre-EC validation fails for any task.
 ///
 /// # Arguments
 /// * `verification_tasks` - Vector of (pubkey_bytes, signature_bytes, sighash) tuples
@@ -5822,7 +6140,7 @@ pub fn batch_verify_signatures(
         return Ok(Vec::new());
     }
 
-    // Small batches: sequential (overhead not worth parallelization)
+    // Small batches: sequential (overhead not worth parallelization or batch)
     if verification_tasks.len() < 4 {
         let mut results = Vec::with_capacity(verification_tasks.len());
         for (pubkey_bytes, signature_bytes, sighash) in verification_tasks {
@@ -5845,12 +6163,32 @@ pub fn batch_verify_signatures(
         return Ok(results);
     }
 
-    // Medium/Large batches: parallelized using Rayon
+    // 4+ tasks: try batch path first (multisig, P2SH redeem scripts)
+    let parsed: Vec<_> = verification_tasks
+        .iter()
+        .map(|(pk, sig, sh)| parse_task_for_batch(pk, sig, sh, flags, height, network))
+        .collect::<Result<Vec<_>>>()?;
+
+    let any_invalid = parsed.iter().any(|p| p.is_none());
+    if !any_invalid {
+        let mut pubkeys = Vec::with_capacity(parsed.len());
+        let mut sigs = Vec::with_capacity(parsed.len());
+        let mut msgs = Vec::with_capacity(parsed.len());
+        for (pk, sig, msg) in parsed.into_iter().map(|o| o.unwrap()) {
+            pubkeys.push(pk);
+            sigs.push(sig);
+            msgs.push(msg);
+        }
+        if let Ok(()) = secp256k1::ecdsa::verify_batch(&sigs, &msgs, &pubkeys) {
+            return Ok(vec![true; verification_tasks.len()]);
+        }
+    }
+
+    // Fallback: per-sig verification (batch failed or pre-EC validation failed)
     #[cfg(feature = "rayon")]
     {
         use rayon::prelude::*;
-
-        let results: Result<Vec<bool>> = verification_tasks
+        verification_tasks
             .par_iter()
             .map(|(pubkey_bytes, signature_bytes, sighash)| {
                 SECP256K1_CONTEXT.with(|secp| {
@@ -5868,13 +6206,11 @@ pub fn batch_verify_signatures(
                     )
                 })
             })
-            .collect();
-        results
+            .collect()
     }
 
     #[cfg(not(feature = "rayon"))]
     {
-        // Fallback to sequential if rayon not available
         let mut results = Vec::with_capacity(verification_tasks.len());
         for (pubkey_bytes, signature_bytes, sighash) in verification_tasks {
             let secp = Secp256k1::new();

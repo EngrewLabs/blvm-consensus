@@ -77,10 +77,10 @@ pub const PIPPENGER_MIN_CHUNK: usize = 88;
 
 /// Chunk threshold: parallelize when sig count exceeds this.
 /// Higher = less chunking, more single Pippenger batches. Lower = more parallel chunks.
-/// 176: 177+ sig blocks split to 2 chunks (≥88 each) → Pippenger; improves Rayon utilization.
+/// 128: blocks with 129+ sigs use parallel batch path; config override can change.
 /// Config/env BLVM_CONSENSUS_PERFORMANCE_IBD_CHUNK_THRESHOLD overrides.
 pub fn chunk_threshold_config_or_hardware(config_override: Option<usize>) -> usize {
-    config_override.unwrap_or(176)
+    config_override.unwrap_or(128)
 }
 
 /// Min chunk size for parallel batches. Larger chunks = better libsecp256k1 ecmult efficiency.

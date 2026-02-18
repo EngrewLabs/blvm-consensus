@@ -93,6 +93,41 @@ fn hash_witness(witness: &Witness) -> Hash {
     hash
 }
 
+/// Hash witness from nested structure (Vec<Witness> per tx) without allocating.
+/// Each tx's witness is the concatenation of its input stacks for merkle commitment.
+fn hash_witness_from_nested(tx_witnesses: &[Witness]) -> Hash {
+    let mut hasher = sha256d::Hash::engine();
+    for witness_stack in tx_witnesses {
+        for element in witness_stack {
+            hasher.input(element);
+        }
+    }
+    let result = sha256d::Hash::from_engine(hasher);
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&result);
+    hash
+}
+
+/// Compute witness merkle root from nested witnesses without flattening.
+/// Accepts `&[Vec<Witness>]` where each `Vec<Witness>` is one tx's input stacks.
+/// Avoids allocating flattened structure in block validation hot path.
+pub fn compute_witness_merkle_root_from_nested(block: &Block, witnesses: &[Vec<Witness>]) -> Result<Hash> {
+    if block.transactions.is_empty() {
+        return Err(crate::error::ConsensusError::ConsensusRuleViolation(
+            "Cannot compute witness merkle root from empty block".into(),
+        ));
+    }
+    let mut witness_hashes = Vec::with_capacity(block.transactions.len());
+    for (i, tx_witnesses) in witnesses.iter().enumerate() {
+        if i == 0 {
+            witness_hashes.push([0u8; 32]);
+        } else {
+            witness_hashes.push(hash_witness_from_nested(tx_witnesses));
+        }
+    }
+    compute_merkle_root(&witness_hashes)
+}
+
 /// Compute merkle root from hashes
 fn compute_merkle_root(hashes: &[Hash]) -> Result<Hash> {
     if hashes.is_empty() {
