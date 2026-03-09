@@ -87,6 +87,9 @@ pnpm-lock.yaml
 *.test
 /test-results/
 
+# Large test data binaries (IBD repro, etc.)
+tests/test_data/**/*.bin
+
 # Misc
 .cache/
 *.pid
