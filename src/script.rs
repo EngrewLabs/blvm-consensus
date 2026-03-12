@@ -1,34 +1,34 @@
 //! Script execution engine from Orange Paper Section 5.2
 //!
 //! Performance optimizations (VM):
+#![allow(
+    clippy::declare_interior_mutable_const,  // const vs static for OnceLock in array init
+    clippy::type_complexity,
+    clippy::too_many_arguments,
+    clippy::needless_return,  // Many branches; mechanical fix error-prone
+)]
 //! - Secp256k1 context reuse (thread-local, zero-cost abstraction)
 //! - Script result caching (production feature only, maintains correctness)
 //! - Hash operation result caching (OP_HASH160, OP_HASH256)
 //! - Stack pooling (thread-local pool of pre-allocated Vec<StackElement>)
 //! - Memory allocation optimizations
 
-#[cfg(all(feature = "production", feature = "profile"))]
-use crate::profile_log;
 use crate::constants::*;
+use crate::crypto::OptimizedSha256;
 use crate::error::{ConsensusError, Result, ScriptErrorCode};
 use crate::opcodes::*;
+#[cfg(all(feature = "production", feature = "profile"))]
+use crate::profile_log;
 use crate::types::*;
-use crate::crypto::OptimizedSha256;
+use blvm_spec_lock::spec_locked;
 use digest::Digest;
 use ripemd::Ripemd160;
 use secp256k1::{ecdsa::Signature, Context, Message, PublicKey, Secp256k1, Verification};
 use sha1::Sha1;
-use blvm_spec_lock::spec_locked;
 
 // LLVM-like optimizations
 #[cfg(feature = "production")]
-use crate::optimizations::{
-    bounds_optimization, constant_folding, precomputed_constants, prefetch,
-};
-#[cfg(feature = "production")]
-use std::cell::UnsafeCell;
-#[cfg(feature = "production")]
-use std::sync::atomic::AtomicUsize;
+use crate::optimizations::{precomputed_constants, prefetch};
 
 // Cold error construction helpers - these paths are rarely taken
 #[cold]
@@ -149,13 +149,13 @@ thread_local! {
         Vec<[u8; 33]>,
         Vec<usize>,
         Vec<[u8; 32]>,
-    )> = std::cell::RefCell::new((
+    )> = const { std::cell::RefCell::new((
         Vec::new(),
         Vec::new(),
         Vec::new(),
         Vec::new(),
         Vec::new(),
-    ));
+    )) };
 }
 
 #[cfg(feature = "production")]
@@ -194,7 +194,9 @@ fn sig_cache_at_collect_enabled() -> bool {
     use std::sync::OnceLock;
     static CACHE: OnceLock<bool> = OnceLock::new();
     *CACHE.get_or_init(|| {
-        std::env::var("BLVM_SIG_CACHE_AT_COLLECT").map(|s| s == "1" || s.eq_ignore_ascii_case("true")).unwrap_or(false)
+        std::env::var("BLVM_SIG_CACHE_AT_COLLECT")
+            .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
     })
 }
 
@@ -241,16 +243,20 @@ static FAST_PATH_INTERPRETER: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "production")]
 fn debug_sighash_log(idx: usize, sighash: &[u8; 32], is_collect: bool) {
     static DEBUG_SIGHASH_ENABLED: OnceLock<bool> = OnceLock::new();
-    if !*DEBUG_SIGHASH_ENABLED.get_or_init(|| {
-        std::env::var("BLVM_DEBUG_SIGHASH").ok().as_deref() == Some("1")
-    }) {
+    if !*DEBUG_SIGHASH_ENABLED
+        .get_or_init(|| std::env::var("BLVM_DEBUG_SIGHASH").ok().as_deref() == Some("1"))
+    {
         return;
     }
     static DEBUG_SIGHASH_DIR: OnceLock<String> = OnceLock::new();
     let dir = DEBUG_SIGHASH_DIR
         .get_or_init(|| std::env::var("BLVM_DEBUG_SIGHASH_DIR").unwrap_or_else(|_| "target".into()))
         .as_str();
-    let path = std::path::Path::new(dir).join(if is_collect { "blvm_sighash_collect.txt" } else { "blvm_sighash_verify.txt" });
+    let path = std::path::Path::new(dir).join(if is_collect {
+        "blvm_sighash_collect.txt"
+    } else {
+        "blvm_sighash_verify.txt"
+    });
     let line = format!("{}\t{}\n", idx, hex::encode(sighash));
     let guard = if is_collect {
         DEBUG_SIGHASH_COLLECT_FILE.lock()
@@ -259,7 +265,12 @@ fn debug_sighash_log(idx: usize, sighash: &[u8; 32], is_collect: bool) {
     };
     if let Ok(mut mu) = guard {
         if mu.is_none() {
-            *mu = std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(&path).ok();
+            *mu = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&path)
+                .ok();
         }
         if let Some(ref mut f) = *mu {
             use std::io::Write;
@@ -359,7 +370,7 @@ fn with_hash_cache<F, R>(f: F) -> R
 where
     F: FnOnce(&mut lru::LruCache<[u8; 32], Vec<u8>>) -> R,
 {
-    HASH_CACHE.with(|cell| f(&mut *cell.borrow_mut()))
+    HASH_CACHE.with(|cell| f(&mut cell.borrow_mut()))
 }
 
 /// Flag to disable caching for benchmarking (production feature only)
@@ -911,8 +922,9 @@ pub fn verify_script_with_context(
 ) -> Result<bool> {
     // Convert prevouts to parallel slices for the optimized API
     let prevout_values: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
-    let prevout_script_pubkeys: Vec<&[u8]> = prevouts.iter().map(|p| p.script_pubkey.as_ref()).collect();
-    
+    let prevout_script_pubkeys: Vec<&[u8]> =
+        prevouts.iter().map(|p| p.script_pubkey.as_ref()).collect();
+
     // Default to Base sigversion for this API (no witness version inspection here)
     let sigversion = SigVersion::Base;
     verify_script_with_context_full(
@@ -928,11 +940,15 @@ pub fn verify_script_with_context(
         None, // median_time_past
         network,
         sigversion,
-        #[cfg(feature = "production")] None, // schnorr_collector
+        #[cfg(feature = "production")]
+        None, // schnorr_collector
         None, // precomputed_bip143 - caller doesn't provide
-        #[cfg(feature = "production")] None, // precomputed_sighash_all
-        #[cfg(feature = "production")] None, // sighash_cache
-        #[cfg(feature = "production")] None, // precomputed_p2pkh_hash
+        #[cfg(feature = "production")]
+        None, // precomputed_sighash_all
+        #[cfg(feature = "production")]
+        None, // sighash_cache
+        #[cfg(feature = "production")]
+        None, // precomputed_p2pkh_hash
     )
 }
 
@@ -951,10 +967,9 @@ pub fn verify_script_with_context(
 #[cfg_attr(feature = "production", inline(always))]
 #[cfg_attr(not(feature = "production"), inline)]
 /// VerifyScript with full context - optimized version using parallel slices
-/// 
+///
 /// This version accepts prevout values and script_pubkeys as separate slices to avoid
 /// unnecessary cloning of script_pubkey data.
-
 /// P2PK fast-path. Bare pay-to-pubkey: scriptPubKey = <pubkey> OP_CHECKSIG, scriptSig = <sig>.
 /// Common in early blocks (coinbase outputs). Returns Some(Ok(bool)) if handled; None to fall back.
 #[cfg(feature = "production")]
@@ -969,7 +984,9 @@ pub fn try_verify_p2pk_fast_path(
     prevout_script_pubkeys: &[&[u8]],
     block_height: Option<u64>,
     network: crate::types::Network,
-    #[cfg(feature = "production")] sighash_cache: Option<&crate::transaction_hash::SighashMidstateCache>,
+    #[cfg(feature = "production")] sighash_cache: Option<
+        &crate::transaction_hash::SighashMidstateCache,
+    >,
 ) -> Option<Result<bool>> {
     // P2PK scriptPubKey: OP_PUSHBYTES_N + pubkey + OP_CHECKSIG
     // 35 bytes (compressed: 0x21 + 33) or 67 bytes (uncompressed: 0x41 + 65)
@@ -989,7 +1006,7 @@ pub fn try_verify_p2pk_fast_path(
     }
     let pubkey_bytes = &script_pubkey[1..(len - 1)];
 
-    let signature_bytes = parse_p2pk_script_sig(script_sig.as_slice())?;
+    let signature_bytes = parse_p2pk_script_sig(script_sig.as_ref())?;
     if signature_bytes.is_empty() {
         return Some(Ok(false));
     }
@@ -1012,7 +1029,8 @@ pub fn try_verify_p2pk_fast_path(
         script_code,
         prevout_values[input_index],
         sighash_type,
-        #[cfg(feature = "production")] sighash_cache,
+        #[cfg(feature = "production")]
+        sighash_cache,
     ) {
         Ok(h) => h,
         Err(e) => return Some(Err(e)),
@@ -1049,18 +1067,20 @@ pub fn try_verify_p2pkh_fast_path(
     block_height: Option<u64>,
     network: crate::types::Network,
     #[cfg(feature = "production")] precomputed_sighash_all: Option<[u8; 32]>,
-    #[cfg(feature = "production")] sighash_cache: Option<&crate::transaction_hash::SighashMidstateCache>,
+    #[cfg(feature = "production")] sighash_cache: Option<
+        &crate::transaction_hash::SighashMidstateCache,
+    >,
     #[cfg(feature = "production")] precomputed_p2pkh_hash: Option<[u8; 20]>,
 ) -> Option<Result<bool>> {
     #[cfg(all(feature = "production", feature = "profile"))]
     let _t_entry = std::time::Instant::now();
-    // P2PKH scriptPubKey: 25 bytes = OP_DUP OP_HASH160 0x14 <20 bytes> OP_EQUALVERIFY OP_CHECKSIG
+    // P2PKH scriptPubKey: 25 bytes = OP_DUP OP_HASH160 PUSH_20_BYTES <20 bytes> OP_EQUALVERIFY OP_CHECKSIG
     if script_pubkey.len() != 25 {
         return None;
     }
     if script_pubkey[0] != OP_DUP
         || script_pubkey[1] != OP_HASH160
-        || script_pubkey[2] != 0x14
+        || script_pubkey[2] != PUSH_20_BYTES
         || script_pubkey[23] != OP_EQUALVERIFY
         || script_pubkey[24] != OP_CHECKSIG
     {
@@ -1072,7 +1092,7 @@ pub fn try_verify_p2pkh_fast_path(
     crate::script_profile::add_p2pkh_fast_path_entry_ns(_t_entry.elapsed().as_nanos() as u64);
     #[cfg(all(feature = "production", feature = "profile"))]
     let _t_parse = std::time::Instant::now();
-    let (signature_bytes, pubkey_bytes) = parse_p2pkh_script_sig(script_sig.as_slice())?;
+    let (signature_bytes, pubkey_bytes) = parse_p2pkh_script_sig(script_sig.as_ref())?;
     #[cfg(all(feature = "production", feature = "profile"))]
     crate::script_profile::add_p2pkh_parse_ns(_t_parse.elapsed().as_nanos() as u64);
 
@@ -1098,13 +1118,13 @@ pub fn try_verify_p2pkh_fast_path(
             h.into()
         }
     };
-    if pubkey_hash.as_slice() != expected_hash {
+    if &pubkey_hash[..] != expected_hash {
         return Some(Ok(false));
     }
 
     // Legacy sighash: scriptCode = FindAndDelete(script_pubkey, serialize(signature))
     // Roadmap #12: use precomputed when available (batch sighash for P2PKH).
-    use crate::transaction_hash::{calculate_transaction_sighash_single_input, SighashType};
+    use crate::transaction_hash::SighashType;
     let sighash_byte = signature_bytes[signature_bytes.len() - 1];
     let sighash_type = SighashType::from_byte(sighash_byte);
     let deleted_storage;
@@ -1153,11 +1173,14 @@ pub fn try_verify_p2pkh_fast_path(
             Ok(true)
         } else {
             let der_sig = &signature_bytes[..signature_bytes.len() - 1];
-            if flags & 0x04 != 0 && !crate::bip_validation::check_bip66(signature_bytes, height, network).unwrap_or(false) {
+            if flags & 0x04 != 0
+                && !crate::bip_validation::check_bip66(signature_bytes, height, network)
+                    .unwrap_or(false)
+            {
                 Ok(false)
             } else if flags & 0x02 != 0 {
                 let base_sighash = sighash_byte & !0x80;
-                if base_sighash < 0x01 || base_sighash > 0x03 {
+                if !(0x01..=0x03).contains(&base_sighash) {
                     Ok(false)
                 } else if pubkey_bytes.len() == 33 {
                     if pubkey_bytes[0] != 0x02 && pubkey_bytes[0] != 0x03 {
@@ -1166,15 +1189,25 @@ pub fn try_verify_p2pkh_fast_path(
                         let strict_der = flags & 0x04 != 0;
                         let enforce_low_s = flags & 0x08 != 0;
                         Ok(crate::secp256k1_backend::verify_ecdsa_direct(
-                            der_sig, pubkey_bytes, &sighash, strict_der, enforce_low_s,
-                        ).unwrap_or(false))
+                            der_sig,
+                            pubkey_bytes,
+                            &sighash,
+                            strict_der,
+                            enforce_low_s,
+                        )
+                        .unwrap_or(false))
                     }
                 } else if pubkey_bytes.len() == 65 && pubkey_bytes[0] == 0x04 {
                     let strict_der = flags & 0x04 != 0;
                     let enforce_low_s = flags & 0x08 != 0;
                     Ok(crate::secp256k1_backend::verify_ecdsa_direct(
-                        der_sig, pubkey_bytes, &sighash, strict_der, enforce_low_s,
-                    ).unwrap_or(false))
+                        der_sig,
+                        pubkey_bytes,
+                        &sighash,
+                        strict_der,
+                        enforce_low_s,
+                    )
+                    .unwrap_or(false))
                 } else {
                     Ok(false)
                 }
@@ -1182,8 +1215,13 @@ pub fn try_verify_p2pkh_fast_path(
                 let strict_der = flags & 0x04 != 0;
                 let enforce_low_s = flags & 0x08 != 0;
                 Ok(crate::secp256k1_backend::verify_ecdsa_direct(
-                    der_sig, pubkey_bytes, &sighash, strict_der, enforce_low_s,
-                ).unwrap_or(false))
+                    der_sig,
+                    pubkey_bytes,
+                    &sighash,
+                    strict_der,
+                    enforce_low_s,
+                )
+                .unwrap_or(false))
             }
         }
     };
@@ -1232,7 +1270,7 @@ pub fn verify_p2pkh_inline(
 
     let sha256_hash = OptimizedSha256::new().hash(pubkey_bytes);
     let pubkey_hash: [u8; 20] = Ripemd160::digest(sha256_hash).into();
-    if pubkey_hash.as_slice() != expected_hash {
+    if &pubkey_hash[..] != expected_hash {
         return Ok(false);
     }
 
@@ -1247,7 +1285,10 @@ pub fn verify_p2pkh_inline(
         precomp
     } else {
         crate::transaction_hash::compute_legacy_sighash_buffered(
-            tx, input_index, script_pubkey, sighash_byte,
+            tx,
+            input_index,
+            script_pubkey,
+            sighash_byte,
         )
     };
 
@@ -1258,13 +1299,15 @@ pub fn verify_p2pkh_inline(
     let strict_der = flags & 0x04 != 0;
     let enforce_low_s = flags & 0x08 != 0;
 
-    if strict_der && !crate::bip_validation::check_bip66(signature_bytes, height, network).unwrap_or(false) {
+    if strict_der
+        && !crate::bip_validation::check_bip66(signature_bytes, height, network).unwrap_or(false)
+    {
         return Ok(false);
     }
 
     if flags & 0x02 != 0 {
         let sighash_base = sighash_byte & !0x80;
-        if sighash_base < 0x01 || sighash_base > 0x03 {
+        if !(0x01..=0x03).contains(&sighash_base) {
             return Ok(false);
         }
         match pubkey_bytes.len() {
@@ -1279,8 +1322,13 @@ pub fn verify_p2pkh_inline(
     let _t_secp = std::time::Instant::now();
 
     let result = crate::secp256k1_backend::verify_ecdsa_direct(
-        der_sig, pubkey_bytes, &sighash, strict_der, enforce_low_s,
-    ).unwrap_or(false);
+        der_sig,
+        pubkey_bytes,
+        &sighash,
+        strict_der,
+        enforce_low_s,
+    )
+    .unwrap_or(false);
 
     #[cfg(feature = "profile")]
     crate::script_profile::add_p2pkh_secp_context_ns(_t_secp.elapsed().as_nanos() as u64);
@@ -1318,20 +1366,25 @@ pub fn verify_p2pk_inline(
     let script_code: &[u8] = script_pubkey; // P2PK scriptPubKey < 71 bytes, no FindAndDelete
 
     let sighash = crate::transaction_hash::compute_legacy_sighash_buffered(
-        tx, input_index, script_code, sighash_byte,
+        tx,
+        input_index,
+        script_code,
+        sighash_byte,
     );
 
     let der_sig = &signature_bytes[..signature_bytes.len() - 1];
     let strict_der = flags & 0x04 != 0;
     let enforce_low_s = flags & 0x08 != 0;
 
-    if strict_der && !crate::bip_validation::check_bip66(signature_bytes, height, network).unwrap_or(false) {
+    if strict_der
+        && !crate::bip_validation::check_bip66(signature_bytes, height, network).unwrap_or(false)
+    {
         return Ok(false);
     }
 
     if flags & 0x02 != 0 {
         let sighash_base = sighash_byte & !0x80;
-        if sighash_base < 0x01 || sighash_base > 0x03 {
+        if !(0x01..=0x03).contains(&sighash_base) {
             return Ok(false);
         }
         match pubkey_bytes.len() {
@@ -1343,8 +1396,13 @@ pub fn verify_p2pk_inline(
     }
 
     Ok(crate::secp256k1_backend::verify_ecdsa_direct(
-        der_sig, pubkey_bytes, &sighash, strict_der, enforce_low_s,
-    ).unwrap_or(false))
+        der_sig,
+        pubkey_bytes,
+        &sighash,
+        strict_der,
+        enforce_low_s,
+    )
+    .unwrap_or(false))
 }
 
 /// P2SH-multisig fast path: when redeem script matches OP_m <pubkeys> OP_n OP_CHECKMULTISIG,
@@ -1361,17 +1419,19 @@ fn try_verify_p2sh_multisig_fast_path(
     prevout_script_pubkeys: &[&[u8]],
     block_height: Option<u64>,
     network: crate::types::Network,
-    #[cfg(feature = "production")] sighash_cache: Option<&crate::transaction_hash::SighashMidstateCache>,
+    #[cfg(feature = "production")] sighash_cache: Option<
+        &crate::transaction_hash::SighashMidstateCache,
+    >,
 ) -> Option<Result<bool>> {
-    let pushes = parse_p2sh_script_sig_pushes(script_sig.as_slice())?;
+    let pushes = parse_p2sh_script_sig_pushes(script_sig.as_ref())?;
     if pushes.len() < 2 {
         return None;
     }
-    let redeem = pushes.last().expect("at least 2 pushes").as_slice();
+    let redeem = pushes.last().expect("at least 2 pushes").as_ref();
     let expected_hash = &script_pubkey[2..22];
     let sha256_hash = OptimizedSha256::new().hash(redeem);
     let redeem_hash = Ripemd160::digest(sha256_hash);
-    if redeem_hash.as_slice() != expected_hash {
+    if &redeem_hash[..] != expected_hash {
         return Some(Ok(false));
     }
     let (m, _n, pubkeys) = parse_redeem_multisig(redeem)?;
@@ -1379,9 +1439,9 @@ fn try_verify_p2sh_multisig_fast_path(
         .iter()
         .take(pushes.len() - 1)
         .skip(1)
-        .map(|e| e.as_slice())
+        .map(|e| e.as_ref())
         .collect();
-    let dummy = pushes.first().expect("at least 2 pushes").as_slice();
+    let dummy = pushes.first().expect("at least 2 pushes").as_ref();
 
     const SCRIPT_VERIFY_NULLDUMMY: u32 = 0x10;
     const SCRIPT_VERIFY_NULLFAIL: u32 = 0x4000;
@@ -1392,10 +1452,8 @@ fn try_verify_p2sh_multisig_fast_path(
             crate::types::Network::Testnet => crate::constants::BIP147_ACTIVATION_TESTNET,
             crate::types::Network::Regtest => 0,
         };
-        if height >= activation {
-            if !dummy.is_empty() && dummy != [0x00] {
-                return Some(Ok(false));
-            }
+        if height >= activation && !dummy.is_empty() && dummy != [0x00] {
+            return Some(Ok(false));
         }
     }
 
@@ -1483,7 +1541,8 @@ fn try_verify_p2sh_multisig_fast_path(
             if !sig_bytes.is_empty() {
                 return Some(Err(ConsensusError::ScriptErrorWithCode {
                     code: ScriptErrorCode::SigNullFail,
-                    message: "OP_CHECKMULTISIG: non-null signature must not fail under NULLFAIL".into(),
+                    message: "OP_CHECKMULTISIG: non-null signature must not fail under NULLFAIL"
+                        .into(),
                 }));
             }
         }
@@ -1505,15 +1564,17 @@ fn try_verify_bare_multisig_fast_path(
     prevout_script_pubkeys: &[&[u8]],
     block_height: Option<u64>,
     network: crate::types::Network,
-    #[cfg(feature = "production")] sighash_cache: Option<&crate::transaction_hash::SighashMidstateCache>,
+    #[cfg(feature = "production")] sighash_cache: Option<
+        &crate::transaction_hash::SighashMidstateCache,
+    >,
 ) -> Option<Result<bool>> {
     let (m, _n, pubkeys) = parse_redeem_multisig(script_pubkey)?;
-    let pushes = parse_p2sh_script_sig_pushes(script_sig.as_slice())?;
+    let pushes = parse_p2sh_script_sig_pushes(script_sig.as_ref())?;
     if pushes.len() < 2 {
         return None;
     }
-    let dummy = pushes.first().expect("at least 2 pushes").as_slice();
-    let signatures: Vec<&[u8]> = pushes[1..].iter().map(|e| e.as_slice()).collect();
+    let dummy = pushes.first().expect("at least 2 pushes").as_ref();
+    let signatures: Vec<&[u8]> = pushes[1..].iter().map(|e| e.as_ref()).collect();
 
     const SCRIPT_VERIFY_NULLDUMMY: u32 = 0x10;
     const SCRIPT_VERIFY_NULLFAIL: u32 = 0x4000;
@@ -1524,10 +1585,8 @@ fn try_verify_bare_multisig_fast_path(
             crate::types::Network::Testnet => crate::constants::BIP147_ACTIVATION_TESTNET,
             crate::types::Network::Regtest => 0,
         };
-        if height >= activation {
-            if !dummy.is_empty() && dummy != [0x00] {
-                return Some(Ok(false));
-            }
+        if height >= activation && !dummy.is_empty() && dummy != [0x00] {
+            return Some(Ok(false));
         }
     }
 
@@ -1615,7 +1674,8 @@ fn try_verify_bare_multisig_fast_path(
             if !sig_bytes.is_empty() {
                 return Some(Err(ConsensusError::ScriptErrorWithCode {
                     code: ScriptErrorCode::SigNullFail,
-                    message: "OP_CHECKMULTISIG: non-null signature must not fail under NULLFAIL".into(),
+                    message: "OP_CHECKMULTISIG: non-null signature must not fail under NULLFAIL"
+                        .into(),
                 }));
             }
         }
@@ -1640,24 +1700,26 @@ fn try_verify_p2sh_fast_path(
     block_height: Option<u64>,
     median_time_past: Option<u64>,
     network: crate::types::Network,
-    #[cfg(feature = "production")] sighash_cache: Option<&crate::transaction_hash::SighashMidstateCache>,
+    #[cfg(feature = "production")] sighash_cache: Option<
+        &crate::transaction_hash::SighashMidstateCache,
+    >,
     #[cfg(feature = "production")] precomputed_sighash_all: Option<[u8; 32]>,
 ) -> Option<Result<bool>> {
     const SCRIPT_VERIFY_P2SH: u32 = 0x01;
     if (flags & SCRIPT_VERIFY_P2SH) == 0 {
         return None;
     }
-    // P2SH scriptPubKey: 23 bytes = OP_HASH160 0x14 <20 bytes> OP_EQUAL
+    // P2SH scriptPubKey: 23 bytes = OP_HASH160 PUSH_20_BYTES <20 bytes> OP_EQUAL
     if script_pubkey.len() != 23
         || script_pubkey[0] != OP_HASH160
-        || script_pubkey[1] != 0x14
+        || script_pubkey[1] != PUSH_20_BYTES
         || script_pubkey[22] != OP_EQUAL
     {
         return None;
     }
     let expected_hash = &script_pubkey[2..22];
 
-    let mut pushes = parse_script_sig_push_only(script_sig.as_slice())?;
+    let mut pushes = parse_script_sig_push_only(script_sig.as_ref())?;
     if pushes.is_empty() {
         return None;
     }
@@ -1667,15 +1729,16 @@ fn try_verify_p2sh_fast_path(
     // Redeem must not be a witness program (P2WPKH-in-P2SH / P2WSH-in-P2SH use witness; we don't handle here)
     if redeem.len() >= 3
         && redeem[0] == OP_0
-        && ((redeem[1] == 0x14 && redeem.len() == 22) || (redeem[1] == 0x20 && redeem.len() == 34))
+        && ((redeem[1] == PUSH_20_BYTES && redeem.len() == 22)
+            || (redeem[1] == PUSH_32_BYTES && redeem.len() == 34))
     {
         return None;
     }
 
     // HASH160(redeem) == expected hash
-    let sha256_hash = OptimizedSha256::new().hash(redeem.as_slice());
+    let sha256_hash = OptimizedSha256::new().hash(redeem.as_ref());
     let redeem_hash = Ripemd160::digest(sha256_hash);
-    if redeem_hash.as_slice() != expected_hash {
+    if &redeem_hash[..] != expected_hash {
         return Some(Ok(false));
     }
 
@@ -1683,90 +1746,87 @@ fn try_verify_p2sh_fast_path(
     if redeem.len() == 25
         && redeem[0] == OP_DUP
         && redeem[1] == OP_HASH160
-        && redeem[2] == 0x14
+        && redeem[2] == PUSH_20_BYTES
         && redeem[23] == OP_EQUALVERIFY
         && redeem[24] == OP_CHECKSIG
+        && stack.len() == 2
     {
-        if stack.len() == 2 {
-            let signature_bytes = &stack[0];
-            let pubkey_bytes = &stack[1];
-            if (pubkey_bytes.len() == 33 || pubkey_bytes.len() == 65)
-                && !signature_bytes.is_empty()
-            {
-                let expected_pubkey_hash = &redeem[3..23];
-                let sha256_hash = OptimizedSha256::new().hash(pubkey_bytes);
-                let pubkey_hash = Ripemd160::digest(sha256_hash);
-                if pubkey_hash.as_slice() == expected_pubkey_hash {
-                    #[cfg(feature = "production")]
-                    let sighash = if let Some(precomp) = precomputed_sighash_all {
-                        precomp
+        let signature_bytes = &stack[0];
+        let pubkey_bytes = &stack[1];
+        if (pubkey_bytes.len() == 33 || pubkey_bytes.len() == 65) && !signature_bytes.is_empty() {
+            let expected_pubkey_hash = &redeem[3..23];
+            let sha256_hash = OptimizedSha256::new().hash(pubkey_bytes);
+            let pubkey_hash = Ripemd160::digest(sha256_hash);
+            if &pubkey_hash[..] == expected_pubkey_hash {
+                #[cfg(feature = "production")]
+                let sighash = if let Some(precomp) = precomputed_sighash_all {
+                    precomp
+                } else {
+                    use crate::transaction_hash::{
+                        calculate_transaction_sighash_single_input, SighashType,
+                    };
+                    let sighash_byte = signature_bytes[signature_bytes.len() - 1];
+                    let sighash_type = SighashType::from_byte(sighash_byte);
+                    let deleted_storage;
+                    let script_code: &[u8] = if redeem.len() < 71 {
+                        redeem.as_ref()
                     } else {
-                        use crate::transaction_hash::{
-                            calculate_transaction_sighash_single_input, SighashType,
-                        };
-                        let sighash_byte = signature_bytes[signature_bytes.len() - 1];
-                        let sighash_type = SighashType::from_byte(sighash_byte);
-                        let deleted_storage;
-                        let script_code: &[u8] = if redeem.len() < 71 {
-                            redeem.as_slice()
-                        } else {
-                            let pattern = serialize_push_data(signature_bytes);
-                            deleted_storage = find_and_delete(redeem.as_slice(), &pattern);
-                            deleted_storage.as_ref()
-                        };
-                        match calculate_transaction_sighash_single_input(
-                            tx,
-                            input_index,
-                            script_code,
-                            prevout_values[input_index],
-                            sighash_type,
-                            sighash_cache,
-                        ) {
-                            Ok(h) => h,
-                            Err(e) => return Some(Err(e)),
-                        }
+                        let pattern = serialize_push_data(signature_bytes);
+                        deleted_storage = find_and_delete(redeem.as_ref(), &pattern);
+                        deleted_storage.as_ref()
                     };
-                    #[cfg(not(feature = "production"))]
-                    let sighash = {
-                        use crate::transaction_hash::{
-                            calculate_transaction_sighash_single_input, SighashType,
-                        };
-                        let sighash_byte = signature_bytes[signature_bytes.len() - 1];
-                        let sighash_type = SighashType::from_byte(sighash_byte);
-                        let deleted_storage;
-                        let script_code: &[u8] = if redeem.len() < 71 {
-                            redeem.as_slice()
-                        } else {
-                            let pattern = serialize_push_data(signature_bytes);
-                            deleted_storage = find_and_delete(redeem.as_slice(), &pattern);
-                            deleted_storage.as_ref()
-                        };
-                        match calculate_transaction_sighash_single_input(
-                            tx,
-                            input_index,
-                            script_code,
-                            prevout_values[input_index],
-                            sighash_type,
-                        ) {
-                            Ok(h) => h,
-                            Err(e) => return Some(Err(e)),
-                        }
+                    match calculate_transaction_sighash_single_input(
+                        tx,
+                        input_index,
+                        script_code,
+                        prevout_values[input_index],
+                        sighash_type,
+                        sighash_cache,
+                    ) {
+                        Ok(h) => h,
+                        Err(e) => return Some(Err(e)),
+                    }
+                };
+                #[cfg(not(feature = "production"))]
+                let sighash = {
+                    use crate::transaction_hash::{
+                        calculate_transaction_sighash_single_input, SighashType,
                     };
-                    let height = block_height.unwrap_or(0);
-                    let is_valid = SECP256K1_CONTEXT.with(|secp| {
-                        verify_signature(
-                            secp,
-                            pubkey_bytes,
-                            signature_bytes,
-                            &sighash,
-                            flags,
-                            height,
-                            network,
-                            SigVersion::Base,
-                        )
-                    });
-                    return Some(is_valid);
-                }
+                    let sighash_byte = signature_bytes[signature_bytes.len() - 1];
+                    let sighash_type = SighashType::from_byte(sighash_byte);
+                    let deleted_storage;
+                    let script_code: &[u8] = if redeem.len() < 71 {
+                        redeem.as_ref()
+                    } else {
+                        let pattern = serialize_push_data(signature_bytes);
+                        deleted_storage = find_and_delete(redeem.as_ref(), &pattern);
+                        deleted_storage.as_ref()
+                    };
+                    match calculate_transaction_sighash_single_input(
+                        tx,
+                        input_index,
+                        script_code,
+                        prevout_values[input_index],
+                        sighash_type,
+                    ) {
+                        Ok(h) => h,
+                        Err(e) => return Some(Err(e)),
+                    }
+                };
+                let height = block_height.unwrap_or(0);
+                let is_valid = SECP256K1_CONTEXT.with(|secp| {
+                    verify_signature(
+                        secp,
+                        pubkey_bytes,
+                        signature_bytes,
+                        &sighash,
+                        flags,
+                        height,
+                        network,
+                        SigVersion::Base,
+                    )
+                });
+                return Some(is_valid);
             }
         }
     }
@@ -1779,7 +1839,7 @@ fn try_verify_p2sh_fast_path(
     {
         let pubkey_len = redeem.len() - 2;
         if pubkey_len == 33 || pubkey_len == 65 {
-            let pubkey_bytes = &redeem.as_slice()[1..(redeem.len() - 1)];
+            let pubkey_bytes = &redeem.as_ref()[1..(redeem.len() - 1)];
             let signature_bytes = &stack[0];
             if !signature_bytes.is_empty() {
                 use crate::transaction_hash::{
@@ -1790,10 +1850,10 @@ fn try_verify_p2sh_fast_path(
                 // Fast-path: redeem is 35 or 67 bytes; signature push ≥71. FindAndDelete no-op.
                 let deleted_storage;
                 let script_code: &[u8] = if redeem.len() < 71 {
-                    redeem.as_slice()
+                    redeem.as_ref()
                 } else {
                     let pattern = serialize_push_data(signature_bytes);
-                    deleted_storage = find_and_delete(redeem.as_slice(), &pattern);
+                    deleted_storage = find_and_delete(redeem.as_ref(), &pattern);
                     deleted_storage.as_ref()
                 };
                 match calculate_transaction_sighash_single_input(
@@ -1802,7 +1862,8 @@ fn try_verify_p2sh_fast_path(
                     script_code,
                     prevout_values[input_index],
                     sighash_type,
-                    #[cfg(feature = "production")] sighash_cache,
+                    #[cfg(feature = "production")]
+                    sighash_cache,
                 ) {
                     Ok(sighash) => {
                         let height = block_height.unwrap_or(0);
@@ -1839,11 +1900,13 @@ fn try_verify_p2sh_fast_path(
         median_time_past,
         network,
         SigVersion::Base,
-        Some(redeem.as_slice()),
+        Some(redeem.as_ref()),
         None, // script_sig_for_sighash (P2SH redeem context)
-        #[cfg(feature = "production")] None, // schnorr_collector
+        #[cfg(feature = "production")]
+        None, // schnorr_collector
         None, // precomputed_bip143 - Base sigversion
-        #[cfg(feature = "production")] sighash_cache,
+        #[cfg(feature = "production")]
+        sighash_cache,
     );
     Some(result)
 }
@@ -1866,11 +1929,8 @@ fn try_verify_p2wpkh_fast_path(
     precomputed_bip143: Option<&crate::transaction_hash::Bip143PrecomputedHashes>,
     #[cfg(feature = "production")] precomputed_sighash_all: Option<[u8; 32]>,
 ) -> Option<Result<bool>> {
-    // P2WPKH: 22 bytes = OP_0 0x14 <20-byte-hash>
-    if script_pubkey.len() != 22
-        || script_pubkey[0] != OP_0
-        || script_pubkey[1] != 0x14
-    {
+    // P2WPKH: 22 bytes = OP_0 PUSH_20_BYTES <20-byte-hash>
+    if script_pubkey.len() != 22 || script_pubkey[0] != OP_0 || script_pubkey[1] != PUSH_20_BYTES {
         return None;
     }
     // Native SegWit: scriptSig must be empty
@@ -1893,7 +1953,7 @@ fn try_verify_p2wpkh_fast_path(
     let expected_hash = &script_pubkey[2..22];
     let sha256_hash = OptimizedSha256::new().hash(pubkey_bytes);
     let pubkey_hash = Ripemd160::digest(sha256_hash);
-    if pubkey_hash.as_slice() != expected_hash {
+    if &pubkey_hash[..] != expected_hash {
         return Some(Ok(false));
     }
 
@@ -1906,7 +1966,12 @@ fn try_verify_p2wpkh_fast_path(
         } else {
             let amount = prevout_values.get(input_index).copied().unwrap_or(0);
             match crate::transaction_hash::calculate_bip143_sighash(
-                tx, input_index, script_pubkey, amount, sighash_byte, precomputed_bip143,
+                tx,
+                input_index,
+                script_pubkey,
+                amount,
+                sighash_byte,
+                precomputed_bip143,
             ) {
                 Ok(h) => h,
                 Err(e) => return Some(Err(e)),
@@ -1916,7 +1981,12 @@ fn try_verify_p2wpkh_fast_path(
         {
             let amount = prevout_values.get(input_index).copied().unwrap_or(0);
             match crate::transaction_hash::calculate_bip143_sighash(
-                tx, input_index, script_pubkey, amount, sighash_byte, precomputed_bip143,
+                tx,
+                input_index,
+                script_pubkey,
+                amount,
+                sighash_byte,
+                precomputed_bip143,
             ) {
                 Ok(h) => h,
                 Err(e) => return Some(Err(e)),
@@ -1925,7 +1995,12 @@ fn try_verify_p2wpkh_fast_path(
     } else {
         let amount = prevout_values.get(input_index).copied().unwrap_or(0);
         match crate::transaction_hash::calculate_bip143_sighash(
-            tx, input_index, script_pubkey, amount, sighash_byte, precomputed_bip143,
+            tx,
+            input_index,
+            script_pubkey,
+            amount,
+            sighash_byte,
+            precomputed_bip143,
         ) {
             Ok(h) => h,
             Err(e) => return Some(Err(e)),
@@ -1970,24 +2045,24 @@ fn try_verify_p2wpkh_in_p2sh_fast_path(
     }
     if script_pubkey.len() != 23
         || script_pubkey[0] != OP_HASH160
-        || script_pubkey[1] != 0x14
+        || script_pubkey[1] != PUSH_20_BYTES
         || script_pubkey[22] != OP_EQUAL
     {
         return None;
     }
     let expected_hash = &script_pubkey[2..22];
 
-    let pushes = parse_script_sig_push_only(script_sig.as_slice())?;
+    let pushes = parse_script_sig_push_only(script_sig.as_ref())?;
     if pushes.len() != 1 {
         return None;
     }
     let redeem = &pushes[0];
-    if redeem.len() != 22 || redeem[0] != OP_0 || redeem[1] != 0x14 {
+    if redeem.len() != 22 || redeem[0] != OP_0 || redeem[1] != PUSH_20_BYTES {
         return None;
     }
-    let sha256_hash = OptimizedSha256::new().hash(redeem.as_slice());
+    let sha256_hash = OptimizedSha256::new().hash(redeem.as_ref());
     let redeem_hash = Ripemd160::digest(sha256_hash);
-    if redeem_hash.as_slice() != expected_hash {
+    if &redeem_hash[..] != expected_hash {
         return Some(Ok(false));
     }
 
@@ -2002,7 +2077,7 @@ fn try_verify_p2wpkh_in_p2sh_fast_path(
     let expected_pubkey_hash = &redeem[2..22];
     let pubkey_sha256 = OptimizedSha256::new().hash(pubkey_bytes);
     let pubkey_hash = Ripemd160::digest(pubkey_sha256);
-    if pubkey_hash.as_slice() != expected_pubkey_hash {
+    if &pubkey_hash[..] != expected_pubkey_hash {
         return Some(Ok(false));
     }
 
@@ -2011,7 +2086,7 @@ fn try_verify_p2wpkh_in_p2sh_fast_path(
     let sighash = match crate::transaction_hash::calculate_bip143_sighash(
         tx,
         input_index,
-        redeem.as_slice(),
+        redeem.as_ref(),
         amount,
         sighash_byte,
         precomputed_bip143,
@@ -2054,13 +2129,12 @@ fn try_verify_p2wsh_fast_path(
     network: crate::types::Network,
     schnorr_collector: Option<&crate::bip348::SchnorrSignatureCollector>,
     precomputed_bip143: Option<&crate::transaction_hash::Bip143PrecomputedHashes>,
-    #[cfg(feature = "production")] sighash_cache: Option<&crate::transaction_hash::SighashMidstateCache>,
+    #[cfg(feature = "production")] sighash_cache: Option<
+        &crate::transaction_hash::SighashMidstateCache,
+    >,
 ) -> Option<Result<bool>> {
-    // P2WSH: 34 bytes = OP_0 0x20 <32-byte-hash>
-    if script_pubkey.len() != 34
-        || script_pubkey[0] != OP_0
-        || script_pubkey[1] != 0x20
-    {
+    // P2WSH: 34 bytes = OP_0 PUSH_32_BYTES <32-byte-hash>
+    if script_pubkey.len() != 34 || script_pubkey[0] != OP_0 || script_pubkey[1] != PUSH_32_BYTES {
         return None;
     }
     if !script_sig.is_empty() {
@@ -2071,17 +2145,17 @@ fn try_verify_p2wsh_fast_path(
     }
     let witness_script = witness.last().expect("witness not empty").clone();
     let mut stack: Vec<StackElement> = witness
-            .iter()
-            .take(witness.len() - 1)
-            .map(|w| to_stack_element(w))
-            .collect();
+        .iter()
+        .take(witness.len() - 1)
+        .map(|w| to_stack_element(w))
+        .collect();
 
     let program_hash = &script_pubkey[2..34];
     if program_hash.len() != 32 {
         return None;
     }
-    let witness_script_hash = OptimizedSha256::new().hash(witness_script.as_slice());
-    if witness_script_hash.as_slice() != program_hash {
+    let witness_script_hash = OptimizedSha256::new().hash(witness_script.as_ref());
+    if &witness_script_hash[..] != program_hash {
         return Some(Ok(false));
     }
 
@@ -2096,7 +2170,7 @@ fn try_verify_p2wsh_fast_path(
         && witness_script.len() == 25
         && witness_script[0] == OP_DUP
         && witness_script[1] == OP_HASH160
-        && witness_script[2] == 0x14
+        && witness_script[2] == PUSH_20_BYTES
         && witness_script[23] == OP_EQUALVERIFY
         && witness_script[24] == OP_CHECKSIG
         && stack.len() == 2
@@ -2107,13 +2181,13 @@ fn try_verify_p2wsh_fast_path(
             let expected_pubkey_hash = &witness_script[3..23];
             let pubkey_sha256 = OptimizedSha256::new().hash(pubkey_bytes);
             let pubkey_hash = Ripemd160::digest(pubkey_sha256);
-            if pubkey_hash.as_slice() == expected_pubkey_hash {
+            if &pubkey_hash[..] == expected_pubkey_hash {
                 let sighash_byte = signature_bytes[signature_bytes.len() - 1];
                 let amount = prevout_values.get(input_index).copied().unwrap_or(0);
                 match crate::transaction_hash::calculate_bip143_sighash(
                     tx,
                     input_index,
-                    witness_script.as_slice(),
+                    witness_script.as_ref(),
                     amount,
                     sighash_byte,
                     precomputed_bip143,
@@ -2149,14 +2223,14 @@ fn try_verify_p2wsh_fast_path(
     {
         let pubkey_len = witness_script.len() - 2;
         if (pubkey_len == 33 || pubkey_len == 65) && !stack[0].is_empty() {
-            let pubkey_bytes = &witness_script.as_slice()[1..(witness_script.len() - 1)];
+            let pubkey_bytes = &witness_script[1..(witness_script.len() - 1)];
             let signature_bytes = &stack[0];
             let sighash_byte = signature_bytes[signature_bytes.len() - 1];
             let amount = prevout_values.get(input_index).copied().unwrap_or(0);
             match crate::transaction_hash::calculate_bip143_sighash(
                 tx,
                 input_index,
-                witness_script.as_slice(),
+                witness_script.as_ref(),
                 amount,
                 sighash_byte,
                 precomputed_bip143,
@@ -2184,12 +2258,12 @@ fn try_verify_p2wsh_fast_path(
 
     // P2WSH-with-multisig fast-path: witness_script = OP_n <pubkeys> OP_m OP_CHECKMULTISIG, stack = [dummy, sig_1, ..., sig_m]. BIP143, BIP147 NULLDUMMY.
     if witness_sigversion == SigVersion::WitnessV0 {
-        if let Some((m, _n, pubkeys)) = parse_redeem_multisig(witness_script.as_slice()) {
+        if let Some((m, _n, pubkeys)) = parse_redeem_multisig(witness_script.as_ref()) {
             if stack.len() < 2 {
                 return Some(Ok(false));
             }
-            let dummy = stack[0].as_slice();
-            let signatures: Vec<&[u8]> = stack[1..].iter().map(|e| e.as_slice()).collect();
+            let dummy = stack[0].as_ref();
+            let signatures: Vec<&[u8]> = stack[1..].iter().map(|e| e.as_ref()).collect();
 
             const SCRIPT_VERIFY_NULLDUMMY: u32 = 0x10;
             const SCRIPT_VERIFY_NULLFAIL: u32 = 0x4000;
@@ -2200,10 +2274,8 @@ fn try_verify_p2wsh_fast_path(
                     crate::types::Network::Testnet => crate::constants::BIP147_ACTIVATION_TESTNET,
                     crate::types::Network::Regtest => 0,
                 };
-                if height >= activation {
-                    if !dummy.is_empty() && dummy != [0x00] {
-                        return Some(Ok(false));
-                    }
+                if height >= activation && !dummy.is_empty() && dummy != [0x00] {
+                    return Some(Ok(false));
                 }
             }
 
@@ -2270,7 +2342,9 @@ fn try_verify_p2wsh_fast_path(
                     if !sig_bytes.is_empty() {
                         return Some(Err(ConsensusError::ScriptErrorWithCode {
                             code: ScriptErrorCode::SigNullFail,
-                            message: "OP_CHECKMULTISIG: non-null signature must not fail under NULLFAIL".into(),
+                            message:
+                                "OP_CHECKMULTISIG: non-null signature must not fail under NULLFAIL"
+                                    .into(),
                         }));
                     }
                 }
@@ -2298,12 +2372,13 @@ fn try_verify_p2wsh_fast_path(
         None, // script_sig_for_sighash (witness script context)
         schnorr_collector,
         precomputed_bip143,
-        #[cfg(feature = "production")] sighash_cache,
+        #[cfg(feature = "production")]
+        sighash_cache,
     );
     Some(result)
 }
 
-/// P2TR script-path tapscript P2PK fast path. Tapscript 0x20 <32-byte-pubkey> 0xac, witness [sig, script, control_block].
+/// P2TR script-path tapscript P2PK fast path. Tapscript PUSH_32_BYTES <32-byte-pubkey> OP_CHECKSIG, witness [sig, script, control_block].
 #[cfg(feature = "production")]
 #[allow(clippy::too_many_arguments)]
 fn try_verify_p2tr_scriptpath_p2pk_fast_path(
@@ -2321,10 +2396,13 @@ fn try_verify_p2tr_scriptpath_p2pk_fast_path(
     use crate::constants::TAPROOT_ACTIVATION_MAINNET;
     use crate::taproot::parse_taproot_script_path_witness;
 
-    if block_height.map(|h| h < TAPROOT_ACTIVATION_MAINNET).unwrap_or(true) {
+    if block_height
+        .map(|h| h < TAPROOT_ACTIVATION_MAINNET)
+        .unwrap_or(true)
+    {
         return None;
     }
-    if script_pubkey.len() != 34 || script_pubkey[0] != OP_1 || script_pubkey[1] != 0x20 {
+    if script_pubkey.len() != 34 || script_pubkey[0] != OP_1 || script_pubkey[1] != PUSH_32_BYTES {
         return None;
     }
     if !script_sig.is_empty() {
@@ -2340,13 +2418,13 @@ fn try_verify_p2tr_scriptpath_p2pk_fast_path(
         Ok(None) | Err(_) => return None,
     };
     let (tapscript, stack_items, control_block) = parsed;
-    if tapscript.len() != 34 || tapscript[0] != 0x20 || tapscript[33] != 0xac {
+    if tapscript.len() != 34 || tapscript[0] != PUSH_32_BYTES || tapscript[33] != OP_CHECKSIG {
         return None;
     }
     if stack_items.len() != 1 || stack_items[0].len() != 64 {
         return None;
     }
-    let sig = stack_items[0].as_slice();
+    let sig = stack_items[0].as_ref();
     let pubkey_32 = &tapscript[1..33];
     let sighash = crate::taproot::compute_tapscript_signature_hash(
         tx,
@@ -2385,11 +2463,14 @@ fn try_verify_p2tr_keypath_fast_path(
     schnorr_collector: Option<&crate::bip348::SchnorrSignatureCollector>,
 ) -> Option<Result<bool>> {
     use crate::constants::TAPROOT_ACTIVATION_MAINNET;
-    if block_height.map(|h| h < TAPROOT_ACTIVATION_MAINNET).unwrap_or(true) {
+    if block_height
+        .map(|h| h < TAPROOT_ACTIVATION_MAINNET)
+        .unwrap_or(true)
+    {
         return None;
     }
-    // P2TR: 34 bytes = OP_1 0x20 <32-byte output key>
-    if script_pubkey.len() != 34 || script_pubkey[0] != OP_1 || script_pubkey[1] != 0x20 {
+    // P2TR: 34 bytes = OP_1 PUSH_32_BYTES <32-byte output key>
+    if script_pubkey.len() != 34 || script_pubkey[0] != OP_1 || script_pubkey[1] != PUSH_32_BYTES {
         return None;
     }
     if !script_sig.is_empty() {
@@ -2407,7 +2488,8 @@ fn try_verify_p2tr_keypath_fast_path(
         prevout_values,
         prevout_script_pubkeys,
         0x00, // SIGHASH_DEFAULT for key-path
-    ).ok()?;
+    )
+    .ok()?;
     let result = crate::bip348::verify_tapscript_schnorr_signature(
         &sighash,
         output_key,
@@ -2430,10 +2512,14 @@ pub fn verify_script_with_context_full(
     median_time_past: Option<u64>,
     network: crate::types::Network,
     _sigversion: SigVersion,
-    #[cfg(feature = "production")] schnorr_collector: Option<&crate::bip348::SchnorrSignatureCollector>,
+    #[cfg(feature = "production")] schnorr_collector: Option<
+        &crate::bip348::SchnorrSignatureCollector,
+    >,
     precomputed_bip143: Option<&crate::transaction_hash::Bip143PrecomputedHashes>,
     #[cfg(feature = "production")] precomputed_sighash_all: Option<[u8; 32]>,
-    #[cfg(feature = "production")] sighash_cache: Option<&crate::transaction_hash::SighashMidstateCache>,
+    #[cfg(feature = "production")] sighash_cache: Option<
+        &crate::transaction_hash::SighashMidstateCache,
+    >,
     #[cfg(feature = "production")] precomputed_p2pkh_hash: Option<[u8; 20]>,
 ) -> Result<bool> {
     // libbitcoin-consensus check (multi-input verify_script): prevouts length must match vin size
@@ -2622,7 +2708,7 @@ pub fn verify_script_with_context_full(
             block_height,
             median_time_past,
             network,
-            schnorr_collector.as_deref(),
+            schnorr_collector,
             precomputed_bip143,
             #[cfg(feature = "production")]
             sighash_cache,
@@ -2640,7 +2726,7 @@ pub fn verify_script_with_context_full(
             prevout_values,
             prevout_script_pubkeys,
             block_height,
-            schnorr_collector.as_deref(),
+            schnorr_collector,
         ) {
             FAST_PATH_P2TR.fetch_add(1, Ordering::Relaxed);
             return result;
@@ -2655,7 +2741,7 @@ pub fn verify_script_with_context_full(
             prevout_values,
             prevout_script_pubkeys,
             block_height,
-            schnorr_collector.as_deref(),
+            schnorr_collector,
         ) {
             FAST_PATH_P2TR.fetch_add(1, Ordering::Relaxed);
             return result;
@@ -2671,9 +2757,9 @@ pub fn verify_script_with_context_full(
     let is_p2sh = (flags & SCRIPT_VERIFY_P2SH) != 0
         && script_pubkey.len() == 23  // OP_HASH160 (1) + push 20 (1) + 20 bytes + OP_EQUAL (1) = 23
         && script_pubkey[0] == OP_HASH160   // OP_HASH160
-        && script_pubkey[1] == 0x14   // push 20 bytes
+        && script_pubkey[1] == PUSH_20_BYTES   // push 20 bytes
         && script_pubkey[22] == OP_EQUAL; // OP_EQUAL
-    
+
     // CRITICAL: For P2SH, scriptSig MUST only contain push operations (data pushes only)
     // This prevents script injection attacks. If scriptSig contains non-push opcodes, fail immediately.
     // This check MUST happen BEFORE executing scriptSig
@@ -2733,7 +2819,7 @@ pub fn verify_script_with_context_full(
                     return Ok(false);
                 }
                 i += 5 + len;
-            } else if opcode >= OP_1NEGATE && opcode <= OP_16 {
+            } else if (OP_1NEGATE..=OP_16).contains(&opcode) {
                 // OP_1NEGATE, OP_RESERVED, OP_1-OP_16
                 // These are single-byte push opcodes with no data payload
                 i += 1;
@@ -2758,7 +2844,7 @@ pub fn verify_script_with_context_full(
             return result;
         }
     }
-    
+
     #[cfg(feature = "production")]
     let mut _stack_guard = PooledStackGuard(get_pooled_stack());
     #[cfg(feature = "production")]
@@ -2782,86 +2868,88 @@ pub fn verify_script_with_context_full(
         network,
         SigVersion::Base,
         None, // script_sig not needed when executing scriptSig
-        #[cfg(feature = "production")] schnorr_collector.as_deref(),
+        #[cfg(feature = "production")]
+        schnorr_collector,
         None, // precomputed_bip143 - Base sigversion
-        #[cfg(feature = "production")] sighash_cache,
+        #[cfg(feature = "production")]
+        sighash_cache,
     )?;
     if !script_sig_result {
         return Ok(false);
     }
-    
+
     // Save redeem script if P2SH (it's the last item on stack after scriptSig)
     let redeem_script: Option<ByteString> = if is_p2sh && !stack.is_empty() {
-        Some(stack.last().expect("Stack is not empty").as_slice().to_vec())
+        Some(stack.last().expect("Stack is not empty").as_ref().to_vec())
     } else {
         None
     };
 
     // CRITICAL FIX: Check if scriptPubkey is Taproot (P2TR) - OP_1 <32-byte-hash>
-    // Taproot format: [0x51, 0x20, <32 bytes>] = 34 bytes total
+    // Taproot format: [OP_1, PUSH_32_BYTES, <32 bytes>] = 34 bytes total
     // For Taproot, scriptSig must be empty and validation happens via witness using Taproot-specific logic
     use crate::constants::TAPROOT_ACTIVATION_MAINNET;
     let is_taproot = redeem_script.is_none()  // Not P2SH
         && block_height.is_some() && block_height.unwrap() >= TAPROOT_ACTIVATION_MAINNET
         && script_pubkey.len() == 34
         && script_pubkey[0] == OP_1  // OP_1 (witness version 1)
-        && script_pubkey[1] == 0x20; // push 32 bytes
-    
+        && script_pubkey[1] == PUSH_32_BYTES; // push 32 bytes
+
     // If Taproot, scriptSig must be empty
     if is_taproot && !script_sig.is_empty() {
         return Ok(false); // Taproot requires empty scriptSig
     }
-    
+
     // CRITICAL FIX: Check if scriptPubkey is a direct witness program (P2WPKH or P2WSH, not nested in P2SH)
     // Witness program format: OP_0 (0x00) + push opcode + program bytes
-    // P2WPKH: [0x00, 0x14, <20 bytes>] = 22 bytes total
-    // P2WSH: [0x00, 0x20, <32 bytes>] = 34 bytes total
+    // P2WPKH: [OP_0, PUSH_20_BYTES, <20 bytes>] = 22 bytes total
+    // P2WSH: [OP_0, PUSH_32_BYTES, <32 bytes>] = 34 bytes total
     let is_direct_witness_program = redeem_script.is_none()  // Not P2SH
         && !is_taproot  // Not Taproot
         && script_pubkey.len() >= 3
         && script_pubkey[0] == OP_0  // OP_0 (witness version 0)
-        && ((script_pubkey[1] == 0x14 && script_pubkey.len() == 22)  // P2WPKH: push 20 bytes, total 22
-            || (script_pubkey[1] == 0x20 && script_pubkey.len() == 34)); // P2WSH: push 32 bytes, total 34
-    
+        && ((script_pubkey[1] == PUSH_20_BYTES && script_pubkey.len() == 22)  // P2WPKH: push 20 bytes, total 22
+            || (script_pubkey[1] == PUSH_32_BYTES && script_pubkey.len() == 34)); // P2WSH: push 32 bytes, total 34
+
     // For direct P2WPKH/P2WSH, push witness stack elements BEFORE executing scriptPubkey
     let mut witness_script_to_execute: Option<ByteString> = None;
     if is_direct_witness_program {
         if let Some(witness_stack) = witness {
-            if script_pubkey[1] == 0x20 {
+            if script_pubkey[1] == PUSH_32_BYTES {
                 // P2WSH: witness_stack = [sig1, sig2, ..., witness_script]
                 // Push all elements except last onto stack, save witness_script for later execution
                 if witness_stack.is_empty() {
                     return Ok(false); // P2WSH requires witness
                 }
-                
+
                 // Get witness script (last element)
                 let witness_script = witness_stack.last().expect("Witness stack is not empty");
-                
+
                 // Verify witness script hash matches program
                 let program_bytes = &script_pubkey[2..];
                 if program_bytes.len() != 32 {
                     return Ok(false); // Invalid P2WSH program length
                 }
-                
-                let witness_script_hash = OptimizedSha256::new().hash(witness_script.as_slice());
-                if witness_script_hash.as_slice() != program_bytes {
+
+                let witness_script_hash = OptimizedSha256::new().hash(witness_script.as_ref());
+                if &witness_script_hash[..] != program_bytes {
                     return Ok(false); // Witness script hash doesn't match program
                 }
-                
+
                 // Hash matches - push witness stack elements (except last) onto stack
                 for element in witness_stack.iter().take(witness_stack.len() - 1) {
                     stack.push(to_stack_element(element));
                 }
-                
+
                 // Save witness script for execution after scriptPubkey
                 witness_script_to_execute = Some(witness_script.clone());
-            } else if script_pubkey[1] == 0x14 {
+            } else if script_pubkey[1] == PUSH_20_BYTES {
                 // P2WPKH: witness_stack = [signature, pubkey]
                 // Push both elements onto stack
                 if witness_stack.len() != 2 {
                     return Ok(false); // P2WPKH requires exactly 2 witness elements
                 }
-                
+
                 for element in witness_stack.iter() {
                     stack.push(to_stack_element(element));
                 }
@@ -2902,9 +2990,11 @@ pub fn verify_script_with_context_full(
                     network,
                     SigVersion::Tapscript,
                     None,
-                    #[cfg(feature = "production")] schnorr_collector.as_deref(),
+                    #[cfg(feature = "production")]
+                    schnorr_collector,
                     None,
-                    #[cfg(feature = "production")] sighash_cache,
+                    #[cfg(feature = "production")]
+                    sighash_cache,
                 )? {
                     return Ok(false);
                 }
@@ -2912,7 +3002,7 @@ pub fn verify_script_with_context_full(
             }
         }
     }
-    
+
     // Execute scriptPubkey (always Base sigversion)
     // For P2WPKH/P2WSH, witness stack elements are already on the stack
     // Pass script_sig so legacy sighash uses same signature bytes as fast path (FindAndDelete pattern).
@@ -2932,25 +3022,25 @@ pub fn verify_script_with_context_full(
         network,
         SigVersion::Base,
         Some(script_sig),
-        #[cfg(feature = "production")] schnorr_collector.as_deref(),
+        #[cfg(feature = "production")]
+        schnorr_collector,
         None, // precomputed_bip143 - Base sigversion
-        #[cfg(feature = "production")] sighash_cache,
+        #[cfg(feature = "production")]
+        sighash_cache,
     )?;
     if !script_pubkey_result {
         return Ok(false);
     }
-    
+
     // For P2WSH, execute the witness script after scriptPubkey verification
     if let Some(witness_script) = witness_script_to_execute {
         // Determine sigversion for witness execution
         let witness_sigversion = if flags & 0x8000 != 0 {
             SigVersion::Tapscript
-        } else if flags & 0x800 != 0 {
-            SigVersion::WitnessV0
         } else {
-            SigVersion::WitnessV0  // Default to WitnessV0 for P2WSH
+            SigVersion::WitnessV0 // P2WSH: WitnessV0 (flags & 0x800 or default)
         };
-        
+
         // Execute witness script with witness stack elements on the stack
         // Interpreter path: no collection (same invalid pairing issue as bare multisig).
         if !eval_script_with_context_full(
@@ -2966,42 +3056,44 @@ pub fn verify_script_with_context_full(
             network,
             witness_sigversion,
             None, // witness script, no script_sig for sighash
-            #[cfg(feature = "production")] schnorr_collector.as_deref(),
+            #[cfg(feature = "production")]
+            schnorr_collector,
             precomputed_bip143, // WitnessV0 uses BIP143
-            #[cfg(feature = "production")] sighash_cache,
+            #[cfg(feature = "production")]
+            sighash_cache,
         )? {
             return Ok(false);
         }
     }
-    
+
     // P2SH: If scriptPubkey verified the hash, we need to execute the redeem script
     // The scriptPubkey (OP_HASH160 <hash> OP_EQUAL) pops the redeem script, hashes it, compares
-    // After scriptPubkey execution, if successful, stack should have [sig1, sig2, ..., 1] 
+    // After scriptPubkey execution, if successful, stack should have [sig1, sig2, ..., 1]
     // where 1 is the OP_EQUAL result (true)
     if let Some(redeem) = redeem_script {
         // Verify stack has at least one element (the OP_EQUAL result)
         if stack.is_empty() {
             return Ok(false); // scriptPubkey execution failed
         }
-        
+
         // Verify top element is non-zero (OP_EQUAL returned 1 = hash matched)
         let top = stack.last().expect("Stack is not empty");
         if !cast_to_bool(top) {
             return Ok(false); // Hash didn't match or scriptPubkey failed
         }
-        
+
         // Pop the OP_EQUAL result (1) - this was pushed by OP_EQUAL when hashes matched
         stack.pop();
-        
+
         // Check if redeem script is a witness program (P2WSH-in-P2SH or P2WPKH-in-P2SH)
         // Witness program format: OP_0 (0x00) + push opcode + program bytes
-        // P2WPKH: [0x00, 0x14, <20 bytes>] = 22 bytes total
-        // P2WSH: [0x00, 0x20, <32 bytes>] = 34 bytes total
+        // P2WPKH: [OP_0, PUSH_20_BYTES, <20 bytes>] = 22 bytes total
+        // P2WSH: [OP_0, PUSH_32_BYTES, <32 bytes>] = 34 bytes total
         let is_witness_program = redeem.len() >= 3
             && redeem[0] == OP_0  // OP_0 (witness version 0)
-            && ((redeem[1] == 0x14 && redeem.len() == 22)  // P2WPKH: push 20 bytes, total 22
-                || (redeem[1] == 0x20 && redeem.len() == 34)); // P2WSH: push 32 bytes, total 34
-        
+            && ((redeem[1] == PUSH_20_BYTES && redeem.len() == 22)  // P2WPKH: push 20 bytes, total 22
+                || (redeem[1] == PUSH_32_BYTES && redeem.len() == 34)); // P2WSH: push 32 bytes, total 34
+
         if is_witness_program && witness.is_some() {
             // For P2WSH-in-P2SH or P2WPKH-in-P2SH:
             // - We've already verified the redeem script hash matches (scriptPubkey check passed)
@@ -3009,17 +3101,17 @@ pub fn verify_script_with_context_full(
             // - Extract the witness program from redeem script (program bytes after OP_0 and push opcode)
             // - For P2WPKH-in-P2SH: witness script is pubkey hash (20 bytes), witness contains signature + pubkey
             // - For P2WSH-in-P2SH: witness script is the last witness element, hash must match program (32 bytes)
-            
+
             // Extract program from redeem script: skip OP_0 (1 byte) + push opcode (1 byte), get program bytes
             let program_bytes = &redeem[2..];
-            
-            if redeem[1] == 0x20 {
+
+            if redeem[1] == PUSH_32_BYTES {
                 // P2WSH-in-P2SH: program is 32 bytes, witness should contain the witness script as last element
                 // The witness script's SHA256 hash must match the program
                 if program_bytes.len() != 32 {
                     return Ok(false); // Invalid P2WSH program length
                 }
-                
+
                 // CRITICAL FIX: For P2WSH-in-P2SH, witness is now the full Witness stack
                 // Structure: [sig1, sig2, ..., witness_script]
                 // The last element is the witness script, which we verify the hash of
@@ -3028,33 +3120,31 @@ pub fn verify_script_with_context_full(
                     if witness_stack.is_empty() {
                         return Ok(false); // P2WSH requires witness
                     }
-                    
+
                     // Get the witness script (last element) - it's a ByteString (Vec<u8>)
                     let witness_script = witness_stack.last().expect("Witness stack is not empty");
-                    let witness_script_hash = OptimizedSha256::new().hash(witness_script.as_slice());
-                    if witness_script_hash.as_slice() != program_bytes {
+                    let witness_script_hash = OptimizedSha256::new().hash(witness_script.as_ref());
+                    if &witness_script_hash[..] != program_bytes {
                         return Ok(false); // Witness script hash doesn't match program
                     }
-                    
+
                     // Hash matches - now push witness stack elements (except the last one, which is the script)
                     // onto the stack, then execute the witness script
                     stack.clear();
-                    
+
                     // Push all witness stack elements except the last one (witness script) onto the stack
                     // These are the signatures and other data needed for witness script execution
                     for element in witness_stack.iter().take(witness_stack.len() - 1) {
                         stack.push(to_stack_element(element));
                     }
-                    
+
                     // Execute the witness script with witness stack elements on the stack
                     let witness_sigversion = if flags & 0x8000 != 0 {
                         SigVersion::Tapscript
-                    } else if flags & 0x800 != 0 {
-                        SigVersion::WitnessV0
                     } else {
-                        SigVersion::WitnessV0  // Default to WitnessV0 for P2WSH-in-P2SH
+                        SigVersion::WitnessV0 // P2WSH-in-P2SH: WitnessV0
                     };
-                    
+
                     // Interpreter path: no collection (P2WSH-in-P2SH).
                     if !eval_script_with_context_full(
                         witness_script,
@@ -3069,16 +3159,18 @@ pub fn verify_script_with_context_full(
                         network,
                         witness_sigversion,
                         None, // witness script
-                        #[cfg(feature = "production")] schnorr_collector.as_deref(),
+                        #[cfg(feature = "production")]
+                        schnorr_collector,
                         precomputed_bip143, // WitnessV0 uses BIP143
-                        #[cfg(feature = "production")] sighash_cache,
+                        #[cfg(feature = "production")]
+                        sighash_cache,
                     )? {
                         return Ok(false);
                     }
                 } else {
                     return Ok(false); // P2WSH requires witness
                 }
-            } else if redeem[1] == 0x14 {
+            } else if redeem[1] == PUSH_20_BYTES {
                 // P2WPKH-in-P2SH: program is 20 bytes (pubkey hash)
                 // Witness contains signature and pubkey, no witness script to verify
                 // Clear stack for witness execution
@@ -3103,18 +3195,20 @@ pub fn verify_script_with_context_full(
                 median_time_past,
                 network,
                 SigVersion::Base,
-                Some(redeem.as_slice()), // Pass redeem script for sighash
+                Some(redeem.as_ref()), // Pass redeem script for sighash
                 Some(script_sig), // Use same script_sig for legacy sighash pattern (e.g. P2PKH inside P2SH)
-                #[cfg(feature = "production")] None, // schnorr_collector
-                None, // precomputed_bip143 - Base sigversion
-                #[cfg(feature = "production")] sighash_cache,
+                #[cfg(feature = "production")]
+                None, // schnorr_collector
+                None,             // precomputed_bip143 - Base sigversion
+                #[cfg(feature = "production")]
+                sighash_cache,
             )?;
             if !redeem_result {
                 return Ok(false);
             }
         }
     }
-    
+
     // Invariant assertion: Stack size must be reasonable after scriptPubkey execution
     assert!(
         stack.len() <= 1000,
@@ -3123,12 +3217,12 @@ pub fn verify_script_with_context_full(
     );
 
     // Execute witness if present
-    // CRITICAL: 
+    // CRITICAL:
     // - Direct P2WPKH/P2WSH: Already handled above (witness stack pushed before scriptPubkey, witness script executed after)
     // - P2WSH-in-P2SH: Handled in P2SH section above (witness script executed with witness stack elements)
     // - P2WPKH-in-P2SH: Handled in P2SH section above (witness stack cleared, scriptPubkey handles it via redeem script)
     // - Regular scripts: No witness execution needed
-    // 
+    //
     // All witness execution should be complete by this point
     if let Some(_witness_stack) = witness {
         // All witness cases should have been handled above
@@ -3142,7 +3236,7 @@ pub fn verify_script_with_context_full(
     // For legacy scripts in block validation, only the top stack element is checked
     // to be truthy (non-empty and non-zero). CLEANSTACK for legacy is mempool policy only.
     const SCRIPT_VERIFY_CLEANSTACK: u32 = 0x100;
-    
+
     let final_result = if (flags & SCRIPT_VERIFY_CLEANSTACK) != 0 {
         // CLEANSTACK: exactly one element, must be truthy
         stack.len() == 1 && cast_to_bool(&stack[0])
@@ -3166,7 +3260,8 @@ fn eval_script_with_context(
 ) -> Result<bool> {
     // Convert prevouts to parallel slices for the optimized API
     let prevout_values: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
-    let prevout_script_pubkeys: Vec<&[u8]> = prevouts.iter().map(|p| p.script_pubkey.as_ref()).collect();
+    let prevout_script_pubkeys: Vec<&[u8]> =
+        prevouts.iter().map(|p| p.script_pubkey.as_ref()).collect();
     eval_script_with_context_full(
         script,
         stack,
@@ -3180,9 +3275,11 @@ fn eval_script_with_context(
         network,
         SigVersion::Base,
         None, // script_sig_for_sighash
-        #[cfg(feature = "production")] None, // schnorr_collector - No collector in this context
+        #[cfg(feature = "production")]
+        None, // schnorr_collector - No collector in this context
         None, // precomputed_bip143 - Base sigversion
-        #[cfg(feature = "production")] None, // sighash_cache - no context
+        #[cfg(feature = "production")]
+        None, // sighash_cache - no context
     )
 }
 
@@ -3201,13 +3298,36 @@ fn eval_script_with_context_full(
     network: crate::types::Network,
     sigversion: SigVersion,
     script_sig_for_sighash: Option<&ByteString>,
-    #[cfg(feature = "production")] schnorr_collector: Option<&crate::bip348::SchnorrSignatureCollector>,
+    #[cfg(feature = "production")] schnorr_collector: Option<
+        &crate::bip348::SchnorrSignatureCollector,
+    >,
     precomputed_bip143: Option<&crate::transaction_hash::Bip143PrecomputedHashes>,
-    #[cfg(feature = "production")] sighash_cache: Option<&crate::transaction_hash::SighashMidstateCache>,
+    #[cfg(feature = "production")] sighash_cache: Option<
+        &crate::transaction_hash::SighashMidstateCache,
+    >,
 ) -> Result<bool> {
     #[cfg(all(feature = "production", feature = "profile"))]
     let _t0 = std::time::Instant::now();
-    let r = eval_script_with_context_full_inner(script, stack, flags, tx, input_index, prevout_values, prevout_script_pubkeys, block_height, median_time_past, network, sigversion, None, script_sig_for_sighash, #[cfg(feature = "production")] schnorr_collector, precomputed_bip143, #[cfg(feature = "production")] sighash_cache);
+    let r = eval_script_with_context_full_inner(
+        script,
+        stack,
+        flags,
+        tx,
+        input_index,
+        prevout_values,
+        prevout_script_pubkeys,
+        block_height,
+        median_time_past,
+        network,
+        sigversion,
+        None,
+        script_sig_for_sighash,
+        #[cfg(feature = "production")]
+        schnorr_collector,
+        precomputed_bip143,
+        #[cfg(feature = "production")]
+        sighash_cache,
+    );
     #[cfg(all(feature = "production", feature = "profile"))]
     crate::script_profile::add_interpreter_ns(_t0.elapsed().as_nanos() as u64);
     r
@@ -3228,9 +3348,13 @@ fn eval_script_with_context_full_inner(
     sigversion: SigVersion,
     redeem_script_for_sighash: Option<&[u8]>,
     script_sig_for_sighash: Option<&ByteString>,
-    #[cfg(feature = "production")] schnorr_collector: Option<&crate::bip348::SchnorrSignatureCollector>,
+    #[cfg(feature = "production")] schnorr_collector: Option<
+        &crate::bip348::SchnorrSignatureCollector,
+    >,
     precomputed_bip143: Option<&crate::transaction_hash::Bip143PrecomputedHashes>,
-    #[cfg(feature = "production")] sighash_cache: Option<&crate::transaction_hash::SighashMidstateCache>,
+    #[cfg(feature = "production")] sighash_cache: Option<
+        &crate::transaction_hash::SighashMidstateCache,
+    >,
 ) -> Result<bool> {
     // Precondition assertions: input_index and prevout lengths validated by caller (verify_script_with_context_full).
     // 6d: Removed redundant assert! for input_index and prevout lengths — caller returns error on mismatch.
@@ -3306,7 +3430,8 @@ fn eval_script_with_context_full_inner(
                 for block in &control_stack {
                     if !matches!(
                         block,
-                        ControlBlock::If { executing: true } | ControlBlock::NotIf { executing: true }
+                        ControlBlock::If { executing: true }
+                            | ControlBlock::NotIf { executing: true }
                     ) {
                         in_false = true;
                         break; // Early exit
@@ -3323,7 +3448,8 @@ fn eval_script_with_context_full_inner(
                 control_stack.iter().any(|b| {
                     !matches!(
                         b,
-                        ControlBlock::If { executing: true } | ControlBlock::NotIf { executing: true }
+                        ControlBlock::If { executing: true }
+                            | ControlBlock::NotIf { executing: true }
                     )
                 })
             }
@@ -3348,7 +3474,7 @@ fn eval_script_with_context_full_inner(
         }
 
         // Handle push opcodes (0x01-0x4b: direct push, OP_PUSHDATA1/2/4)
-        if opcode >= 0x01 && opcode <= OP_PUSHDATA4 {
+        if (0x01..=OP_PUSHDATA4).contains(&opcode) {
             let (data, advance) = if opcode <= 0x4b {
                 // Direct push: opcode is the length (1-75 bytes)
                 let len = opcode as usize;
@@ -3381,7 +3507,12 @@ fn eval_script_with_context_full_inner(
                 if i + 4 >= script.len() {
                     return Ok(false);
                 }
-                let len = u32::from_le_bytes([script[i + 1], script[i + 2], script[i + 3], script[i + 4]]) as usize;
+                let len = u32::from_le_bytes([
+                    script[i + 1],
+                    script[i + 2],
+                    script[i + 3],
+                    script[i + 4],
+                ]) as usize;
                 if i + 5 + len > script.len() {
                     return Ok(false);
                 }
@@ -3399,7 +3530,7 @@ fn eval_script_with_context_full_inner(
         // Check hottest opcodes BEFORE match statement
         // This eliminates dispatch overhead for the most common opcodes (OP_DUP, OP_EQUALVERIFY, OP_HASH160)
         // These opcodes are executed millions of times per block, so avoiding match overhead is critical
-        
+
         // OP_DUP - duplicate top stack item (VERY HOT - every P2PKH script)
         if opcode == OP_DUP {
             if !in_false_branch {
@@ -3431,7 +3562,7 @@ fn eval_script_with_context_full_inner(
             i += 1;
             continue;
         }
-        
+
         // OP_EQUALVERIFY - verify top two stack items are equal (VERY HOT - every P2PKH script)
         if opcode == OP_EQUALVERIFY {
             if !in_false_branch {
@@ -3450,7 +3581,7 @@ fn eval_script_with_context_full_inner(
             i += 1;
             continue;
         }
-        
+
         // OP_HASH160 - RIPEMD160(SHA256(x)) (VERY HOT - every P2PKH script)
         if opcode == OP_HASH160 {
             if !in_false_branch {
@@ -3465,7 +3596,9 @@ fn eval_script_with_context_full_inner(
                             stack.push(to_stack_element(&ripemd160_hash));
                         } else if !is_caching_disabled() {
                             let cache_key = compute_hash_cache_key(&item, true);
-                            if let Some(cached_result) = with_hash_cache(|c| c.peek(&cache_key).cloned()) {
+                            if let Some(cached_result) =
+                                with_hash_cache(|c| c.peek(&cache_key).cloned())
+                            {
                                 stack.push(to_stack_element(&cached_result));
                                 i += 1;
                                 continue;
@@ -3530,7 +3663,8 @@ fn eval_script_with_context_full_inner(
 
         // OP_CHECKSIG / OP_CHECKSIGVERIFY - hot in multisig/P2SH (skip match dispatch)
         // OP_CHECKSIGADD (BIP 342) - Tapscript only; in Base/WitnessV0, 0xba falls through to match
-        if opcode == OP_CHECKSIG || opcode == OP_CHECKSIGVERIFY
+        if opcode == OP_CHECKSIG
+            || opcode == OP_CHECKSIGVERIFY
             || (opcode == OP_CHECKSIGADD && sigversion == SigVersion::Tapscript)
         {
             if !in_false_branch {
@@ -3557,7 +3691,7 @@ fn eval_script_with_context_full_inner(
                     tapscript,
                     codesep,
                     #[cfg(feature = "production")]
-                    schnorr_collector.as_deref(),
+                    schnorr_collector,
                     #[cfg(feature = "production")]
                     precomputed_bip143,
                     #[cfg(feature = "production")]
@@ -3577,7 +3711,7 @@ fn eval_script_with_context_full_inner(
                     stack.push(to_stack_element(&[]));
                 }
             }
-            
+
             // OP_1 to OP_16 - push numbers 1-16
             OP_1_RANGE_START..=OP_1_RANGE_END => {
                 if !in_false_branch {
@@ -3585,19 +3719,19 @@ fn eval_script_with_context_full_inner(
                     stack.push(to_stack_element(&[num]));
                 }
             }
-            
+
             // OP_1NEGATE - push -1
             OP_1NEGATE => {
                 if !in_false_branch {
                     stack.push(to_stack_element(&[0x81])); // -1 in script number encoding
                 }
             }
-            
+
             // OP_NOP - do nothing, execution continues
             OP_NOP => {
                 // No operation - this is valid and execution continues
             }
-            
+
             // OP_VER - causes failure only when executing
             // OP_VER is inside the conditional-execution check,
             // so it only fails in executing branches. Non-executing branches skip it.
@@ -3610,7 +3744,7 @@ fn eval_script_with_context_full_inner(
                     });
                 }
             }
-            
+
             OP_IF => {
                 // OP_IF
                 if in_false_branch {
@@ -3699,10 +3833,10 @@ fn eval_script_with_context_full_inner(
                     });
                 }
             }
-            
+
             // OP_DUP, OP_EQUALVERIFY, OP_HASH160 are handled BEFORE match statement for performance
             // (moved to avoid dispatch overhead)
-            
+
             // OP_TOALTSTACK - move top stack item to altstack
             OP_TOALTSTACK => {
                 if in_false_branch {
@@ -3750,7 +3884,14 @@ fn eval_script_with_context_full_inner(
                 // From the last OP_CODESEPARATOR position to the end of the script.
                 // scriptCode = slice from pbegincodehash to pend
                 // Only allocate for opcodes that actually use the script code.
-                let subscript_for_sighash = if matches!(opcode, OP_CHECKSIG | OP_CHECKSIGVERIFY | OP_CHECKSIGADD | OP_CHECKMULTISIG | OP_CHECKMULTISIGVERIFY) {
+                let subscript_for_sighash = if matches!(
+                    opcode,
+                    OP_CHECKSIG
+                        | OP_CHECKSIGVERIFY
+                        | OP_CHECKSIGADD
+                        | OP_CHECKMULTISIG
+                        | OP_CHECKMULTISIGVERIFY
+                ) {
                     Some(&script[code_separator_pos..])
                 } else {
                     None
@@ -3777,9 +3918,12 @@ fn eval_script_with_context_full_inner(
                     script_sig_for_sighash,
                     tapscript,
                     codesep,
-                    #[cfg(feature = "production")] schnorr_collector.as_deref(),
-                    #[cfg(feature = "production")] precomputed_bip143,
-                    #[cfg(feature = "production")] sighash_cache,
+                    #[cfg(feature = "production")]
+                    schnorr_collector,
+                    #[cfg(feature = "production")]
+                    precomputed_bip143,
+                    #[cfg(feature = "production")]
+                    sighash_cache,
                 )? {
                     return Ok(false);
                 }
@@ -3816,13 +3960,18 @@ pub(crate) fn script_num_decode(data: &[u8], max_num_size: usize) -> Result<i64>
     if data.len() > max_num_size {
         return Err(ConsensusError::ScriptErrorWithCode {
             code: ScriptErrorCode::InvalidStackOperation,
-            message: format!("Script number overflow: {} > {} bytes", data.len(), max_num_size).into(),
+            message: format!(
+                "Script number overflow: {} > {} bytes",
+                data.len(),
+                max_num_size
+            )
+            .into(),
         });
     }
     if data.is_empty() {
         return Ok(0);
     }
-    
+
     // Fast paths for common sizes (most script numbers are 1-2 bytes)
     let len = data.len();
     let result = match len {
@@ -3862,7 +4011,7 @@ pub(crate) fn script_num_decode(data: &[u8], max_num_size: usize) -> Result<i64>
             result
         }
     };
-    
+
     Ok(result)
 }
 
@@ -3872,7 +4021,12 @@ pub(crate) fn script_num_decode(data: &[u8], max_num_size: usize) -> Result<i64>
     if data.len() > max_num_size {
         return Err(ConsensusError::ScriptErrorWithCode {
             code: ScriptErrorCode::InvalidStackOperation,
-            message: format!("Script number overflow: {} > {} bytes", data.len(), max_num_size).into(),
+            message: format!(
+                "Script number overflow: {} > {} bytes",
+                data.len(),
+                max_num_size
+            )
+            .into(),
         });
     }
     if data.is_empty() {
@@ -3903,9 +4057,13 @@ pub(crate) fn script_num_encode(value: i64) -> Vec<u8> {
         -1 => return vec![0x81],
         _ => {}
     }
-    
+
     let neg = value < 0;
-    let mut absvalue = if neg { (-(value as i128)) as u64 } else { value as u64 };
+    let mut absvalue = if neg {
+        (-(value as i128)) as u64
+    } else {
+        value as u64
+    };
     // Pre-allocate Vec: most script numbers are 1-4 bytes
     let mut result = Vec::with_capacity(4);
     while absvalue > 0 {
@@ -3927,7 +4085,11 @@ pub(crate) fn script_num_encode(value: i64) -> Vec<u8> {
         return vec![];
     }
     let neg = value < 0;
-    let mut absvalue = if neg { (-(value as i128)) as u64 } else { value as u64 };
+    let mut absvalue = if neg {
+        (-(value as i128)) as u64
+    } else {
+        value as u64
+    };
     let mut result = Vec::new();
     while absvalue > 0 {
         result.push((absvalue & 0xff) as u8);
@@ -4059,7 +4221,9 @@ fn execute_opcode(
                     // Check hash cache first (unless disabled)
                     if !is_caching_disabled() {
                         let cache_key = compute_hash_cache_key(&item, true);
-                        if let Some(cached_result) = with_hash_cache(|c| c.peek(&cache_key).cloned()) {
+                        if let Some(cached_result) =
+                            with_hash_cache(|c| c.peek(&cache_key).cloned())
+                        {
                             if cached_result.len() == 20 {
                                 stack.push(to_stack_element(&cached_result));
                                 return Ok(true);
@@ -4101,7 +4265,9 @@ fn execute_opcode(
                     // Check hash cache first (unless disabled)
                     if !is_caching_disabled() {
                         let cache_key = compute_hash_cache_key(&item, false);
-                        if let Some(cached_result) = with_hash_cache(|c| c.peek(&cache_key).cloned()) {
+                        if let Some(cached_result) =
+                            with_hash_cache(|c| c.peek(&cache_key).cloned())
+                        {
                             if cached_result.len() == 32 {
                                 stack.push(to_stack_element(&cached_result));
                                 return Ok(true);
@@ -4419,11 +4585,9 @@ fn execute_opcode(
                 #[cfg(feature = "production")]
                 {
                     // Use proven bounds after length check (n_val < stack.len() already checked)
-                    unsafe {
-                        let idx = len - 1 - n;
-                        let item = stack.remove(idx);
-                        stack.push(item);
-                    }
+                    let idx = len - 1 - n;
+                    let item = stack.remove(idx);
+                    stack.push(item);
                 }
                 #[cfg(not(feature = "production"))]
                 {
@@ -4581,7 +4745,9 @@ fn execute_opcode(
                 let a = script_num_decode(&item, 4)?;
                 stack.push(to_stack_element(&script_num_encode(a + 1)));
                 Ok(true)
-            } else { Ok(false) }
+            } else {
+                Ok(false)
+            }
         }
         // OP_1SUB - decrement top by 1
         OP_1SUB => {
@@ -4589,7 +4755,9 @@ fn execute_opcode(
                 let a = script_num_decode(&item, 4)?;
                 stack.push(to_stack_element(&script_num_encode(a - 1)));
                 Ok(true)
-            } else { Ok(false) }
+            } else {
+                Ok(false)
+            }
         }
         // OP_2MUL - DISABLED
         OP_2MUL => Err(ConsensusError::ScriptErrorWithCode {
@@ -4607,7 +4775,9 @@ fn execute_opcode(
                 let a = script_num_decode(&item, 4)?;
                 stack.push(to_stack_element(&script_num_encode(-a)));
                 Ok(true)
-            } else { Ok(false) }
+            } else {
+                Ok(false)
+            }
         }
         // OP_ABS - absolute value
         OP_ABS => {
@@ -4615,27 +4785,43 @@ fn execute_opcode(
                 let a = script_num_decode(&item, 4)?;
                 stack.push(to_stack_element(&script_num_encode(a.abs())));
                 Ok(true)
-            } else { Ok(false) }
+            } else {
+                Ok(false)
+            }
         }
         // OP_NOT - logical NOT: 0 → 1, nonzero → 0
         OP_NOT => {
             if let Some(item) = stack.pop() {
                 let a = script_num_decode(&item, 4)?;
-                stack.push(to_stack_element(&script_num_encode(if a == 0 { 1 } else { 0 })));
+                stack.push(to_stack_element(&script_num_encode(if a == 0 {
+                    1
+                } else {
+                    0
+                })));
                 Ok(true)
-            } else { Ok(false) }
+            } else {
+                Ok(false)
+            }
         }
         // OP_0NOTEQUAL - 0 → 0, nonzero → 1
         OP_0NOTEQUAL => {
             if let Some(item) = stack.pop() {
                 let a = script_num_decode(&item, 4)?;
-                stack.push(to_stack_element(&script_num_encode(if a != 0 { 1 } else { 0 })));
+                stack.push(to_stack_element(&script_num_encode(if a != 0 {
+                    1
+                } else {
+                    0
+                })));
                 Ok(true)
-            } else { Ok(false) }
+            } else {
+                Ok(false)
+            }
         }
         // OP_ADD - pop a, pop b, push b+a
         OP_ADD => {
-            if stack.len() < 2 { return Ok(false); }
+            if stack.len() < 2 {
+                return Ok(false);
+            }
             let a = script_num_decode(&stack.pop().unwrap(), 4)?;
             let b = script_num_decode(&stack.pop().unwrap(), 4)?;
             stack.push(to_stack_element(&script_num_encode(b + a)));
@@ -4643,7 +4829,9 @@ fn execute_opcode(
         }
         // OP_SUB - pop a, pop b, push b-a
         OP_SUB => {
-            if stack.len() < 2 { return Ok(false); }
+            if stack.len() < 2 {
+                return Ok(false);
+            }
             let a = script_num_decode(&stack.pop().unwrap(), 4)?;
             let b = script_num_decode(&stack.pop().unwrap(), 4)?;
             stack.push(to_stack_element(&script_num_encode(b - a)));
@@ -4676,78 +4864,134 @@ fn execute_opcode(
         }),
         // OP_BOOLAND - pop a, pop b, push (a != 0 && b != 0)
         OP_BOOLAND => {
-            if stack.len() < 2 { return Ok(false); }
+            if stack.len() < 2 {
+                return Ok(false);
+            }
             let a = script_num_decode(&stack.pop().unwrap(), 4)?;
             let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(if a != 0 && b != 0 { 1 } else { 0 })));
+            stack.push(to_stack_element(&script_num_encode(if a != 0 && b != 0 {
+                1
+            } else {
+                0
+            })));
             Ok(true)
         }
         // OP_BOOLOR - pop a, pop b, push (a != 0 || b != 0)
         OP_BOOLOR => {
-            if stack.len() < 2 { return Ok(false); }
+            if stack.len() < 2 {
+                return Ok(false);
+            }
             let a = script_num_decode(&stack.pop().unwrap(), 4)?;
             let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(if a != 0 || b != 0 { 1 } else { 0 })));
+            stack.push(to_stack_element(&script_num_encode(if a != 0 || b != 0 {
+                1
+            } else {
+                0
+            })));
             Ok(true)
         }
         // OP_NUMEQUAL - pop a, pop b, push (a == b)
         OP_NUMEQUAL => {
-            if stack.len() < 2 { return Ok(false); }
+            if stack.len() < 2 {
+                return Ok(false);
+            }
             let a = script_num_decode(&stack.pop().unwrap(), 4)?;
             let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(if a == b { 1 } else { 0 })));
+            stack.push(to_stack_element(&script_num_encode(if a == b {
+                1
+            } else {
+                0
+            })));
             Ok(true)
         }
         // OP_NUMEQUALVERIFY - NUMEQUAL + VERIFY
         OP_NUMEQUALVERIFY => {
-            if stack.len() < 2 { return Ok(false); }
+            if stack.len() < 2 {
+                return Ok(false);
+            }
             let a = script_num_decode(&stack.pop().unwrap(), 4)?;
             let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            if a == b { Ok(true) } else { Ok(false) }
+            if a == b {
+                Ok(true)
+            } else {
+                Ok(false)
+            }
         }
         // OP_NUMNOTEQUAL - pop a, pop b, push (a != b)
         OP_NUMNOTEQUAL => {
-            if stack.len() < 2 { return Ok(false); }
+            if stack.len() < 2 {
+                return Ok(false);
+            }
             let a = script_num_decode(&stack.pop().unwrap(), 4)?;
             let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(if a != b { 1 } else { 0 })));
+            stack.push(to_stack_element(&script_num_encode(if a != b {
+                1
+            } else {
+                0
+            })));
             Ok(true)
         }
         // OP_LESSTHAN - pop a (top), pop b, push (b < a)
         OP_LESSTHAN => {
-            if stack.len() < 2 { return Ok(false); }
+            if stack.len() < 2 {
+                return Ok(false);
+            }
             let a = script_num_decode(&stack.pop().unwrap(), 4)?;
             let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(if b < a { 1 } else { 0 })));
+            stack.push(to_stack_element(&script_num_encode(if b < a {
+                1
+            } else {
+                0
+            })));
             Ok(true)
         }
         // OP_GREATERTHAN - pop a (top), pop b, push (b > a)
         OP_GREATERTHAN => {
-            if stack.len() < 2 { return Ok(false); }
+            if stack.len() < 2 {
+                return Ok(false);
+            }
             let a = script_num_decode(&stack.pop().unwrap(), 4)?;
             let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(if b > a { 1 } else { 0 })));
+            stack.push(to_stack_element(&script_num_encode(if b > a {
+                1
+            } else {
+                0
+            })));
             Ok(true)
         }
         // OP_LESSTHANOREQUAL - pop a (top), pop b, push (b <= a)
         OP_LESSTHANOREQUAL => {
-            if stack.len() < 2 { return Ok(false); }
+            if stack.len() < 2 {
+                return Ok(false);
+            }
             let a = script_num_decode(&stack.pop().unwrap(), 4)?;
             let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(if b <= a { 1 } else { 0 })));
+            stack.push(to_stack_element(&script_num_encode(if b <= a {
+                1
+            } else {
+                0
+            })));
             Ok(true)
         }
         // OP_GREATERTHANOREQUAL - pop a (top), pop b, push (b >= a)
         OP_GREATERTHANOREQUAL => {
-            if stack.len() < 2 { return Ok(false); }
+            if stack.len() < 2 {
+                return Ok(false);
+            }
             let a = script_num_decode(&stack.pop().unwrap(), 4)?;
             let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(if b >= a { 1 } else { 0 })));
+            stack.push(to_stack_element(&script_num_encode(if b >= a {
+                1
+            } else {
+                0
+            })));
             Ok(true)
         }
         // OP_MIN - pop a, pop b, push min(b, a)
         OP_MIN => {
-            if stack.len() < 2 { return Ok(false); }
+            if stack.len() < 2 {
+                return Ok(false);
+            }
             let a = script_num_decode(&stack.pop().unwrap(), 4)?;
             let b = script_num_decode(&stack.pop().unwrap(), 4)?;
             stack.push(to_stack_element(&script_num_encode(std::cmp::min(b, a))));
@@ -4755,7 +4999,9 @@ fn execute_opcode(
         }
         // OP_MAX - pop a, pop b, push max(b, a)
         OP_MAX => {
-            if stack.len() < 2 { return Ok(false); }
+            if stack.len() < 2 {
+                return Ok(false);
+            }
             let a = script_num_decode(&stack.pop().unwrap(), 4)?;
             let b = script_num_decode(&stack.pop().unwrap(), 4)?;
             stack.push(to_stack_element(&script_num_encode(std::cmp::max(b, a))));
@@ -4763,11 +5009,15 @@ fn execute_opcode(
         }
         // OP_WITHIN - pop max, pop min, pop x, push (min <= x < max)
         OP_WITHIN => {
-            if stack.len() < 3 { return Ok(false); }
+            if stack.len() < 3 {
+                return Ok(false);
+            }
             let max_val = script_num_decode(&stack.pop().unwrap(), 4)?;
             let min_val = script_num_decode(&stack.pop().unwrap(), 4)?;
             let x = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(if x >= min_val && x < max_val { 1 } else { 0 })));
+            stack.push(to_stack_element(&script_num_encode(
+                if x >= min_val && x < max_val { 1 } else { 0 },
+            )));
             Ok(true)
         }
 
@@ -4777,13 +5027,13 @@ fn execute_opcode(
         // OP_NOP1 and OP_NOP5-OP_NOP10 - no-ops
         // Note: OP_NOP4 (0xb3) is used for OP_CHECKTEMPLATEVERIFY (BIP119)
         OP_NOP1 | OP_NOP5..=OP_NOP10 => Ok(true),
-        
+
         // OP_CHECKTEMPLATEVERIFY - requires transaction context
         OP_CHECKTEMPLATEVERIFY => {
             #[cfg(not(feature = "ctv"))]
             {
                 // Without feature flag, treat as NOP4
-                return Ok(true);
+                Ok(true)
             }
 
             #[cfg(feature = "ctv")]
@@ -4794,13 +5044,16 @@ fn execute_opcode(
                     message: "OP_CHECKTEMPLATEVERIFY requires transaction context".into(),
                 });
             }
-        },
+        }
 
         // Disabled string opcodes - must return error per consensus
-        OP_DISABLED_STRING_RANGE_START..=OP_DISABLED_STRING_RANGE_END | OP_DISABLED_BITWISE_RANGE_START..=OP_DISABLED_BITWISE_RANGE_END => Err(ConsensusError::ScriptErrorWithCode {
-            code: ScriptErrorCode::DisabledOpcode,
-            message: format!("Disabled opcode 0x{:02x}", opcode).into(),
-        }),
+        OP_DISABLED_STRING_RANGE_START..=OP_DISABLED_STRING_RANGE_END
+        | OP_DISABLED_BITWISE_RANGE_START..=OP_DISABLED_BITWISE_RANGE_END => {
+            Err(ConsensusError::ScriptErrorWithCode {
+                code: ScriptErrorCode::DisabledOpcode,
+                message: format!("Disabled opcode 0x{opcode:02x}").into(),
+            })
+        }
 
         // Unknown opcode
         _ => Ok(false),
@@ -4820,7 +5073,8 @@ fn execute_opcode_with_context(
 ) -> Result<bool> {
     // Convert prevouts to parallel slices for the optimized API
     let prevout_values: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
-    let prevout_script_pubkeys: Vec<&[u8]> = prevouts.iter().map(|p| p.script_pubkey.as_ref()).collect();
+    let prevout_script_pubkeys: Vec<&[u8]> =
+        prevouts.iter().map(|p| p.script_pubkey.as_ref()).collect();
     execute_opcode_with_context_full(
         opcode,
         stack,
@@ -4837,9 +5091,12 @@ fn execute_opcode_with_context(
         None, // script_sig_for_sighash
         None, // tapscript_for_sighash
         None, // tapscript_codesep_pos
-        #[cfg(feature = "production")] None, // schnorr_collector - No collector in this context
-        #[cfg(feature = "production")] None, // precomputed_bip143
-        #[cfg(feature = "production")] None, // sighash_cache - No cache in this context
+        #[cfg(feature = "production")]
+        None, // schnorr_collector - No collector in this context
+        #[cfg(feature = "production")]
+        None, // precomputed_bip143
+        #[cfg(feature = "production")]
+        None, // sighash_cache - No cache in this context
     )
 }
 
@@ -4872,7 +5129,7 @@ pub(crate) fn parse_p2sh_p2pkh_for_precompute(script_sig: &[u8]) -> Option<(u8, 
     }
     if redeem[0] != OP_DUP
         || redeem[1] != OP_HASH160
-        || redeem[2] != 0x14
+        || redeem[2] != PUSH_20_BYTES
         || redeem[23] != OP_EQUALVERIFY
         || redeem[24] != OP_CHECKSIG
     {
@@ -4947,9 +5204,8 @@ fn parse_one_data_push(script: &[u8], i: usize) -> Option<(usize, usize, usize)>
         if i + 4 >= script.len() {
             return None;
         }
-        let len = u32::from_le_bytes([
-            script[i + 1], script[i + 2], script[i + 3], script[i + 4],
-        ]) as usize;
+        let len = u32::from_le_bytes([script[i + 1], script[i + 2], script[i + 3], script[i + 4]])
+            as usize;
         if i + 5 + len > script.len() {
             return None;
         }
@@ -5002,13 +5258,16 @@ fn parse_script_sig_push_only(script_sig: &[u8]) -> Option<Vec<StackElement>> {
                 return None;
             }
             let len = u32::from_le_bytes([
-                script_sig[i + 1], script_sig[i + 2], script_sig[i + 3], script_sig[i + 4],
+                script_sig[i + 1],
+                script_sig[i + 2],
+                script_sig[i + 3],
+                script_sig[i + 4],
             ]) as usize;
             if i + 5 + len > script_sig.len() {
                 return None;
             }
             (5 + len, script_sig[i + 5..i + 5 + len].to_vec())
-        } else if opcode >= OP_1NEGATE && opcode <= OP_16 {
+        } else if (OP_1NEGATE..=OP_16).contains(&opcode) {
             // Single-byte push: push the numeric value as minimal bytes
             let n = script_num_from_opcode(opcode);
             (1, script_num_encode(n))
@@ -5023,7 +5282,7 @@ fn parse_script_sig_push_only(script_sig: &[u8]) -> Option<Vec<StackElement>> {
 
 /// Parse all pushes from P2SH scriptSig (including OP_0/dummy).
 /// Returns pushed data in order; last push = redeem script.
-/// Uses parse_script_sig_push_only; caller uses .as_slice() for &[u8].
+/// Uses parse_script_sig_push_only; caller uses .as_ref() for &[u8].
 fn parse_p2sh_script_sig_pushes(script_sig: &[u8]) -> Option<Vec<StackElement>> {
     parse_script_sig_push_only(script_sig)
 }
@@ -5032,7 +5291,7 @@ fn parse_p2sh_script_sig_pushes(script_sig: &[u8]) -> Option<Vec<StackElement>> 
 /// Format: first byte OP_1..OP_16 = n, then n pubkeys (33 or 65 bytes each),
 /// then OP_1..OP_16 = m, then 0xae (OP_CHECKMULTISIG).
 /// Returns (m, n, pubkey_slices) or None if format doesn't match.
-fn parse_redeem_multisig<'a>(redeem: &'a [u8]) -> Option<(u8, u8, Vec<&'a [u8]>)> {
+fn parse_redeem_multisig(redeem: &[u8]) -> Option<(u8, u8, Vec<&[u8]>)> {
     if redeem.len() < 4 {
         return None;
     }
@@ -5068,7 +5327,7 @@ fn parse_redeem_multisig<'a>(redeem: &'a [u8]) -> Option<(u8, u8, Vec<&'a [u8]>)
     if !(OP_1..=OP_16).contains(&m_op) {
         return None;
     }
-    let m = (m_op - OP_1 + 1) as u8;
+    let m = m_op - OP_1 + 1;
     if redeem[i + 1] != OP_CHECKMULTISIG {
         return None;
     }
@@ -5286,16 +5545,22 @@ fn execute_opcode_with_context_full(
     prevout_values: &[i64],
     prevout_script_pubkeys: &[&[u8]],
     block_height: Option<u64>,
-    median_time_past: Option<u64>,
+    _median_time_past: Option<u64>,
     network: crate::types::Network,
     sigversion: SigVersion,
     redeem_script_for_sighash: Option<&[u8]>,
     script_sig_for_sighash: Option<&ByteString>,
     tapscript_for_sighash: Option<&[u8]>,
     tapscript_codesep_pos: Option<u32>,
-    #[cfg(feature = "production")] schnorr_collector: Option<&crate::bip348::SchnorrSignatureCollector>,
-    #[cfg(feature = "production")] precomputed_bip143: Option<&crate::transaction_hash::Bip143PrecomputedHashes>,
-    #[cfg(feature = "production")] sighash_cache: Option<&crate::transaction_hash::SighashMidstateCache>,
+    #[cfg(feature = "production")] schnorr_collector: Option<
+        &crate::bip348::SchnorrSignatureCollector,
+    >,
+    #[cfg(feature = "production")] precomputed_bip143: Option<
+        &crate::transaction_hash::Bip143PrecomputedHashes,
+    >,
+    #[cfg(feature = "production")] sighash_cache: Option<
+        &crate::transaction_hash::SighashMidstateCache,
+    >,
 ) -> Result<bool> {
     // match ordered by frequency (hot opcodes first for better branch prediction)
     match opcode {
@@ -5304,7 +5569,6 @@ fn execute_opcode_with_context_full(
             if stack.len() >= 2 {
                 let pubkey_bytes = stack.pop().unwrap();
                 let signature_bytes = stack.pop().unwrap();
-
 
                 // Empty signature always fails but is valid script execution
                 if signature_bytes.is_empty() {
@@ -5351,7 +5615,8 @@ fn execute_opcode_with_context_full(
                                 &pubkey_bytes,
                                 &signature_bytes,
                                 schnorr_collector,
-                            ).unwrap_or(false)
+                            )
+                            .unwrap_or(false)
                         };
 
                         #[cfg(not(feature = "production"))]
@@ -5364,7 +5629,8 @@ fn execute_opcode_with_context_full(
                                     &pubkey_bytes,
                                     &signature_bytes,
                                     None,
-                                ).unwrap_or(false)
+                                )
+                                .unwrap_or(false)
                             };
                             #[cfg(not(feature = "csfs"))]
                             let x = false;
@@ -5390,15 +5656,15 @@ fn execute_opcode_with_context_full(
                 let sighash = if sigversion == SigVersion::WitnessV0 {
                     // BIP143 sighash for SegWit v0 (P2WPKH, P2WSH)
                     let amount = prevout_values.get(input_index).copied().unwrap_or(0);
-                    
+
                     // scriptCode for BIP143: the witnessScript or P2PKH equivalent
-                    let script_code = redeem_script_for_sighash
-                        .unwrap_or_else(|| {
-                            prevout_script_pubkeys.get(input_index)
-                                .map(|p| *p)
-                                .unwrap_or(&[])
-                        });
-                    
+                    let script_code = redeem_script_for_sighash.unwrap_or_else(|| {
+                        prevout_script_pubkeys
+                            .get(input_index)
+                            .copied()
+                            .unwrap_or(&[])
+                    });
+
                     crate::transaction_hash::calculate_bip143_sighash(
                         tx,
                         input_index,
@@ -5409,18 +5675,23 @@ fn execute_opcode_with_context_full(
                     )?
                 } else {
                     // Legacy sighash for non-SegWit transactions
-                    use crate::transaction_hash::{calculate_transaction_sighash_single_input, SighashType};
+                    use crate::transaction_hash::{
+                        calculate_transaction_sighash_single_input, SighashType,
+                    };
                     let sighash_type = SighashType::from_byte(sighash_byte);
 
                     // FindAndDelete: Remove signature from scriptCode (BIP62 consensus rule)
                     let pattern_bytes: ByteString = script_sig_for_sighash
-                        .and_then(|s| parse_script_sig_push_only(s.as_slice()))
+                        .and_then(|s| parse_script_sig_push_only(s.as_ref()))
                         .and_then(|p| p.into_iter().next())
-                        .map(|elem| elem.as_slice().to_vec())
-                        .unwrap_or_else(|| signature_bytes.as_slice().to_vec());
+                        .map(|elem| elem.as_ref().to_vec())
+                        .unwrap_or_else(|| signature_bytes.as_ref().to_vec());
                     let pattern = serialize_push_data(&pattern_bytes);
 
-                    let base_script = match (redeem_script_for_sighash, prevout_script_pubkeys.get(input_index)) {
+                    let base_script = match (
+                        redeem_script_for_sighash,
+                        prevout_script_pubkeys.get(input_index),
+                    ) {
                         (Some(redeem), Some(prevout)) if redeem == *prevout => *prevout,
                         (Some(redeem), _) => redeem,
                         (None, Some(prevout)) => *prevout,
@@ -5429,12 +5700,13 @@ fn execute_opcode_with_context_full(
                     let cleaned = find_and_delete(base_script, &pattern);
 
                     calculate_transaction_sighash_single_input(
-                        tx, 
-                        input_index, 
+                        tx,
+                        input_index,
                         cleaned.as_ref(),
                         prevout_values[input_index],
                         sighash_type,
-                        #[cfg(feature = "production")] sighash_cache,
+                        #[cfg(feature = "production")]
+                        sighash_cache,
                     )?
                 };
 
@@ -5502,14 +5774,14 @@ fn execute_opcode_with_context_full(
                 let sighash = if sigversion == SigVersion::WitnessV0 {
                     // BIP143 sighash for SegWit v0 (P2WPKH, P2WSH)
                     let amount = prevout_values.get(input_index).copied().unwrap_or(0);
-                    
-                    let script_code = redeem_script_for_sighash
-                        .unwrap_or_else(|| {
-                            prevout_script_pubkeys.get(input_index)
-                                .map(|p| *p)
-                                .unwrap_or(&[])
-                        });
-                    
+
+                    let script_code = redeem_script_for_sighash.unwrap_or_else(|| {
+                        prevout_script_pubkeys
+                            .get(input_index)
+                            .copied()
+                            .unwrap_or(&[])
+                    });
+
                     crate::transaction_hash::calculate_bip143_sighash(
                         tx,
                         input_index,
@@ -5520,18 +5792,23 @@ fn execute_opcode_with_context_full(
                     )?
                 } else {
                     // Legacy sighash for non-SegWit transactions
-                    use crate::transaction_hash::{calculate_transaction_sighash_single_input, SighashType};
+                    use crate::transaction_hash::{
+                        calculate_transaction_sighash_single_input, SighashType,
+                    };
                     let sighash_type = SighashType::from_byte(sighash_byte);
 
                     // FindAndDelete: use same signature bytes as fast path when script_sig available
                     let pattern_bytes: ByteString = script_sig_for_sighash
-                        .and_then(|s| parse_script_sig_push_only(s.as_slice()))
+                        .and_then(|s| parse_script_sig_push_only(s.as_ref()))
                         .and_then(|p| p.into_iter().next())
-                        .map(|elem| elem.as_slice().to_vec())
-                        .unwrap_or_else(|| signature_bytes.as_slice().to_vec());
+                        .map(|elem| elem.as_ref().to_vec())
+                        .unwrap_or_else(|| signature_bytes.as_ref().to_vec());
                     let pattern = serialize_push_data(&pattern_bytes);
 
-                    let base_script = match (redeem_script_for_sighash, prevout_script_pubkeys.get(input_index)) {
+                    let base_script = match (
+                        redeem_script_for_sighash,
+                        prevout_script_pubkeys.get(input_index),
+                    ) {
                         (Some(redeem), Some(prevout)) if redeem == *prevout => *prevout,
                         (Some(redeem), _) => redeem,
                         (None, Some(prevout)) => *prevout,
@@ -5540,12 +5817,13 @@ fn execute_opcode_with_context_full(
                     let cleaned = find_and_delete(base_script, &pattern);
 
                     calculate_transaction_sighash_single_input(
-                        tx, 
-                        input_index, 
+                        tx,
+                        input_index,
                         cleaned.as_ref(),
                         prevout_values[input_index],
                         sighash_type,
-                        #[cfg(feature = "production")] sighash_cache,
+                        #[cfg(feature = "production")]
+                        sighash_cache,
                     )?
                 };
 
@@ -5698,7 +5976,11 @@ fn execute_opcode_with_context_full(
             // Pop n (number of public keys) - this is the last element on stack
             // CScriptNum treats empty bytes [] as 0
             let n_bytes = stack.pop().unwrap();
-            let n = if n_bytes.is_empty() { 0 } else { n_bytes[0] as usize };
+            let n = if n_bytes.is_empty() {
+                0
+            } else {
+                n_bytes[0] as usize
+            };
             if n > 20 || stack.len() < n + 1 {
                 return Ok(false);
             }
@@ -5712,7 +5994,11 @@ fn execute_opcode_with_context_full(
             // Pop m (number of required signatures)
             // CScriptNum treats empty bytes [] as 0
             let m_bytes = stack.pop().unwrap();
-            let m = if m_bytes.is_empty() { 0 } else { m_bytes[0] as usize };
+            let m = if m_bytes.is_empty() {
+                0
+            } else {
+                m_bytes[0] as usize
+            };
             if m > n || m > 20 || stack.len() < m + 1 {
                 return Ok(false);
             }
@@ -5750,14 +6036,13 @@ fn execute_opcode_with_context_full(
                     // BIP147: Dummy must be empty (either [] or [0x00])
                     // In Bitcoin script, both empty [] and [0x00] (OP_0) are considered "empty"
                     // Both accepted as valid NULLDUMMY (BIP147)
-                    let is_empty = dummy.is_empty() || dummy.as_slice() == [0x00];
+                    let is_empty = dummy.is_empty() || dummy.as_ref() == [0x00];
                     if !is_empty {
                         return Err(ConsensusError::ScriptErrorWithCode {
                             code: ScriptErrorCode::SigNullDummy,
-                            message: format!(
-                                "OP_CHECKMULTISIG: dummy element {:?} violates BIP147 NULLDUMMY (must be empty: [] or [0x00])",
-                                dummy
-                            )
+                message: format!(
+                    "OP_CHECKMULTISIG: dummy element {dummy:?} violates BIP147 NULLDUMMY (must be empty: [] or [0x00])"
+                )
                             .into(),
                         });
                     }
@@ -5771,7 +6056,10 @@ fn execute_opcode_with_context_full(
             // FindAndDelete: Remove ALL signatures from scriptCode BEFORE any sighash computation
             // Consensus rule for OP_CHECKMULTISIG (legacy only, not SegWit)
             let cleaned_script_for_multisig: Vec<u8> = if sigversion == SigVersion::Base {
-                let base_script = match (redeem_script_for_sighash, prevout_script_pubkeys.get(input_index)) {
+                let base_script = match (
+                    redeem_script_for_sighash,
+                    prevout_script_pubkeys.get(input_index),
+                ) {
                     (Some(redeem), Some(prevout)) if redeem == *prevout => *prevout,
                     (Some(redeem), _) => redeem,
                     (None, Some(prevout)) => *prevout,
@@ -5780,7 +6068,7 @@ fn execute_opcode_with_context_full(
                 let mut cleaned = base_script.to_vec();
                 for sig in &signatures {
                     if !sig.is_empty() {
-                        let pattern = serialize_push_data(sig.as_slice());
+                        let pattern = serialize_push_data(sig.as_ref());
                         cleaned = find_and_delete(&cleaned, &pattern).into_owned();
                     }
                 }
@@ -5789,10 +6077,17 @@ fn execute_opcode_with_context_full(
                 // For SegWit, no FindAndDelete needed
                 redeem_script_for_sighash
                     .map(|s| s.to_vec())
-                    .unwrap_or_else(|| prevout_script_pubkeys.get(input_index).map(|p| p.to_vec()).unwrap_or_default())
+                    .unwrap_or_else(|| {
+                        prevout_script_pubkeys
+                            .get(input_index)
+                            .map(|p| p.to_vec())
+                            .unwrap_or_default()
+                    })
             };
 
-            use crate::transaction_hash::{calculate_transaction_sighash_single_input, SighashType};
+            use crate::transaction_hash::{
+                calculate_transaction_sighash_single_input, SighashType,
+            };
 
             // Batch path: when n*m >= 4, precompute sighashes once per sig and batch-verify all (pubkey, sig) pairs.
             #[cfg(feature = "production")]
@@ -5808,7 +6103,13 @@ fn execute_opcode_with_context_full(
                     } else {
                         let specs: Vec<(usize, u8, &[u8])> = non_empty
                             .iter()
-                            .map(|s| (input_index, s.as_slice()[s.as_slice().len() - 1], cleaned_script_for_multisig.as_slice()))
+                            .map(|s| {
+                                (
+                                    input_index,
+                                    s.as_ref()[s.as_ref().len() - 1],
+                                    cleaned_script_for_multisig.as_ref(),
+                                )
+                            })
                             .collect();
                         crate::transaction_hash::batch_compute_legacy_sighashes(
                             tx,
@@ -5822,7 +6123,8 @@ fn execute_opcode_with_context_full(
                         .iter()
                         .filter(|s| !s.is_empty())
                         .map(|sig_bytes| {
-                            let sighash_type = SighashType::from_byte(sig_bytes[sig_bytes.len() - 1]);
+                            let sighash_type =
+                                SighashType::from_byte(sig_bytes[sig_bytes.len() - 1]);
                             calculate_transaction_sighash_single_input(
                                 tx,
                                 input_index,
@@ -5836,7 +6138,8 @@ fn execute_opcode_with_context_full(
                 };
 
                 // Build verification tasks: (pubkey_i, sig_j, sighash_j) for all i,j. Order: j then i (sig_index, pubkey_index)
-                let mut tasks: Vec<(&[u8], &[u8], [u8; 32])> = Vec::with_capacity(pubkeys.len() * signatures.len());
+                let mut tasks: Vec<(&[u8], &[u8], [u8; 32])> =
+                    Vec::with_capacity(pubkeys.len() * signatures.len());
                 let mut sig_idx_to_sighash_idx = Vec::with_capacity(signatures.len());
                 let mut sighash_idx = 0usize;
                 for (j, sig_bytes) in signatures.iter().enumerate() {
@@ -5847,7 +6150,7 @@ fn execute_opcode_with_context_full(
                         let sh = sighashes[sighash_idx];
                         sighash_idx += 1;
                         for pubkey_bytes in &pubkeys {
-                            tasks.push((pubkey_bytes.as_slice(), sig_bytes.as_slice(), sh));
+                            tasks.push((pubkey_bytes.as_ref(), sig_bytes.as_ref(), sh));
                         }
                     }
                 }
@@ -5931,7 +6234,8 @@ fn execute_opcode_with_context_full(
                         &cleaned_script_for_multisig,
                         prevout_values[input_index],
                         sighash_type,
-                        #[cfg(feature = "production")] sighash_cache,
+                        #[cfg(feature = "production")]
+                        sighash_cache,
                     )?;
 
                     #[cfg(feature = "production")]
@@ -5950,24 +6254,29 @@ fn execute_opcode_with_context_full(
 
                     #[cfg(not(feature = "production"))]
                     let is_valid = {
-                    let secp = Secp256k1::new();
-                    verify_signature(
-                        &secp,
-                        pubkey_bytes,
-                        signature_bytes,
-                        &sighash,
-                        flags,
-                        height,
-                        network,
-                        sigversion,
-                    )?
+                        let secp = Secp256k1::new();
+                        verify_signature(
+                            &secp,
+                            pubkey_bytes,
+                            signature_bytes,
+                            &sighash,
+                            flags,
+                            height,
+                            network,
+                            sigversion,
+                        )?
                     };
 
                     const SCRIPT_VERIFY_NULLFAIL: u32 = 0x4000;
-                    if !is_valid && (flags & SCRIPT_VERIFY_NULLFAIL) != 0 && !signature_bytes.is_empty() {
+                    if !is_valid
+                        && (flags & SCRIPT_VERIFY_NULLFAIL) != 0
+                        && !signature_bytes.is_empty()
+                    {
                         return Err(ConsensusError::ScriptErrorWithCode {
                             code: ScriptErrorCode::SigNullFail,
-                            message: "OP_CHECKMULTISIG: non-null signature must not fail under NULLFAIL".into(),
+                            message:
+                                "OP_CHECKMULTISIG: non-null signature must not fail under NULLFAIL"
+                                    .into(),
                         });
                     }
 
@@ -6000,7 +6309,8 @@ fn execute_opcode_with_context_full(
                         &cleaned_script_for_multisig,
                         prevout_values[input_index],
                         sighash_type,
-                        #[cfg(feature = "production")] sighash_cache,
+                        #[cfg(feature = "production")]
+                        sighash_cache,
                     )?;
                     let secp = Secp256k1::new();
                     let is_valid = verify_signature(
@@ -6014,10 +6324,15 @@ fn execute_opcode_with_context_full(
                         sigversion,
                     )?;
                     const SCRIPT_VERIFY_NULLFAIL: u32 = 0x4000;
-                    if !is_valid && (flags & SCRIPT_VERIFY_NULLFAIL) != 0 && !signature_bytes.is_empty() {
+                    if !is_valid
+                        && (flags & SCRIPT_VERIFY_NULLFAIL) != 0
+                        && !signature_bytes.is_empty()
+                    {
                         return Err(ConsensusError::ScriptErrorWithCode {
                             code: ScriptErrorCode::SigNullFail,
-                            message: "OP_CHECKMULTISIG: non-null signature must not fail under NULLFAIL".into(),
+                            message:
+                                "OP_CHECKMULTISIG: non-null signature must not fail under NULLFAIL"
+                                    .into(),
                         });
                     }
                     if is_valid {
@@ -6045,16 +6360,19 @@ fn execute_opcode_with_context_full(
                 prevout_values,
                 prevout_script_pubkeys,
                 block_height,
-                median_time_past,
+                _median_time_past,
                 network,
                 sigversion,
                 redeem_script_for_sighash,
                 script_sig_for_sighash,
                 tapscript_for_sighash,
                 tapscript_codesep_pos,
-                #[cfg(feature = "production")] None, // schnorr_collector
-                #[cfg(feature = "production")] precomputed_bip143,
-                #[cfg(feature = "production")] sighash_cache,
+                #[cfg(feature = "production")]
+                None, // schnorr_collector
+                #[cfg(feature = "production")]
+                precomputed_bip143,
+                #[cfg(feature = "production")]
+                sighash_cache,
             )?;
             if !result {
                 return Ok(false);
@@ -6092,7 +6410,7 @@ fn execute_opcode_with_context_full(
 
             // Decode locktime value from stack using CScriptNum rules (max 5 bytes)
             let locktime_bytes = stack.last().expect("Stack is not empty");
-            let locktime_value = match decode_locktime_value(locktime_bytes.as_slice()) {
+            let locktime_value = match decode_locktime_value(locktime_bytes.as_ref()) {
                 Some(v) => v,
                 None => {
                     return Err(ConsensusError::ScriptErrorWithCode {
@@ -6156,7 +6474,7 @@ fn execute_opcode_with_context_full(
             // Decode sequence value from stack using shared locktime logic.
             // Interpret the top stack element as a sequence value (BIP112).
             let sequence_bytes = stack.last().expect("Stack is not empty");
-            let sequence_value = match decode_locktime_value(sequence_bytes.as_slice()) {
+            let sequence_value = match decode_locktime_value(sequence_bytes.as_ref()) {
                 Some(v) => v,
                 None => return Ok(false), // Invalid encoding
             };
@@ -6213,12 +6531,14 @@ fn execute_opcode_with_context_full(
                         message: "OP_CHECKTEMPLATEVERIFY requires --features ctv".into(),
                     });
                 }
-                return Ok(true); // NOP4
+                Ok(true) // NOP4
             }
 
             #[cfg(feature = "ctv")]
             {
-                use crate::constants::{CTV_ACTIVATION_MAINNET, CTV_ACTIVATION_TESTNET, CTV_ACTIVATION_REGTEST};
+                use crate::constants::{
+                    CTV_ACTIVATION_MAINNET, CTV_ACTIVATION_REGTEST, CTV_ACTIVATION_TESTNET,
+                };
 
                 // Check activation
                 let ctv_activation = match network {
@@ -6226,7 +6546,7 @@ fn execute_opcode_with_context_full(
                     crate::types::Network::Testnet => CTV_ACTIVATION_TESTNET,
                     crate::types::Network::Regtest => CTV_ACTIVATION_REGTEST,
                 };
-                
+
                 let ctv_active = block_height.map(|h| h >= ctv_activation).unwrap_or(false);
                 if !ctv_active {
                     // Before activation: treat as NOP4
@@ -6237,14 +6557,14 @@ fn execute_opcode_with_context_full(
                             message: "OP_CHECKTEMPLATEVERIFY not yet activated".into(),
                         });
                     }
-                    return Ok(true); // NOP4
+                    Ok(true) // NOP4
                 }
 
                 // Check if CTV flag is enabled
                 const SCRIPT_VERIFY_DEFAULT_CHECK_TEMPLATE_VERIFY_HASH: u32 = 0x80000000;
                 if (flags & SCRIPT_VERIFY_DEFAULT_CHECK_TEMPLATE_VERIFY_HASH) == 0 {
                     // Flag not set, treat as NOP4
-                    return Ok(true);
+                    Ok(true)
                 }
 
                 use crate::bip119::calculate_template_hash;
@@ -6267,10 +6587,11 @@ fn execute_opcode_with_context_full(
                     if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS) != 0 {
                         return Err(ConsensusError::ScriptErrorWithCode {
                             code: ScriptErrorCode::InvalidStackOperation,
-                            message: "OP_CHECKTEMPLATEVERIFY: template hash must be 32 bytes".into(),
+                            message: "OP_CHECKTEMPLATEVERIFY: template hash must be 32 bytes"
+                                .into(),
                         });
                     }
-                    return Ok(true); // NOP
+                    Ok(true) // NOP
                 }
 
                 // Calculate actual template hash for this transaction
@@ -6319,12 +6640,14 @@ fn execute_opcode_with_context_full(
                         message: "OP_CHECKSIGFROMSTACK requires --features csfs".into(),
                     });
                 }
-                return Ok(true); // OP_SUCCESS204 succeeds
+                Ok(true) // OP_SUCCESS204 succeeds
             }
 
             #[cfg(feature = "csfs")]
             {
-                use crate::constants::{CSFS_ACTIVATION_MAINNET, CSFS_ACTIVATION_TESTNET, CSFS_ACTIVATION_REGTEST};
+                use crate::constants::{
+                    CSFS_ACTIVATION_MAINNET, CSFS_ACTIVATION_REGTEST, CSFS_ACTIVATION_TESTNET,
+                };
 
                 // BIP-348: Only available in Tapscript (leaf version 0xc0)
                 if sigversion != SigVersion::Tapscript {
@@ -6340,7 +6663,7 @@ fn execute_opcode_with_context_full(
                     crate::types::Network::Testnet => CSFS_ACTIVATION_TESTNET,
                     crate::types::Network::Regtest => CSFS_ACTIVATION_REGTEST,
                 };
-                
+
                 let csfs_active = block_height.map(|h| h >= csfs_activation).unwrap_or(false);
                 if !csfs_active {
                     // Before activation: OP_SUCCESS204 behavior (succeeds)
@@ -6351,7 +6674,7 @@ fn execute_opcode_with_context_full(
                             message: "OP_CHECKSIGFROMSTACK not yet activated".into(),
                         });
                     }
-                    return Ok(true); // OP_SUCCESS204 succeeds
+                    Ok(true) // OP_SUCCESS204 succeeds
                 }
 
                 use crate::bip348::verify_signature_from_stack;
@@ -6365,9 +6688,9 @@ fn execute_opcode_with_context_full(
                 }
 
                 // BIP-348: Pop in order: pubkey (top), message (second), signature (third)
-                let pubkey_bytes = stack.pop().unwrap();      // Top
-                let message_bytes = stack.pop().unwrap();      // Second
-                let signature_bytes = stack.pop().unwrap();    // Third
+                let pubkey_bytes = stack.pop().unwrap(); // Top
+                let message_bytes = stack.pop().unwrap(); // Second
+                let signature_bytes = stack.pop().unwrap(); // Third
 
                 // BIP-348: If pubkey size is zero, script MUST fail
                 if pubkey_bytes.is_empty() {
@@ -6380,7 +6703,7 @@ fn execute_opcode_with_context_full(
                 // BIP-348: If signature is empty, push empty vector and continue
                 if signature_bytes.is_empty() {
                     stack.push(to_stack_element(&[])); // Empty vector, not 0
-                    return Ok(true);
+                    Ok(true)
                 }
 
                 // BIP-348: Verify signature (only for 32-byte pubkeys)
@@ -6389,18 +6712,20 @@ fn execute_opcode_with_context_full(
                 let is_valid = {
                     use crate::bip348::SchnorrSignatureCollector;
                     verify_signature_from_stack(
-                        &message_bytes,  // Message (NOT hashed by BIP 340 spec)
-                        &pubkey_bytes,   // Pubkey (32 bytes for BIP 340)
-                        &signature_bytes, // Signature (64-byte BIP 340 Schnorr)
+                        &message_bytes,    // Message (NOT hashed by BIP 340 spec)
+                        &pubkey_bytes,     // Pubkey (32 bytes for BIP 340)
+                        &signature_bytes,  // Signature (64-byte BIP 340 Schnorr)
                         schnorr_collector, // Pass collector for batch verification
-                    ).unwrap_or(false)
+                    )
+                    .unwrap_or(false)
                 };
                 #[cfg(not(feature = "production"))]
                 let is_valid = verify_signature_from_stack(
-                    &message_bytes,  // Message (NOT hashed by BIP 340 spec)
-                    &pubkey_bytes,   // Pubkey (32 bytes for BIP 340)
+                    &message_bytes,   // Message (NOT hashed by BIP 340 spec)
+                    &pubkey_bytes,    // Pubkey (32 bytes for BIP 340)
                     &signature_bytes, // Signature (64-byte BIP 340 Schnorr)
-                ).unwrap_or(false);
+                )
+                .unwrap_or(false);
 
                 if !is_valid {
                     // BIP-348: Validation failure immediately terminates script execution
@@ -6425,18 +6750,9 @@ fn execute_opcode_with_context_full(
 
 /// Rare opcode dispatch (#[cold] so hot path stays compact).
 #[cold]
-fn execute_opcode_cold(
-    opcode: u8,
-    stack: &mut Vec<StackElement>,
-    flags: u32,
-) -> Result<bool> {
+fn execute_opcode_cold(opcode: u8, stack: &mut Vec<StackElement>, flags: u32) -> Result<bool> {
     execute_opcode(opcode, stack, flags, SigVersion::Base)
 }
-
-/// Fast-path validation for signature verification
-///
-/// Performs quick checks before expensive crypto operations.
-/// Returns Some(bool) if fast-path can determine validity, None if full verification needed.
 
 /// Normalize a non-canonical DER signature for pre-BIP66 compatibility.
 /// Uses stack buffers to avoid 3 Vec allocations per call.
@@ -6519,6 +6835,10 @@ fn normalize_integer(bytes: &[u8], out: &mut [u8; 36]) -> usize {
     n
 }
 
+/// Fast-path validation for signature verification.
+///
+/// Performs quick checks before expensive crypto operations.
+/// Returns Some(bool) if fast-path can determine validity, None if full verification needed.
 fn verify_signature_fast_path(
     pubkey_bytes: &[u8],
     signature_bytes: &[u8],
@@ -6544,7 +6864,7 @@ fn verify_signature_fast_path(
 /// Uses fast-path checks before expensive crypto.
 ///
 /// BIP66: Enforces strict DER encoding for signatures after activation height.
-/// 
+///
 /// NOTE: `signature_bytes` should be the DER signature WITHOUT the sighash byte.
 /// For BIP66 check, we need to reconstruct the full signature (with sighash byte)
 /// IsValidSignatureEncoding — BIP66 strict DER (BIP62).
@@ -6558,7 +6878,7 @@ fn verify_signature<C: Context + Verification>(
     secp: &Secp256k1<C>,
     pubkey_bytes: &[u8],
     signature_bytes: &[u8], // DER signature WITHOUT sighash byte
-    sighash: &[u8; 32], // Real transaction hash
+    sighash: &[u8; 32],     // Real transaction hash
     flags: u32,
     height: Natural,
     network: crate::types::Network,
@@ -6595,7 +6915,7 @@ fn verify_signature<C: Context + Verification>(
     if flags & 0x04 != 0 && !crate::bip_validation::check_bip66(signature_bytes, height, network)? {
         return Ok(false);
     }
-    
+
     // SCRIPT_VERIFY_STRICTENC (0x02): Check that sighash type is defined
     // IsDefinedHashtypeSignature: checks if sighash byte (masking out ANYONECANPAY)
     // is between SIGHASH_ALL (0x01) and SIGHASH_SINGLE (0x03)
@@ -6604,7 +6924,7 @@ fn verify_signature<C: Context + Verification>(
         let base_sighash = sighash_byte & !0x80;
         // Valid base types: 0x01 (SIGHASH_ALL), 0x02 (SIGHASH_NONE), 0x03 (SIGHASH_SINGLE)
         // Note: 0x00 is also valid (legacy SIGHASH_ALL) but STRICTENC rejects it
-        if base_sighash < 0x01 || base_sighash > 0x03 {
+        if !(0x01..=0x03).contains(&base_sighash) {
             return Ok(false);
         }
     }
@@ -6633,7 +6953,7 @@ fn verify_signature<C: Context + Verification>(
     // secp256k1 0.28: normalize_s() mutates in place; compare before/after to detect high S.
     if flags & 0x08 != 0 {
         let before = signature.serialize_compact();
-        let mut normalized = signature.clone();
+        let mut normalized = signature;
         normalized.normalize_s();
         if before != normalized.serialize_compact() {
             return Ok(false);
@@ -6689,7 +7009,7 @@ fn verify_signature<C: Context + Verification>(
 
     let sig_compact = normalized_signature.serialize_compact();
     let pk_compressed = pubkey.serialize();
-    Ok(crate::secp256k1_backend::verify_ecdsa(sighash, &sig_compact, &pk_compressed)?)
+    crate::secp256k1_backend::verify_ecdsa(sighash, &sig_compact, &pk_compressed)
 }
 
 /// Verify pre-extracted ECDSA (P2PKH/P2PK) inline without re-parsing script_sig.
@@ -6742,7 +7062,7 @@ fn parse_task_for_batch(
     }
     if flags & 0x02 != 0 {
         let base_sighash = sighash_byte & !0x80;
-        if base_sighash < 0x01 || base_sighash > 0x03 {
+        if !(0x01..=0x03).contains(&base_sighash) {
             return Ok(None);
         }
     }
@@ -6764,10 +7084,8 @@ fn parse_task_for_batch(
     let mut normalized_signature = signature;
     normalized_signature.normalize_s();
     let norm_compact = normalized_signature.serialize_compact();
-    if flags & 0x08 != 0 {
-        if original_compact != norm_compact {
-            return Ok(None);
-        }
+    if flags & 0x08 != 0 && original_compact != norm_compact {
+        return Ok(None);
     }
 
     if flags & 0x02 != 0 {
@@ -7010,7 +7328,7 @@ mod tests {
 
         assert!(eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap());
         assert_eq!(stack.len(), 1);
-        assert_eq!(stack[0].as_slice(), &[1]);
+        assert_eq!(stack[0].as_ref(), &[1]);
     }
 
     #[test]
@@ -7060,7 +7378,7 @@ mod tests {
             let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
             assert!(result);
             assert_eq!(stack.len(), 1);
-            assert_eq!(stack[0].as_slice(), &[i]);
+            assert_eq!(stack[0].as_ref(), &[i]);
         }
     }
 
@@ -7071,8 +7389,8 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(!result); // Final stack has 2 items [1, 1], not exactly 1
         assert_eq!(stack.len(), 2);
-        assert_eq!(stack[0].as_slice(), &[1]);
-        assert_eq!(stack[1].as_slice(), &[1]);
+        assert_eq!(stack[0].as_ref(), &[1]);
+        assert_eq!(stack[1].as_ref(), &[1]);
     }
 
     #[test]
@@ -7126,7 +7444,7 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(result);
         assert_eq!(stack.len(), 1);
-        assert_eq!(stack[0].as_slice(), &[1]); // True
+        assert_eq!(stack[0].as_ref(), &[1]); // True
     }
 
     #[test]
@@ -7136,7 +7454,7 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(!result); // False value (0) is not considered "true"
         assert_eq!(stack.len(), 1);
-        assert_eq!(stack[0].as_slice(), &[0]); // False
+        assert_eq!(stack[0].as_ref(), &[0]); // False
     }
 
     #[test]
@@ -7328,8 +7646,8 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(!result); // Final stack has 2 items [1, 1], not exactly 1
         assert_eq!(stack.len(), 2);
-        assert_eq!(stack[0].as_slice(), &[1]);
-        assert_eq!(stack[1].as_slice(), &[1]);
+        assert_eq!(stack[0].as_ref(), &[1]);
+        assert_eq!(stack[1].as_ref(), &[1]);
     }
 
     #[test]
@@ -7339,7 +7657,7 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(!result); // Final stack has 1 item [0], which is false
         assert_eq!(stack.len(), 1);
-        assert_eq!(stack[0].as_slice(), &[] as &[u8]);
+        assert_eq!(stack[0].as_ref(), &[] as &[u8]);
     }
 
     #[test]
@@ -7349,7 +7667,7 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(!result); // Final stack has 3 items, not exactly 1
         assert_eq!(stack.len(), 3);
-        assert_eq!(stack[2].as_slice(), &[2]); // Depth should be 2 (before OP_DEPTH)
+        assert_eq!(stack[2].as_ref(), &[2]); // Depth should be 2 (before OP_DEPTH)
     }
 
     #[test]
@@ -7359,7 +7677,7 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(result); // Final stack has 1 item [1]
         assert_eq!(stack.len(), 1);
-        assert_eq!(stack[0].as_slice(), &[1]);
+        assert_eq!(stack[0].as_ref(), &[1]);
     }
 
     #[test]
@@ -7378,7 +7696,7 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(result); // Final stack has 1 item [2]
         assert_eq!(stack.len(), 1);
-        assert_eq!(stack[0].as_slice(), &[2]);
+        assert_eq!(stack[0].as_ref(), &[2]);
     }
 
     #[test]
@@ -7397,9 +7715,9 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(!result); // Final stack has 3 items [1, 2, 1], not exactly 1
         assert_eq!(stack.len(), 3);
-        assert_eq!(stack[0].as_slice(), &[1]);
-        assert_eq!(stack[1].as_slice(), &[2]);
-        assert_eq!(stack[2].as_slice(), &[1]);
+        assert_eq!(stack[0].as_ref(), &[1]);
+        assert_eq!(stack[1].as_ref(), &[2]);
+        assert_eq!(stack[2].as_ref(), &[1]);
     }
 
     #[test]
@@ -7418,7 +7736,7 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(!result); // Final stack has 4 items [1, 2, 3, 2], not exactly 1
         assert_eq!(stack.len(), 4);
-        assert_eq!(stack[3].as_slice(), &[2]); // Should pick index 1 (OP_2)
+        assert_eq!(stack[3].as_ref(), &[2]); // Should pick index 1 (OP_2)
     }
 
     #[test]
@@ -7429,7 +7747,7 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(!result); // Final stack has 2 items, not exactly 1
         assert_eq!(stack.len(), 2);
-        assert_eq!(stack[1].as_slice(), &[1]); // Picked the top (OP_1 value)
+        assert_eq!(stack[1].as_ref(), &[1]); // Picked the top (OP_1 value)
     }
 
     #[test]
@@ -7448,9 +7766,9 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(!result); // Final stack has 3 items [1, 3, 2], not exactly 1
         assert_eq!(stack.len(), 3);
-        assert_eq!(stack[0].as_slice(), &[1]);
-        assert_eq!(stack[1].as_slice(), &[3]);
-        assert_eq!(stack[2].as_slice(), &[2]); // Should roll index 1 (OP_2) to top
+        assert_eq!(stack[0].as_ref(), &[1]);
+        assert_eq!(stack[1].as_ref(), &[3]);
+        assert_eq!(stack[2].as_ref(), &[2]); // Should roll index 1 (OP_2) to top
     }
 
     #[test]
@@ -7461,7 +7779,7 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(result); // Stack has [1], which is truthy
         assert_eq!(stack.len(), 1);
-        assert_eq!(stack[0].as_slice(), &[1]);
+        assert_eq!(stack[0].as_ref(), &[1]);
     }
 
     #[test]
@@ -7480,9 +7798,9 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(!result); // Final stack has 3 items [2, 3, 1], not exactly 1
         assert_eq!(stack.len(), 3);
-        assert_eq!(stack[0].as_slice(), &[2]);
-        assert_eq!(stack[1].as_slice(), &[3]);
-        assert_eq!(stack[2].as_slice(), &[1]);
+        assert_eq!(stack[0].as_ref(), &[2]);
+        assert_eq!(stack[1].as_ref(), &[3]);
+        assert_eq!(stack[2].as_ref(), &[1]);
     }
 
     #[test]
@@ -7501,8 +7819,8 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(!result); // Final stack has 2 items [2, 1], not exactly 1
         assert_eq!(stack.len(), 2);
-        assert_eq!(stack[0].as_slice(), &[2]);
-        assert_eq!(stack[1].as_slice(), &[1]);
+        assert_eq!(stack[0].as_ref(), &[2]);
+        assert_eq!(stack[1].as_ref(), &[1]);
     }
 
     #[test]
@@ -7521,9 +7839,9 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(!result); // Final stack has 3 items [2, 1, 2], not exactly 1
         assert_eq!(stack.len(), 3);
-        assert_eq!(stack[0].as_slice(), &[2]);
-        assert_eq!(stack[1].as_slice(), &[1]);
-        assert_eq!(stack[2].as_slice(), &[2]);
+        assert_eq!(stack[0].as_ref(), &[2]);
+        assert_eq!(stack[1].as_ref(), &[1]);
+        assert_eq!(stack[2].as_ref(), &[2]);
     }
 
     #[test]
@@ -7542,7 +7860,7 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(result); // Final stack has 1 item [1]
         assert_eq!(stack.len(), 1);
-        assert_eq!(stack[0].as_slice(), &[1]);
+        assert_eq!(stack[0].as_ref(), &[1]);
     }
 
     #[test]
@@ -7561,10 +7879,10 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(!result); // Final stack has 4 items [1, 2, 1, 2], not exactly 1
         assert_eq!(stack.len(), 4);
-        assert_eq!(stack[0].as_slice(), &[1]);
-        assert_eq!(stack[1].as_slice(), &[2]);
-        assert_eq!(stack[2].as_slice(), &[1]);
-        assert_eq!(stack[3].as_slice(), &[2]);
+        assert_eq!(stack[0].as_ref(), &[1]);
+        assert_eq!(stack[1].as_ref(), &[2]);
+        assert_eq!(stack[2].as_ref(), &[1]);
+        assert_eq!(stack[3].as_ref(), &[2]);
     }
 
     #[test]
@@ -7583,12 +7901,12 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(!result); // Final stack has 6 items, not exactly 1
         assert_eq!(stack.len(), 6);
-        assert_eq!(stack[0].as_slice(), &[1]);
-        assert_eq!(stack[1].as_slice(), &[2]);
-        assert_eq!(stack[2].as_slice(), &[3]);
-        assert_eq!(stack[3].as_slice(), &[1]);
-        assert_eq!(stack[4].as_slice(), &[2]);
-        assert_eq!(stack[5].as_slice(), &[3]);
+        assert_eq!(stack[0].as_ref(), &[1]);
+        assert_eq!(stack[1].as_ref(), &[2]);
+        assert_eq!(stack[2].as_ref(), &[3]);
+        assert_eq!(stack[3].as_ref(), &[1]);
+        assert_eq!(stack[4].as_ref(), &[2]);
+        assert_eq!(stack[5].as_ref(), &[3]);
     }
 
     #[test]
@@ -7607,8 +7925,8 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(!result); // Final stack has 6 items, not exactly 1
         assert_eq!(stack.len(), 6);
-        assert_eq!(stack[4].as_slice(), &[1]); // Should copy second pair
-        assert_eq!(stack[5].as_slice(), &[2]);
+        assert_eq!(stack[4].as_ref(), &[1]); // Should copy second pair
+        assert_eq!(stack[5].as_ref(), &[2]);
     }
 
     #[test]
@@ -7627,8 +7945,8 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(!result); // Final stack has 6 items, not exactly 1
         assert_eq!(stack.len(), 6);
-        assert_eq!(stack[4].as_slice(), &[2]); // Should rotate second pair to top
-        assert_eq!(stack[5].as_slice(), &[1]);
+        assert_eq!(stack[4].as_ref(), &[2]); // Should rotate second pair to top
+        assert_eq!(stack[5].as_ref(), &[1]);
     }
 
     #[test]
@@ -7647,10 +7965,10 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(!result); // Final stack has 4 items, not exactly 1
         assert_eq!(stack.len(), 4);
-        assert_eq!(stack[0].as_slice(), &[3]); // Should swap second pair
-        assert_eq!(stack[1].as_slice(), &[4]);
-        assert_eq!(stack[2].as_slice(), &[1]);
-        assert_eq!(stack[3].as_slice(), &[2]);
+        assert_eq!(stack[0].as_ref(), &[3]); // Should swap second pair
+        assert_eq!(stack[1].as_ref(), &[4]);
+        assert_eq!(stack[2].as_ref(), &[1]);
+        assert_eq!(stack[3].as_ref(), &[2]);
     }
 
     #[test]
@@ -7669,8 +7987,8 @@ mod tests {
         let result = eval_script(&script, &mut stack, 0, SigVersion::Base).unwrap();
         assert!(!result); // Final stack has 2 items [1, 1], not exactly 1
         assert_eq!(stack.len(), 2);
-        assert_eq!(stack[0].as_slice(), &[1]);
-        assert_eq!(stack[1].as_slice(), &[1]); // Size of [1] is 1
+        assert_eq!(stack[0].as_ref(), &[1]);
+        assert_eq!(stack[1].as_ref(), &[1]); // Size of [1] is 1
     }
 
     #[test]
@@ -7794,8 +8112,7 @@ mod tests {
         };
         let prevout_values = vec![0i64];
         let prevout_script_pubkeys_vec = vec![script_pubkey.to_vec()];
-        let prevout_script_pubkeys: Vec<&ByteString> =
-            prevout_script_pubkeys_vec.iter().collect();
+        let prevout_script_pubkeys: Vec<&ByteString> = prevout_script_pubkeys_vec.iter().collect();
         (tx, prevout_values, prevout_script_pubkeys_vec)
     }
 
@@ -7810,13 +8127,13 @@ mod tests {
         script_sig.push(pubkey.len() as u8);
         script_sig.extend(&pubkey);
 
-        let mut script_pubkey = vec![OP_DUP, OP_HASH160, 0x14];
+        let mut script_pubkey = vec![OP_DUP, OP_HASH160, PUSH_20_BYTES];
         script_pubkey.extend(&[0u8; 20]); // wrong hash (not HASH160(pubkey))
         script_pubkey.push(OP_EQUALVERIFY);
         script_pubkey.push(OP_CHECKSIG);
 
         let (tx, pv, psp) = minimal_tx_and_prevouts(&script_sig, &script_pubkey);
-        let psp_refs: Vec<&[u8]> = psp.iter().map(|b| b.as_slice()).collect();
+        let psp_refs: Vec<&[u8]> = psp.iter().map(|b| b.as_ref()).collect();
         let result = verify_script_with_context_full(
             &script_sig,
             &script_pubkey,
@@ -7830,13 +8147,17 @@ mod tests {
             None,
             crate::types::Network::Mainnet,
             SigVersion::Base,
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
+            #[cfg(feature = "production")]
+            None,
+            #[cfg(feature = "production")]
+            None,
+            #[cfg(feature = "production")]
+            None,
             None, // precomputed_bip143
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
+            #[cfg(feature = "production")]
+            None,
+            #[cfg(feature = "production")]
+            None,
         );
         assert!(result.is_ok());
         assert!(!result.unwrap());
@@ -7850,12 +8171,12 @@ mod tests {
         script_sig.push(redeem.len() as u8);
         script_sig.extend(&redeem);
 
-        let mut script_pubkey = vec![OP_HASH160, 0x14];
+        let mut script_pubkey = vec![OP_HASH160, PUSH_20_BYTES];
         script_pubkey.extend(&[0u8; 20]); // wrong hash (not HASH160(redeem))
         script_pubkey.push(OP_EQUAL);
 
         let (tx, pv, psp) = minimal_tx_and_prevouts(&script_sig, &script_pubkey);
-        let psp_refs: Vec<&[u8]> = psp.iter().map(|b| b.as_slice()).collect();
+        let psp_refs: Vec<&[u8]> = psp.iter().map(|b| b.as_ref()).collect();
         let result = verify_script_with_context_full(
             &script_sig,
             &script_pubkey,
@@ -7869,13 +8190,17 @@ mod tests {
             None,
             crate::types::Network::Mainnet,
             SigVersion::Base,
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
+            #[cfg(feature = "production")]
+            None,
+            #[cfg(feature = "production")]
+            None,
+            #[cfg(feature = "production")]
+            None,
             None, // precomputed_bip143
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
+            #[cfg(feature = "production")]
+            None,
+            #[cfg(feature = "production")]
+            None,
         );
         assert!(result.is_ok());
         assert!(!result.unwrap());
@@ -7884,11 +8209,11 @@ mod tests {
     #[test]
     fn test_verify_with_context_p2wpkh_wrong_witness_size() {
         // P2WPKH script_pubkey but witness has 1 element (need 2) -> false.
-        let mut script_pubkey = vec![OP_0, 0x14];
+        let mut script_pubkey = vec![OP_0, PUSH_20_BYTES];
         script_pubkey.extend(&[0u8; 20]);
         let witness: Vec<Vec<u8>> = vec![vec![0x30; 70]]; // only sig, no pubkey
         let (tx, pv, psp) = minimal_tx_and_prevouts(&[], &script_pubkey);
-        let psp_refs: Vec<&[u8]> = psp.iter().map(|b| b.as_slice()).collect();
+        let psp_refs: Vec<&[u8]> = psp.iter().map(|b| b.as_ref()).collect();
         let empty: Vec<u8> = vec![];
         let result = verify_script_with_context_full(
             &empty,
@@ -7903,13 +8228,17 @@ mod tests {
             None,
             crate::types::Network::Mainnet,
             SigVersion::Base,
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
+            #[cfg(feature = "production")]
+            None,
+            #[cfg(feature = "production")]
+            None,
+            #[cfg(feature = "production")]
+            None,
             None, // precomputed_bip143
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
+            #[cfg(feature = "production")]
+            None,
+            #[cfg(feature = "production")]
+            None,
         );
         assert!(result.is_ok());
         assert!(!result.unwrap());
@@ -7919,11 +8248,11 @@ mod tests {
     fn test_verify_with_context_p2wsh_wrong_witness_script_hash() {
         // P2WSH script_pubkey but SHA256(witness_script) != program -> false.
         let witness_script = vec![OP_1];
-        let mut script_pubkey = vec![OP_0, 0x20];
+        let mut script_pubkey = vec![OP_0, PUSH_32_BYTES];
         script_pubkey.extend(&[0u8; 32]); // wrong hash (not SHA256(witness_script))
         let witness: Vec<Vec<u8>> = vec![witness_script];
         let (tx, pv, psp) = minimal_tx_and_prevouts(&[], &script_pubkey);
-        let psp_refs: Vec<&[u8]> = psp.iter().map(|b| b.as_slice()).collect();
+        let psp_refs: Vec<&[u8]> = psp.iter().map(|b| b.as_ref()).collect();
         let empty: Vec<u8> = vec![];
         let result = verify_script_with_context_full(
             &empty,
@@ -7938,13 +8267,17 @@ mod tests {
             None,
             crate::types::Network::Mainnet,
             SigVersion::Base,
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
+            #[cfg(feature = "production")]
+            None,
+            #[cfg(feature = "production")]
+            None,
+            #[cfg(feature = "production")]
+            None,
             None, // precomputed_bip143
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
+            #[cfg(feature = "production")]
+            None,
+            #[cfg(feature = "production")]
+            None,
         );
         assert!(result.is_ok());
         assert!(!result.unwrap());
@@ -7954,8 +8287,8 @@ mod tests {
     #[cfg(feature = "production")]
     fn test_p2wsh_multisig_fast_path() {
         // P2WSH 2-of-2 multisig: fast path parses and validates; placeholder sigs fail -> Ok(false).
-        use crate::crypto::OptimizedSha256;
         use crate::constants::BIP147_ACTIVATION_MAINNET;
+        use crate::crypto::OptimizedSha256;
 
         let pk1 = [0x02u8; 33];
         let pk2 = [0x03u8; 33];
@@ -7966,18 +8299,18 @@ mod tests {
         witness_script.push(0xae); // OP_CHECKMULTISIG
 
         let wsh_hash = OptimizedSha256::new().hash(&witness_script);
-        let mut script_pubkey = vec![OP_0, 0x20];
+        let mut script_pubkey = vec![OP_0, PUSH_32_BYTES];
         script_pubkey.extend_from_slice(&wsh_hash);
 
         let witness: Vec<Vec<u8>> = vec![
-            vec![0x00],           // NULLDUMMY
-            vec![0x30u8; 72],     // placeholder sig 1
-            vec![0x30u8; 72],     // placeholder sig 2
+            vec![0x00],       // NULLDUMMY
+            vec![0x30u8; 72], // placeholder sig 1
+            vec![0x30u8; 72], // placeholder sig 2
             witness_script.clone(),
         ];
 
         let (tx, pv, psp) = minimal_tx_and_prevouts(&[], &script_pubkey);
-        let psp_refs: Vec<&[u8]> = psp.iter().map(|b| b.as_slice()).collect();
+        let psp_refs: Vec<&[u8]> = psp.iter().map(|b| b.as_ref()).collect();
         let empty: Vec<u8> = vec![];
         let result = verify_script_with_context_full(
             &empty,
@@ -7992,19 +8325,20 @@ mod tests {
             None,
             crate::types::Network::Mainnet,
             SigVersion::Base,
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
+            #[cfg(feature = "production")]
             None,
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
-            #[cfg(feature = "production")] None,
+            #[cfg(feature = "production")]
+            None,
+            None, // precomputed_bip143
+            #[cfg(feature = "production")]
+            None,
+            #[cfg(feature = "production")]
+            None,
         );
         assert!(result.is_ok());
         assert!(!result.unwrap());
     }
 }
-
 
 #[cfg(test)]
 #[allow(unused_doc_comments)]
@@ -8241,4 +8575,3 @@ mod property_tests {
         }
     }
 }
-

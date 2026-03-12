@@ -6,8 +6,8 @@
 //! - UtxoCommitmentSet: UTXO set with Merkle tree commitment support
 
 use crate::types::{Hash, Natural};
-use serde::{Deserialize, Serialize};
 use blvm_spec_lock::spec_locked;
+use serde::{Deserialize, Serialize};
 
 /// UTXO Commitment
 ///

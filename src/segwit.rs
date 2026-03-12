@@ -111,7 +111,10 @@ fn hash_witness_from_nested(tx_witnesses: &[Witness]) -> Hash {
 /// Compute witness merkle root from nested witnesses without flattening.
 /// Accepts `&[Vec<Witness>]` where each `Vec<Witness>` is one tx's input stacks.
 /// Avoids allocating flattened structure in block validation hot path.
-pub fn compute_witness_merkle_root_from_nested(block: &Block, witnesses: &[Vec<Witness>]) -> Result<Hash> {
+pub fn compute_witness_merkle_root_from_nested(
+    block: &Block,
+    witnesses: &[Vec<Witness>],
+) -> Result<Hash> {
     if block.transactions.is_empty() {
         return Err(crate::error::ConsensusError::ConsensusRuleViolation(
             "Cannot compute witness merkle root from empty block".into(),
@@ -156,7 +159,8 @@ pub(crate) fn extract_witness_commitment(script: &ByteString) -> Option<Hash> {
     // Look for OP_RETURN followed by witness commitment
     if script.len() >= 38 && script[0] == OP_RETURN {
         // OP_RETURN
-        if script.len() >= 38 && script[1] == 0x24 { // 0x24 = push 36 bytes (witness commitment)
+        if script.len() >= 38 && script[1] == 0x24 {
+            // 0x24 = push 36 bytes (witness commitment)
             // 36 bytes
             let mut commitment = [0u8; 32];
             commitment.copy_from_slice(&script[2..34]);
@@ -206,16 +210,25 @@ pub fn calculate_block_weight(block: &Block, witnesses: &[Witness]) -> Result<Na
 /// Accepts `&[Vec<Witness>]` where each `Vec<Witness>` is one tx's input witness stacks.
 /// Avoids allocating the flattened structure in the hot block validation path.
 #[inline]
-pub fn calculate_block_weight_from_nested(block: &Block, witnesses: &[Vec<Witness>]) -> Result<Natural> {
+pub fn calculate_block_weight_from_nested(
+    block: &Block,
+    witnesses: &[Vec<Witness>],
+) -> Result<Natural> {
     let mut total_weight = 0;
     for (i, tx) in block.transactions.iter().enumerate() {
         let witness_size: Natural = if i < witnesses.len() {
-            witnesses[i].iter().flat_map(|w| w.iter()).map(|e| e.len() as Natural).sum()
+            witnesses[i]
+                .iter()
+                .flat_map(|w| w.iter())
+                .map(|e| e.len() as Natural)
+                .sum()
         } else {
             0
         };
-        let base_size = (4 + tx.inputs.len() * (32 + 4 + 1 + 4) + tx.outputs.len() * (8 + 1) + 4) as Natural;
-        total_weight += witness::calculate_transaction_weight_segwit(base_size, base_size + witness_size);
+        let base_size =
+            (4 + tx.inputs.len() * (32 + 4 + 1 + 4) + tx.outputs.len() * (8 + 1) + 4) as Natural;
+        total_weight +=
+            witness::calculate_transaction_weight_segwit(base_size, base_size + witness_size);
     }
     Ok(total_weight)
 }
@@ -563,7 +576,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod property_tests {
     use super::*;
@@ -853,4 +865,3 @@ mod property_tests {
         })
     }
 }
-

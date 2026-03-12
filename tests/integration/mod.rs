@@ -1,4 +1,4 @@
-//! Integration tests for consensus-proof
+//! Integration tests for blvm-consensus
 
 mod consensus_validation;
 mod mempool_mining;
@@ -7,7 +7,7 @@ mod mempool_mining;
 #[cfg(feature = "production")]
 mod production_integration_tests;
 #[cfg(feature = "production")]
-mod bllvm_integration_tests;
+mod blvm_integration_tests;
 
 // UTXO commitments integration tests (only compiled with utxo-commitments feature)
 #[cfg(feature = "utxo-commitments")]

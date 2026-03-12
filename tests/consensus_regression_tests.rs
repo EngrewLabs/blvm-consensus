@@ -10,11 +10,13 @@
 //! All fixes were validated through full-chain differential testing (912,723 blocks)
 //! with 0 divergences found.
 
-use blvm_consensus::script::{verify_script, verify_script_with_context_full, SigVersion};
-use blvm_consensus::transaction_hash::{calculate_transaction_sighash_with_script_code, SighashType};
 use blvm_consensus::bip_validation::check_bip30;
-use blvm_consensus::types::*;
 use blvm_consensus::constants::*;
+use blvm_consensus::script::{verify_script, verify_script_with_context_full, SigVersion};
+use blvm_consensus::transaction_hash::{
+    calculate_transaction_sighash_with_script_code, SighashType,
+};
+use blvm_consensus::types::*;
 
 // ============================================================================
 // Bug #1: P2SH ScriptSig Push-Only Validation (CRITICAL SECURITY)
@@ -40,23 +42,33 @@ fn test_p2sh_scriptsig_push_only_validation() {
     let redeem_script = vec![0x51]; // OP_1
 
     let flags = 0x01; // SCRIPT_VERIFY_P2SH
-    let result = verify_script(&valid_script_sig, &script_pubkey, Some(&redeem_script), flags);
+    let result = verify_script(
+        &valid_script_sig,
+        &script_pubkey,
+        Some(&redeem_script),
+        flags,
+    );
     // Should pass push-only check (may fail for other reasons, but not push-only)
 
     // Invalid: scriptSig with non-push opcode (OP_ADD = 0x93)
     let invalid_script_sig = vec![0x51, 0x93]; // OP_1, OP_ADD (OP_ADD is not push)
-    
+
     let tx = Transaction {
         version: 1,
         inputs: vec![TransactionInput {
-            prevout: OutPoint { hash: [1; 32].into(), index: 0 },
+            prevout: OutPoint {
+                hash: [1; 32].into(),
+                index: 0,
+            },
             script_sig: invalid_script_sig.clone(),
             sequence: 0xffffffff,
-        }].into(),
+        }]
+        .into(),
         outputs: vec![TransactionOutput {
             value: 1000,
             script_pubkey: script_pubkey.clone(),
-        }].into(),
+        }]
+        .into(),
         lock_time: 0,
     };
 
@@ -67,7 +79,10 @@ fn test_p2sh_scriptsig_push_only_validation() {
 
     // CRITICAL: This should fail due to push-only validation
     let pv: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
-    let psp: Vec<&[u8]> = prevouts.iter().map(|p| p.script_pubkey.as_slice()).collect();
+    let psp: Vec<&[u8]> = prevouts
+        .iter()
+        .map(|p| p.script_pubkey.as_slice())
+        .collect();
     let result = verify_script_with_context_full(
         &invalid_script_sig,
         &script_pubkey,
@@ -85,14 +100,19 @@ fn test_p2sh_scriptsig_push_only_validation() {
         None,
         None,
         None, // precomputed_bip143
-        #[cfg(feature = "production")] None,
-        #[cfg(feature = "production")] None,
-        #[cfg(feature = "production")] None,
+        #[cfg(feature = "production")]
+        None,
+        #[cfg(feature = "production")]
+        None,
+        #[cfg(feature = "production")]
+        None,
     );
 
     // Must reject non-push opcode in P2SH scriptSig
-    assert!(result.is_err() || result == Ok(false), 
-        "P2SH scriptSig with non-push opcode must be rejected");
+    assert!(
+        result.is_err() || result == Ok(false),
+        "P2SH scriptSig with non-push opcode must be rejected"
+    );
 }
 
 // ============================================================================
@@ -116,14 +136,19 @@ fn test_taproot_empty_scriptsig_requirement() {
     let tx = Transaction {
         version: 1,
         inputs: vec![TransactionInput {
-            prevout: OutPoint { hash: [1; 32].into(), index: 0 },
+            prevout: OutPoint {
+                hash: [1; 32].into(),
+                index: 0,
+            },
             script_sig: vec![0x51], // Non-empty scriptSig (should be rejected)
             sequence: 0xffffffff,
-        }].into(),
+        }]
+        .into(),
         outputs: vec![TransactionOutput {
             value: 1000,
             script_pubkey: script_pubkey.clone(),
-        }].into(),
+        }]
+        .into(),
         lock_time: 0,
     };
 
@@ -133,15 +158,16 @@ fn test_taproot_empty_scriptsig_requirement() {
     }];
 
     let height = TAPROOT_ACTIVATION_MAINNET; // After Taproot activation
-    // Calculate flags manually (calculate_script_flags_for_block is private)
-    // For Taproot, we need 0x8000 flag if transaction has P2TR outputs
+                                             // Calculate flags manually (calculate_script_flags_for_block is private)
+                                             // For Taproot, we need 0x8000 flag if transaction has P2TR outputs
     let mut flags = 0u32;
     if height >= TAPROOT_ACTIVATION_MAINNET {
         // Check if transaction has P2TR outputs
         for output in &tx.outputs {
-            if output.script_pubkey.len() == 34 
-                && output.script_pubkey[0] == 0x51 
-                && output.script_pubkey[1] == 0x20 {
+            if output.script_pubkey.len() == 34
+                && output.script_pubkey[0] == 0x51
+                && output.script_pubkey[1] == 0x20
+            {
                 flags |= 0x8000; // SCRIPT_VERIFY_WITNESS_PUBKEYTYPE
                 break;
             }
@@ -150,7 +176,10 @@ fn test_taproot_empty_scriptsig_requirement() {
 
     // CRITICAL: This should fail - Taproot requires empty scriptSig
     let pv: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
-    let psp: Vec<&[u8]> = prevouts.iter().map(|p| p.script_pubkey.as_slice()).collect();
+    let psp: Vec<&[u8]> = prevouts
+        .iter()
+        .map(|p| p.script_pubkey.as_slice())
+        .collect();
     let result = verify_script_with_context_full(
         &tx.inputs[0].script_sig,
         &script_pubkey,
@@ -168,14 +197,19 @@ fn test_taproot_empty_scriptsig_requirement() {
         None,
         None,
         None, // precomputed_bip143
-        #[cfg(feature = "production")] None,
-        #[cfg(feature = "production")] None,
-        #[cfg(feature = "production")] None,
+        #[cfg(feature = "production")]
+        None,
+        #[cfg(feature = "production")]
+        None,
+        #[cfg(feature = "production")]
+        None,
     );
 
     // Must reject non-empty scriptSig for Taproot
-    assert!(result.is_err() || result == Ok(false),
-        "Taproot transaction with non-empty scriptSig must be rejected");
+    assert!(
+        result.is_err() || result == Ok(false),
+        "Taproot transaction with non-empty scriptSig must be rejected"
+    );
 }
 
 // ============================================================================
@@ -195,21 +229,26 @@ fn test_p2sh_redeem_script_sighash() {
     let tx = Transaction {
         version: 1,
         inputs: vec![TransactionInput {
-            prevout: OutPoint { hash: [1; 32].into(), index: 0 },
+            prevout: OutPoint {
+                hash: [1; 32].into(),
+                index: 0,
+            },
             script_sig: vec![0x51],
             sequence: 0xffffffff,
-        }].into(),
+        }]
+        .into(),
         outputs: vec![TransactionOutput {
             value: 1000,
             script_pubkey: vec![0x51].into(),
-        }].into(),
+        }]
+        .into(),
         lock_time: 0,
     };
 
     let mut script_pubkey_vec = vec![0xa9, 0x14]; // OP_HASH160, push 20
     script_pubkey_vec.extend_from_slice(&[0u8; 20]);
     script_pubkey_vec.push(0x87); // OP_EQUAL
-    
+
     let prevouts = vec![TransactionOutput {
         value: 1000000,
         script_pubkey: script_pubkey_vec.clone().into(),
@@ -221,7 +260,10 @@ fn test_p2sh_redeem_script_sighash() {
     let pv: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
     let psp: Vec<&ByteString> = prevouts.iter().map(|p| &p.script_pubkey).collect();
 
-    let psp_refs: Vec<&[u8]> = prevouts.iter().map(|p| p.script_pubkey.as_slice()).collect();
+    let psp_refs: Vec<&[u8]> = prevouts
+        .iter()
+        .map(|p| p.script_pubkey.as_slice())
+        .collect();
     // Calculate sighash with redeem script (correct for P2SH)
     let sighash_with_redeem = calculate_transaction_sighash_with_script_code(
         &tx,
@@ -230,7 +272,8 @@ fn test_p2sh_redeem_script_sighash() {
         &psp_refs,
         SighashType::ALL,
         Some(&redeem_script),
-        #[cfg(feature = "production")] None,
+        #[cfg(feature = "production")]
+        None,
     );
 
     // Calculate sighash with scriptPubkey (incorrect for P2SH - should be different)
@@ -241,7 +284,8 @@ fn test_p2sh_redeem_script_sighash() {
         &psp_refs,
         SighashType::ALL,
         Some(&script_pubkey),
-        #[cfg(feature = "production")] None,
+        #[cfg(feature = "production")]
+        None,
     );
 
     // CRITICAL: Sighash with redeem script should be different from scriptPubkey
@@ -249,10 +293,12 @@ fn test_p2sh_redeem_script_sighash() {
     if sighash_with_redeem.is_ok() && sighash_with_scriptpubkey.is_ok() {
         let redeem_hash = sighash_with_redeem.unwrap();
         let scriptpubkey_hash = sighash_with_scriptpubkey.unwrap();
-        
+
         // They should be different (redeem script != scriptPubkey)
-        assert_ne!(redeem_hash, scriptpubkey_hash,
-            "P2SH sighash must use redeem script, not scriptPubkey");
+        assert_ne!(
+            redeem_hash, scriptpubkey_hash,
+            "P2SH sighash must use redeem script, not scriptPubkey"
+        );
     }
 }
 
@@ -285,7 +331,10 @@ fn test_nested_segwit_detection() {
         && redeem_script[1] == 0x20  // Push 32 bytes
         && redeem_script.len() == 34; // Total length
 
-    assert!(is_nested_segwit, "P2WSH-in-P2SH redeem script must be detected");
+    assert!(
+        is_nested_segwit,
+        "P2WSH-in-P2SH redeem script must be detected"
+    );
 
     // P2WPKH-in-P2SH: [0x00, 0x14, <20 bytes>]
     let mut redeem_script_p2wpkh = vec![0x00, 0x14]; // OP_0, push 20
@@ -296,7 +345,10 @@ fn test_nested_segwit_detection() {
         && redeem_script_p2wpkh[1] == 0x14  // Push 20 bytes
         && redeem_script_p2wpkh.len() == 22; // Total length
 
-    assert!(is_p2wpkh_in_p2sh, "P2WPKH-in-P2SH redeem script must be detected");
+    assert!(
+        is_p2wpkh_in_p2sh,
+        "P2WPKH-in-P2SH redeem script must be detected"
+    );
 }
 
 // ============================================================================
@@ -322,21 +374,25 @@ fn test_bip30_deactivation() {
             bits: 0x1d00ffff,
             nonce: 2083236893,
         },
-        transactions: vec![
-            Transaction {
-                version: 1,
-                inputs: vec![TransactionInput {
-                    prevout: OutPoint { hash: [0u8; 32].into(), index: 0xffffffff },
-                    script_sig: vec![0x04, 0xff, 0xff, 0x00, 0x1d, 0x01, 0x04], // Block height
-                    sequence: 0xffffffff,
-                }].into(),
-                outputs: vec![TransactionOutput {
-                    value: 5000000000,
-                    script_pubkey: vec![0x41, 0x04].into(), // Pubkey
-                }].into(),
-                lock_time: 0,
-            },
-        ].into(),
+        transactions: vec![Transaction {
+            version: 1,
+            inputs: vec![TransactionInput {
+                prevout: OutPoint {
+                    hash: [0u8; 32].into(),
+                    index: 0xffffffff,
+                },
+                script_sig: vec![0x04, 0xff, 0xff, 0x00, 0x1d, 0x01, 0x04], // Block height
+                sequence: 0xffffffff,
+            }]
+            .into(),
+            outputs: vec![TransactionOutput {
+                value: 5000000000,
+                script_pubkey: vec![0x41, 0x04].into(), // Pubkey
+            }]
+            .into(),
+            lock_time: 0,
+        }]
+        .into(),
     };
 
     let utxo_set = UtxoSet::default();
@@ -350,10 +406,12 @@ fn test_bip30_deactivation() {
     // After deactivation (block 91,723): BIP30 should be skipped
     let height_after = BIP30_DEACTIVATION_MAINNET + 1;
     let result_after = check_bip30(&block, &utxo_set, None, height_after, network, None);
-    
+
     // CRITICAL: After deactivation, BIP30 check should always pass
-    assert!(result_after.is_ok() && result_after.unwrap(),
-        "BIP30 check must pass after deactivation height (91,722)");
+    assert!(
+        result_after.is_ok() && result_after.unwrap(),
+        "BIP30 check must pass after deactivation height (91,722)"
+    );
 }
 
 // ============================================================================
@@ -373,14 +431,19 @@ fn test_sighash_alllegacy() {
     let tx = Transaction {
         version: 1,
         inputs: vec![TransactionInput {
-            prevout: OutPoint { hash: [1; 32].into(), index: 0 },
+            prevout: OutPoint {
+                hash: [1; 32].into(),
+                index: 0,
+            },
             script_sig: vec![0x51],
             sequence: 0xffffffff,
-        }].into(),
+        }]
+        .into(),
         outputs: vec![TransactionOutput {
             value: 1000,
             script_pubkey: vec![0x51].into(),
-        }].into(),
+        }]
+        .into(),
         lock_time: 0,
     };
 
@@ -390,7 +453,10 @@ fn test_sighash_alllegacy() {
     }];
 
     let pv: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
-    let psp_refs: Vec<&[u8]> = prevouts.iter().map(|p| p.script_pubkey.as_slice()).collect();
+    let psp_refs: Vec<&[u8]> = prevouts
+        .iter()
+        .map(|p| p.script_pubkey.as_slice())
+        .collect();
 
     // Calculate sighash with AllLegacy (0x00)
     let sighash_alllegacy = calculate_transaction_sighash_with_script_code(
@@ -400,7 +466,8 @@ fn test_sighash_alllegacy() {
         &psp_refs,
         SighashType::ALL_LEGACY,
         None,
-        #[cfg(feature = "production")] None,
+        #[cfg(feature = "production")]
+        None,
     );
 
     // Calculate sighash with All (0x01)
@@ -411,7 +478,8 @@ fn test_sighash_alllegacy() {
         &psp_refs,
         SighashType::ALL,
         None,
-        #[cfg(feature = "production")] None,
+        #[cfg(feature = "production")]
+        None,
     );
 
     // CRITICAL: AllLegacy (0x00) should produce same sighash as All (0x01)
@@ -424,11 +492,15 @@ fn test_sighash_alllegacy() {
         // What's important is that 0x00 is accepted and treated as SIGHASH_ALL behavior
         let alllegacy_hash = sighash_alllegacy.unwrap();
         let all_hash = sighash_all.unwrap();
-        
+
         // Verify both are valid 32-byte hashes
-        assert_eq!(alllegacy_hash.len(), 32, "AllLegacy sighash must be 32 bytes");
+        assert_eq!(
+            alllegacy_hash.len(),
+            32,
+            "AllLegacy sighash must be 32 bytes"
+        );
         assert_eq!(all_hash.len(), 32, "All sighash must be 32 bytes");
-        
+
         // The hashes will differ because the sighash type byte (0x00 vs 0x01) is in the preimage
         // This is expected - what matters is that 0x00 is accepted and behaves like SIGHASH_ALL
         // (signs all inputs and outputs, not rejected as invalid)
@@ -457,18 +529,23 @@ fn test_script_flags_per_transaction() {
     // Transaction with P2TR output: should have Taproot flag set during validation
     let mut script_pubkey_taproot = vec![0x51, 0x20]; // OP_1, push 32
     script_pubkey_taproot.extend_from_slice(&[0u8; 32]);
-    
+
     let tx_with_taproot = Transaction {
         version: 1,
         inputs: vec![TransactionInput {
-            prevout: OutPoint { hash: [1; 32].into(), index: 0 },
+            prevout: OutPoint {
+                hash: [1; 32].into(),
+                index: 0,
+            },
             script_sig: vec![], // Empty for Taproot
             sequence: 0xffffffff,
-        }].into(),
+        }]
+        .into(),
         outputs: vec![TransactionOutput {
             value: 1000,
             script_pubkey: script_pubkey_taproot.clone(),
-        }].into(),
+        }]
+        .into(),
         lock_time: 0,
     };
 
@@ -480,7 +557,10 @@ fn test_script_flags_per_transaction() {
     // Verify that Taproot transaction with empty scriptSig is accepted
     // (This indirectly tests that Taproot flag is set correctly)
     let pv: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
-    let psp: Vec<&[u8]> = prevouts.iter().map(|p| p.script_pubkey.as_slice()).collect();
+    let psp: Vec<&[u8]> = prevouts
+        .iter()
+        .map(|p| p.script_pubkey.as_slice())
+        .collect();
     let result = verify_script_with_context_full(
         &tx_with_taproot.inputs[0].script_sig,
         &script_pubkey_taproot,
@@ -498,14 +578,20 @@ fn test_script_flags_per_transaction() {
         None,
         None,
         None, // precomputed_bip143
-        #[cfg(feature = "production")] None,
-        #[cfg(feature = "production")] None,
-        #[cfg(feature = "production")] None,
+        #[cfg(feature = "production")]
+        None,
+        #[cfg(feature = "production")]
+        None,
+        #[cfg(feature = "production")]
+        None,
     );
 
     // Should not fail due to empty scriptSig (Taproot allows empty scriptSig)
     // (May fail for other reasons like missing witness, but not due to empty scriptSig)
-    assert!(result.is_ok() || result.is_err(), "Taproot validation should handle empty scriptSig");
+    assert!(
+        result.is_ok() || result.is_err(),
+        "Taproot validation should handle empty scriptSig"
+    );
 }
 
 // ============================================================================
@@ -531,25 +617,32 @@ fn test_segwit_deserialization() {
     // Create a SegWit transaction (P2WPKH)
     let mut script_pubkey = vec![0x00, 0x14]; // OP_0, push 20
     script_pubkey.extend_from_slice(&[0u8; 20]);
-    
+
     let tx = Transaction {
         version: 1,
         inputs: vec![TransactionInput {
-            prevout: OutPoint { hash: [1; 32].into(), index: 0 },
+            prevout: OutPoint {
+                hash: [1; 32].into(),
+                index: 0,
+            },
             script_sig: vec![], // Empty scriptSig for SegWit
             sequence: 0xffffffff,
-        }].into(),
+        }]
+        .into(),
         outputs: vec![TransactionOutput {
             value: 1000,
             script_pubkey: script_pubkey.clone(),
-        }].into(),
+        }]
+        .into(),
         lock_time: 0,
     };
-    
+
     // CRITICAL: SegWit transactions should have empty scriptSig
     // The marker (0x00 0x01) is handled during deserialization
-    assert!(tx.inputs[0].script_sig.is_empty(), 
-        "SegWit transactions must have empty scriptSig");
+    assert!(
+        tx.inputs[0].script_sig.is_empty(),
+        "SegWit transactions must have empty scriptSig"
+    );
 }
 
 // ============================================================================
@@ -568,28 +661,38 @@ fn test_transaction_limits() {
     // Create transaction with many inputs (should not be rejected due to count)
     let many_inputs: Vec<TransactionInput> = (0..5000)
         .map(|i| TransactionInput {
-            prevout: OutPoint { hash: [i as u8; 32].into(), index: 0 },
+            prevout: OutPoint {
+                hash: [i as u8; 32].into(),
+                index: 0,
+            },
             script_sig: vec![0x51],
             sequence: 0xffffffff,
         })
         .collect();
-    
+
     let tx = Transaction {
         version: 1,
         inputs: many_inputs.into(),
         outputs: vec![TransactionOutput {
             value: 1000,
             script_pubkey: vec![0x51].into(),
-        }].into(),
+        }]
+        .into(),
         lock_time: 0,
     };
-    
+
     // CRITICAL: Transaction structure should be valid (not rejected due to input count)
     // The actual validation may fail for other reasons (missing prevouts, etc.)
     // but it should not fail due to exceeding MAX_INPUTS
-    assert!(tx.inputs.len() > 1000, "Transaction should support more than 1000 inputs");
-    assert!(tx.inputs.len() < MAX_INPUTS as usize, "Transaction should be within MAX_INPUTS limit");
-    
+    assert!(
+        tx.inputs.len() > 1000,
+        "Transaction should support more than 1000 inputs"
+    );
+    assert!(
+        tx.inputs.len() < MAX_INPUTS as usize,
+        "Transaction should be within MAX_INPUTS limit"
+    );
+
     // Create transaction with many outputs
     let many_outputs: Vec<TransactionOutput> = (0..5000)
         .map(|_| TransactionOutput {
@@ -597,20 +700,30 @@ fn test_transaction_limits() {
             script_pubkey: vec![0x51].into(),
         })
         .collect();
-    
+
     let tx_many_outputs = Transaction {
         version: 1,
         inputs: vec![TransactionInput {
-            prevout: OutPoint { hash: [1; 32].into(), index: 0 },
+            prevout: OutPoint {
+                hash: [1; 32].into(),
+                index: 0,
+            },
             script_sig: vec![0x51],
             sequence: 0xffffffff,
-        }].into(),
+        }]
+        .into(),
         outputs: many_outputs.into(),
         lock_time: 0,
     };
-    
-    assert!(tx_many_outputs.outputs.len() > 1000, "Transaction should support more than 1000 outputs");
-    assert!(tx_many_outputs.outputs.len() < MAX_OUTPUTS as usize, "Transaction should be within MAX_OUTPUTS limit");
+
+    assert!(
+        tx_many_outputs.outputs.len() > 1000,
+        "Transaction should support more than 1000 outputs"
+    );
+    assert!(
+        tx_many_outputs.outputs.len() < MAX_OUTPUTS as usize,
+        "Transaction should be within MAX_OUTPUTS limit"
+    );
 }
 
 // ============================================================================
@@ -627,41 +740,51 @@ fn test_transaction_limits() {
 #[test]
 fn test_taproot_flag_value() {
     let height = TAPROOT_ACTIVATION_MAINNET + 1000;
-    
+
     // Transaction with P2TR output
     let mut script_pubkey = vec![0x51, 0x20];
     script_pubkey.extend_from_slice(&[0u8; 32]);
-    
+
     let tx = Transaction {
         version: 1,
         inputs: vec![TransactionInput {
-            prevout: OutPoint { hash: [1; 32].into(), index: 0 },
+            prevout: OutPoint {
+                hash: [1; 32].into(),
+                index: 0,
+            },
             script_sig: vec![],
             sequence: 0xffffffff,
-        }].into(),
+        }]
+        .into(),
         outputs: vec![TransactionOutput {
             value: 1000,
             script_pubkey: script_pubkey.into(),
-        }].into(),
+        }]
+        .into(),
         lock_time: 0,
     };
-    
+
     // Manually calculate flags (calculate_script_flags_for_block is private)
     let mut flags = 0u32;
     if height >= TAPROOT_ACTIVATION_MAINNET {
         for output in &tx.outputs {
-            if output.script_pubkey.len() == 34 
-                && output.script_pubkey[0] == 0x51 
-                && output.script_pubkey[1] == 0x20 {
+            if output.script_pubkey.len() == 34
+                && output.script_pubkey[0] == 0x51
+                && output.script_pubkey[1] == 0x20
+            {
                 flags |= 0x8000; // SCRIPT_VERIFY_WITNESS_PUBKEYTYPE
                 break;
             }
         }
     }
-    
+
     // CRITICAL: Flag must be 0x8000, not 0x20000
     if flags & 0x8000 != 0 {
-        assert_eq!(flags & 0x8000, 0x8000, "Taproot flag must be 0x8000, not 0x20000");
+        assert_eq!(
+            flags & 0x8000,
+            0x8000,
+            "Taproot flag must be 0x8000, not 0x20000"
+        );
         assert_eq!(flags & 0x20000, 0, "Taproot flag must NOT be 0x20000");
     }
 }
@@ -684,29 +807,38 @@ fn test_taproot_flag_value() {
 fn test_strict_der_validation() {
     // Create a transaction with a signature that would fail strict DER
     // (This is tested indirectly through script validation with BIP66 flags)
-    
+
     // Valid DER signature format (minimal valid structure)
     let valid_der = vec![
         0x30, 0x06, // SEQUENCE, length 6
         0x02, 0x01, 0x01, // INTEGER, length 1, value 1
         0x02, 0x01, 0x01, // INTEGER, length 1, value 1
     ];
-    
+
     // CRITICAL: Valid DER should have correct structure
-    assert!(valid_der.len() >= 6, "Valid DER signature must have minimum structure");
-    assert_eq!(valid_der[0], 0x30, "DER signature must start with SEQUENCE tag");
-    
+    assert!(
+        valid_der.len() >= 6,
+        "Valid DER signature must have minimum structure"
+    );
+    assert_eq!(
+        valid_der[0], 0x30,
+        "DER signature must start with SEQUENCE tag"
+    );
+
     // Invalid DER: leading zeros in integer (would fail strict DER)
     let invalid_der = vec![
         0x30, 0x08, // SEQUENCE, length 8
         0x02, 0x02, 0x00, 0x01, // INTEGER with leading zero (invalid)
         0x02, 0x01, 0x01,
     ];
-    
+
     // CRITICAL: Invalid DER should be detected (leading zero in integer)
     assert!(invalid_der.len() >= 8, "Invalid DER signature structure");
     // The leading zero (0x00 before 0x01) would cause strict DER validation to fail
-    assert_eq!(invalid_der[4], 0x00, "Invalid DER has leading zero in integer");
+    assert_eq!(
+        invalid_der[4], 0x00,
+        "Invalid DER has leading zero in integer"
+    );
 }
 
 // ============================================================================
@@ -720,7 +852,7 @@ fn test_strict_der_validation() {
 fn test_regression_test_coverage() {
     // This test just verifies that we have tests for critical bugs
     // The actual tests above verify the fixes work correctly
-    
+
     // List of critical bugs that must have regression tests:
     let critical_bugs = vec![
         "P2SH push-only validation",
@@ -737,6 +869,8 @@ fn test_regression_test_coverage() {
     ];
 
     // If this test runs, it means the test file exists and is being executed
-    assert!(!critical_bugs.is_empty(), "Regression tests must cover critical bugs");
+    assert!(
+        !critical_bugs.is_empty(),
+        "Regression tests must cover critical bugs"
+    );
 }
-

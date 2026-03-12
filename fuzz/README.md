@@ -1,6 +1,6 @@
-# Fuzzing Infrastructure for Consensus-Proof
+# Fuzzing Infrastructure for blvm-consensus
 
-This directory contains comprehensive fuzzing infrastructure for the consensus-proof crate, modeled after Bitcoin Core's fuzzing approach.
+This directory contains comprehensive fuzzing infrastructure for the blvm-consensus crate, modeled after Bitcoin Core's fuzzing approach.
 
 ## Overview
 
@@ -17,7 +17,7 @@ This directory contains comprehensive fuzzing infrastructure for the consensus-p
 ### 1. Initialize Corpus
 
 ```bash
-cd consensus-proof/fuzz
+cd blvm-consensus/fuzz
 ./init_corpus.sh
 ```
 
@@ -180,7 +180,7 @@ echo "76a914..." > fuzz/corpus/script_execution/p2pkh.hex
 
 ### Advantages
 - ✅ Rust's memory safety (fewer memory errors)
-- ✅ Better integration with Kani proofs
+- ✅ Better integration with spec-lock verification
 - ✅ Property-based testing integration (proptest)
 
 ## Metrics
@@ -228,14 +228,14 @@ RUSTFLAGS="-Zsanitizer=address" cargo +nightly fuzz run transaction_validation
 
 ## Differential Fuzzing
 
-The `differential_fuzzing` target tests internal consistency within consensus-proof:
+The `differential_fuzzing` target tests internal consistency within blvm-consensus:
 
 - **Serialization round-trips**: Ensures serialize→deserialize preserves all properties
 - **Validation consistency**: Same transaction validates the same way after round-trip
 - **Calculation idempotency**: Weight calculations, economic calculations are deterministic
 - **Cross-validation**: Different code paths agree on validation results
 
-This does NOT call Bitcoin Core - it tests consensus-proof independently.
+This does NOT call Bitcoin Core - it tests blvm-consensus independently.
 
 ```bash
 cargo +nightly fuzz run differential_fuzzing

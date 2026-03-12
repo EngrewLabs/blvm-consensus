@@ -1,7 +1,6 @@
 //! Essential Bitcoin types for consensus validation
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 #[cfg(feature = "production")]
 use smallvec::SmallVec;
@@ -63,7 +62,9 @@ pub struct SharedByteString(std::sync::Arc<[u8]>);
 
 impl std::fmt::Debug for SharedByteString {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("SharedByteString").field(&self.0.as_ref()).finish()
+        f.debug_tuple("SharedByteString")
+            .field(&self.0.as_ref())
+            .finish()
     }
 }
 
@@ -174,7 +175,7 @@ impl Network {
 
     /// Get human-readable part (HRP) for Bech32 encoding
     ///
-    /// Used by bllvm-protocol for address encoding (BIP173/350/351)
+    /// Used by blvm-protocol for address encoding (BIP173/350/351)
     pub fn hrp(&self) -> &'static str {
         match self {
             Network::Mainnet => "bc",

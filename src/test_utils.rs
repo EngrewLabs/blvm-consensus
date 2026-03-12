@@ -13,8 +13,7 @@ use crate::types::{OutPoint, TransactionInput, TransactionOutput};
 #[cfg(any(test, feature = "property-tests"))]
 /// Strategy yielding (Transaction, Vec<Witness>) with |w| = |tx.inputs|.
 /// Use for SegWit round-trip property tests per Orange Paper 8.2.2.
-pub fn transaction_with_witness_strategy(
-) -> impl Strategy<Value = (Transaction, Vec<Witness>)> {
+pub fn transaction_with_witness_strategy() -> impl Strategy<Value = (Transaction, Vec<Witness>)> {
     (1..10usize).prop_flat_map(|input_count| {
         let tx_strategy = transaction_with_input_count_strategy(input_count);
         let witness_strategy = prop::collection::vec(
@@ -26,9 +25,7 @@ pub fn transaction_with_witness_strategy(
 }
 
 #[cfg(any(test, feature = "property-tests"))]
-fn transaction_with_input_count_strategy(
-    input_count: usize,
-) -> impl Strategy<Value = Transaction> {
+fn transaction_with_input_count_strategy(input_count: usize) -> impl Strategy<Value = Transaction> {
     prop::collection::vec(any::<u8>(), 0..10).prop_map(move |output_data| {
         let inputs: Vec<TransactionInput> = (0..input_count)
             .map(|i| TransactionInput {

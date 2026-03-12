@@ -51,7 +51,6 @@ pub fn verify_schnorr_batch(
 }
 
 pub fn taproot_output_key(internal_pubkey: &[u8; 32], merkle_root: &Hash) -> Result<[u8; 32]> {
-    blvm_taproot_output_key(internal_pubkey, merkle_root).ok_or_else(|| {
-        ConsensusError::InvalidSignature("Invalid internal public key".into())
-    })
+    blvm_taproot_output_key(internal_pubkey, merkle_root)
+        .ok_or_else(|| ConsensusError::InvalidSignature("Invalid internal public key".into()))
 }

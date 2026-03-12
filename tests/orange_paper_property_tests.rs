@@ -3,11 +3,11 @@
 //! These tests directly compare implementation results against Orange Paper formulas,
 //! ensuring mathematical correctness and serving as regression tests for formula changes.
 
-use blvm_consensus::*;
+use blvm_consensus::economic;
 use blvm_consensus::orange_paper_constants::*;
 use blvm_consensus::orange_paper_property_helpers::*;
-use blvm_consensus::economic;
 use blvm_consensus::types::*;
+use blvm_consensus::*;
 use proptest::prelude::*;
 
 proptest! {
@@ -109,11 +109,11 @@ proptest! {
     ) {
         let height_before = halving_period * H;
         let height_at = if halving_period > 0 { halving_period * H } else { 0 };
-        
+
         if halving_period > 0 {
             let subsidy_before = expected_getblocksubsidy_from_orange_paper(height_before - 1);
             let subsidy_at = expected_getblocksubsidy_from_orange_paper(height_at);
-            
+
             // At halving boundary, subsidy should be exactly half (or zero if at limit)
             if halving_period < 64 && subsidy_before > 0 {
                 prop_assert_eq!(subsidy_at, subsidy_before / 2,
@@ -149,11 +149,11 @@ proptest! {
     ) {
         let supply = expected_totalsupply_from_orange_paper(height);
         let max_money = M_MAX as i64;
-        
+
         // Supply should be close to max (within 1% or exact at convergence)
         let diff = max_money - supply;
         let percent_diff = (diff as f64 / max_money as f64) * 100.0;
-        
+
         prop_assert!(supply <= max_money,
             "Supply at height {} = {} should be ≤ M_MAX = {}",
             height, supply, max_money);
@@ -177,9 +177,9 @@ proptest! {
         num_utxos in 1usize..50usize
     ) {
         use sha2::{Sha256, Digest};
-        
+
         let mut utxo_set = UtxoSet::default();
-        
+
         // Insert UTXOs in deterministic order
         for i in 0..num_utxos {
             let outpoint = OutPoint {
@@ -193,7 +193,7 @@ proptest! {
                 is_coinbase: false,
             }));
         }
-        
+
         // Hash the UTXO set (simplified - using serialization)
         let mut data1 = Vec::new();
         for (outpoint, utxo) in &utxo_set {
@@ -201,7 +201,7 @@ proptest! {
             data1.extend_from_slice(&utxo.value.to_le_bytes());
         }
         let hash1 = Sha256::digest(&data1);
-        
+
         // Hash again (should be identical)
         let mut data2 = Vec::new();
         for (outpoint, utxo) in &utxo_set {
@@ -209,7 +209,7 @@ proptest! {
             data2.extend_from_slice(&utxo.value.to_le_bytes());
         }
         let hash2 = Sha256::digest(&data2);
-        
+
         let hash1_slice: &[u8] = hash1.as_slice();
         let hash2_slice: &[u8] = hash2.as_slice();
         prop_assert_eq!(hash1_slice, hash2_slice,
@@ -228,7 +228,7 @@ proptest! {
         num_utxos in 0usize..1000usize
     ) {
         let mut utxo_set = UtxoSet::default();
-        
+
         for i in 0..num_utxos {
             let outpoint = OutPoint {
                 hash: [i as u8; 32],
@@ -241,7 +241,7 @@ proptest! {
                 is_coinbase: false,
             }));
         }
-        
+
         // Size should match number inserted (all unique)
         prop_assert_eq!(utxo_set.len(), num_utxos,
             "UTXO set size should match number of unique insertions");
@@ -269,7 +269,7 @@ proptest! {
         prop_assert!(weight <= W_MAX || weight > W_MAX,
             "Block weight {} should be validated against W_MAX = {}",
             weight, W_MAX);
-        
+
         // Valid blocks must have weight ≤ W_MAX
         if weight <= W_MAX {
             prop_assert!(weight <= W_MAX,
@@ -292,7 +292,7 @@ proptest! {
         prop_assert!(sigops <= S_MAX || sigops > S_MAX,
             "Block sigops {} should be validated against S_MAX = {}",
             sigops, S_MAX);
-        
+
         // Valid blocks must have sigops ≤ S_MAX
         if sigops <= S_MAX {
             prop_assert!(sigops <= S_MAX,
@@ -403,7 +403,7 @@ proptest! {
             outputs: vec![].into(),
             lock_time: lock_time as u64,
         };
-        
+
         // Add inputs
         for i in 0..num_inputs {
             tx.inputs.push(TransactionInput {
@@ -415,7 +415,7 @@ proptest! {
                 sequence: 0xffffffff,
             });
         }
-        
+
         // Add outputs
         for i in 0..num_outputs {
             tx.outputs.push(TransactionOutput {
@@ -423,7 +423,7 @@ proptest! {
                 script_pubkey: vec![i as u8; 20].into(),
             });
         }
-        
+
         // Serialize and deserialize
         // Note: This is a placeholder - actual implementation would use real serialization
         // For now, we verify the transaction structure is valid
@@ -446,7 +446,7 @@ proptest! {
         // 0xFD-0xFFFF: 3 bytes (0xFD + 2 bytes)
         // 0x10000-0xFFFFFFFF: 5 bytes (0xFE + 4 bytes)
         // 0x100000000-0xFFFFFFFFFFFFFFFF: 9 bytes (0xFF + 8 bytes)
-        
+
         let mut encoded = Vec::new();
         if value < 0xFD {
             encoded.push(value as u8);
@@ -460,7 +460,7 @@ proptest! {
             encoded.push(0xFF);
             encoded.extend_from_slice(&value.to_le_bytes());
         }
-        
+
         // Decode
         let decoded = if encoded[0] < 0xFD {
             encoded[0] as u64
@@ -474,7 +474,7 @@ proptest! {
                 encoded[5], encoded[6], encoded[7], encoded[8],
             ])
         };
-        
+
         prop_assert_eq!(decoded, value,
             "VarInt round-trip failed: {} → {} → {}",
             value, encoded.len(), decoded);
@@ -524,11 +524,11 @@ proptest! {
         // Calculate fee rates
         let fee_rate1 = fee1 as f64 / size1 as f64;
         let fee_rate2 = fee2 as f64 / size2 as f64;
-        
+
         // Fee rates should be non-negative
         prop_assert!(fee_rate1 >= 0.0, "Fee rate 1 must be non-negative");
         prop_assert!(fee_rate2 >= 0.0, "Fee rate 2 must be non-negative");
-        
+
         // Ordering should be consistent
         if fee_rate1 > fee_rate2 {
             prop_assert!(fee_rate1 > fee_rate2,
@@ -555,10 +555,10 @@ proptest! {
     ) {
         let original_fee_rate = original_fee as f64 / size as f64;
         let replacement_fee_rate = replacement_fee as f64 / size as f64;
-        
+
         // RBF requires: replacement_fee_rate > original_fee_rate
         let can_replace = replacement_fee_rate > original_fee_rate;
-        
+
         if replacement_fee_rate > original_fee_rate {
             prop_assert!(can_replace,
                 "RBF allowed: replacement fee rate {} > original fee rate {}",
@@ -604,7 +604,7 @@ proptest! {
         height2 in 0u64..(H * 5)
     ) {
         let (h1, h2) = if height1 < height2 { (height1, height2) } else { (height2, height1) };
-        
+
         let inflation1 = expected_inflationrate_from_orange_paper(h1);
         let inflation2 = expected_inflationrate_from_orange_paper(h2);
 
@@ -640,7 +640,7 @@ proptest! {
         height2 in 0u64..(H * 5)
     ) {
         let (h1, h2) = if height1 <= height2 { (height1, height2) } else { (height2, height1) };
-        
+
         let remaining1 = expected_remainingsupply_from_orange_paper(h1);
         let remaining2 = expected_remainingsupply_from_orange_paper(h2);
 
@@ -681,7 +681,7 @@ proptest! {
         bits in 0x1d00ffffu64..=0x1d00ffffu64  // Valid bits range (inclusive)
     ) {
         use blvm_consensus::pow;
-        
+
         // For valid bits, expansion should succeed
         if let Ok(_expanded) = pow::expand_target(bits) {
             // Expansion succeeded, which means target is valid
@@ -701,7 +701,7 @@ proptest! {
         target2 in 1u64..1000000u64
     ) {
         let (t1, t2) = if target1 < target2 { (target1, target2) } else { (target2, target1) };
-        
+
         let difficulty1 = expected_difficultyfromtarget_from_orange_paper(t1);
         let difficulty2 = expected_difficultyfromtarget_from_orange_paper(t2);
 
@@ -725,7 +725,7 @@ proptest! {
         num_txs in 1usize..10usize
     ) {
         use blvm_consensus::mining;
-        
+
         // Create a list of transactions
         let mut transactions = Vec::new();
         for i in 0..num_txs {
@@ -746,7 +746,7 @@ proptest! {
                 lock_time: 0,
             });
         }
-        
+
         // Calculate merkle root twice (should be identical)
         let root1 = mining::calculate_merkle_root(&transactions);
         let root2 = mining::calculate_merkle_root(&transactions);
@@ -770,7 +770,7 @@ proptest! {
     ) {
         use blvm_consensus::block;
         use sha2::{Sha256, Digest};
-        
+
         let header = BlockHeader {
             version: version as i64,
             prev_block_hash: [0; 32],
@@ -779,7 +779,7 @@ proptest! {
             bits,
             nonce: nonce as u64,
         };
-        
+
         // Calculate block hash (double SHA256 of header)
         let serialized = crate::serialization::block::serialize_block_header(&header);
         let hash1 = Sha256::digest(&Sha256::digest(&serialized));
@@ -805,16 +805,16 @@ proptest! {
         num_outputs in 1usize..5usize
     ) {
         use blvm_consensus::economic;
-        
+
         let mut utxo_set = UtxoSet::default();
         let mut total_input_value = 0i64;
-        
+
         // Create inputs with UTXOs
         let mut inputs = Vec::new();
         for i in 0..num_inputs {
             let value = 1000000 * (i as i64 + 1); // 0.01 BTC per input
             total_input_value += value;
-            
+
             let outpoint = OutPoint {
                 hash: [i as u8; 32],
                 index: i as u32,
@@ -825,7 +825,7 @@ proptest! {
                 height: 1,
                 is_coinbase: false,
             }));
-            
+
             inputs.push(TransactionInput {
                 prevout: OutPoint {
                     hash: [i as u8; 32],
@@ -835,7 +835,7 @@ proptest! {
                 sequence: 0xffffffff,
             });
         }
-        
+
         // Create outputs (less than inputs to have a fee)
         let mut outputs = Vec::new();
         let mut total_output_value = 0i64;
@@ -847,14 +847,14 @@ proptest! {
                 script_pubkey: vec![i as u8; 20].into(),
             });
         }
-        
+
         let tx = Transaction {
             version: 1,
             inputs: inputs.into(),
             outputs: outputs.into(),
             lock_time: 0,
         };
-        
+
         // Calculate fee
         if let Ok(fee) = economic::calculate_fee(&tx, &utxo_set) {
             let expected_fee = total_input_value - total_output_value;
@@ -874,14 +874,14 @@ proptest! {
         num_outputs in 1usize..10usize
     ) {
         use blvm_consensus::transaction;
-        
+
         let mut tx = Transaction {
             version: 1,
             inputs: vec![].into(),
             outputs: vec![].into(),
             lock_time: 0,
         };
-        
+
         // Add inputs
         for i in 0..num_inputs {
             tx.inputs.push(TransactionInput {
@@ -893,7 +893,7 @@ proptest! {
                 sequence: 0xffffffff,
             });
         }
-        
+
         // Add outputs
         for i in 0..num_outputs {
             tx.outputs.push(TransactionOutput {
@@ -901,7 +901,7 @@ proptest! {
                 script_pubkey: vec![i as u8; 20].into(),
             });
         }
-        
+
         let size = transaction::calculate_transaction_size(&tx);
         prop_assert!(size > 0,
             "Transaction size must be positive: size={}",
@@ -918,14 +918,14 @@ proptest! {
         num_outputs in 1usize..5usize
     ) {
         use blvm_consensus::segwit;
-        
+
         let mut tx = Transaction {
             version: 1,
             inputs: vec![].into(),
             outputs: vec![].into(),
             lock_time: 0,
         };
-        
+
         // Add inputs
         for i in 0..num_inputs {
             tx.inputs.push(TransactionInput {
@@ -937,7 +937,7 @@ proptest! {
                 sequence: 0xffffffff,
             });
         }
-        
+
         // Add outputs
         for i in 0..num_outputs {
             tx.outputs.push(TransactionOutput {
@@ -945,7 +945,7 @@ proptest! {
                 script_pubkey: vec![i as u8; 20].into(),
             });
         }
-        
+
         // Calculate weight (without witness for simplicity)
         if let Ok(weight) = segwit::calculate_transaction_weight(&tx, None) {
             prop_assert!(weight > 0,
@@ -973,12 +973,12 @@ proptest! {
     ) {
         let mut utxo_set = UtxoSet::default();
         let mut utxo_values = Vec::new();
-        
+
         // Insert UTXOs
         for i in 0..num_utxos {
             let value = 1000 * (i as i64 + 1);
             utxo_values.push(value);
-            
+
             let outpoint = OutPoint {
                 hash: [i as u8; 32],
                 index: i as u32,
@@ -990,13 +990,13 @@ proptest! {
                 is_coinbase: false,
             }));
         }
-        
+
         // Calculate expected value using Orange Paper formula
         let expected_value = expected_utxosetvalue_from_orange_paper(&utxo_values);
-        
+
         // Calculate actual value from UTXO set
         let actual_value: i64 = utxo_set.iter().map(|(_, utxo)| utxo.value).sum();
-        
+
         prop_assert_eq!(actual_value, expected_value,
             "UTXO set value must match Orange Paper formula: actual={}, expected={}",
             actual_value, expected_value);
@@ -1017,13 +1017,13 @@ proptest! {
         height in 0u64..(H * 5)
     ) {
         let total_supply = economic::total_supply(height);
-        
+
         // Calculate sum of subsidies manually
         let mut sum_subsidies = 0i64;
         for i in 0..=height {
             sum_subsidies += economic::get_block_subsidy(i) as i64;
         }
-        
+
         prop_assert_eq!(total_supply, sum_subsidies,
             "Total supply at height {} must equal sum of subsidies: TotalSupply({}) = {}, sum = {}",
             height, height, total_supply, sum_subsidies);
@@ -1039,12 +1039,12 @@ proptest! {
         height2 in 0u64..(64 * H)
     ) {
         let (h1, h2) = if height1 < height2 { (height1, height2) } else { (height2, height1) };
-        
+
         // Only test if both heights are before 64 halvings
         if h2 < 64 * H {
             let subsidy1 = economic::get_block_subsidy(h1);
             let subsidy2 = economic::get_block_subsidy(h2);
-            
+
             prop_assert!(subsidy1 >= subsidy2,
                 "Subsidy must be monotonic decreasing: GetBlockSubsidy({}) = {} should be >= GetBlockSubsidy({}) = {}",
                 h1, subsidy1, h2, subsidy2);
@@ -1061,7 +1061,7 @@ proptest! {
     ) {
         let total_supply = economic::total_supply(height);
         let max_money = M_MAX as i64;
-        
+
         prop_assert!(total_supply <= max_money,
             "Total supply at height {} must be <= M_MAX: TotalSupply({}) = {} > M_MAX = {}",
             height, height, total_supply, max_money);
@@ -1078,15 +1078,15 @@ proptest! {
     ) {
         let halving_period = height / H;
         let future_halving_period = (height + k * H) / H;
-        
+
         // Only test if both are within valid range (< 64)
         if future_halving_period < 64 {
             let subsidy_now = economic::get_block_subsidy(height);
             let subsidy_future = economic::get_block_subsidy(height + k * H);
-            
+
             // Future subsidy should be 2^k times smaller
             let expected_future = subsidy_now >> k;
-            
+
             prop_assert_eq!(subsidy_future, expected_future,
                 "Halving periodicity: GetBlockSubsidy({}) = {} should equal GetBlockSubsidy({}) = {} / 2^{}",
                 height + k * H, subsidy_future, height, subsidy_now, k);
@@ -1102,7 +1102,7 @@ proptest! {
         height in (64 * H)..(65 * H)
     ) {
         let subsidy = economic::get_block_subsidy(height);
-        
+
         prop_assert_eq!(subsidy, 0,
             "Subsidy must be zero after 64 halvings: GetBlockSubsidy({}) = {} should be 0",
             height, subsidy);
@@ -1120,7 +1120,7 @@ proptest! {
     ) {
         let total_supply = economic::total_supply(height);
         let max_money = M_MAX as i64;
-        
+
         // Supply should be close to max (within 1% or exact at convergence)
         let diff = max_money - total_supply;
         let percent_diff = if max_money > 0 {
@@ -1128,7 +1128,7 @@ proptest! {
         } else {
             0.0
         };
-        
+
         prop_assert!(total_supply <= max_money,
             "Supply at height {} = {} should be <= M_MAX = {}",
             height, total_supply, max_money);
@@ -1147,10 +1147,10 @@ proptest! {
         height2 in 0u64..(H * 5)
     ) {
         let (h1, h2) = if height1 < height2 { (height1, height2) } else { (height2, height1) };
-        
+
         let inflation1 = expected_inflationrate_from_orange_paper(h1);
         let inflation2 = expected_inflationrate_from_orange_paper(h2);
-        
+
         // Inflation should decrease over time (or stay at 0)
         prop_assert!(inflation1 >= inflation2 || (inflation1 == 0.0 && inflation2 == 0.0),
             "Inflation rate should decrease over time: InflationRate({}) = {} should be >= InflationRate({}) = {}",
@@ -1168,7 +1168,7 @@ proptest! {
     ) {
         let subsidy = economic::get_block_subsidy(height) as i64;
         let reward = expected_blockreward_from_orange_paper(height, fees);
-        
+
         prop_assert!(reward >= subsidy,
             "Block reward must be >= subsidy: BlockReward({}, {}) = {} should be >= GetBlockSubsidy({}) = {}",
             height, fees, reward, height, subsidy);
@@ -1190,7 +1190,7 @@ proptest! {
     ) {
         use blvm_consensus::pow;
         use blvm_consensus::constants::MAX_TARGET;
-        
+
         if let Ok(_target) = pow::expand_target(bits) {
             // Target expansion succeeded, which means it's valid
             // Bits should be <= MAX_TARGET
@@ -1209,7 +1209,7 @@ proptest! {
         target in 1u64..1000000u64
     ) {
         let difficulty = expected_difficultyfromtarget_from_orange_paper(target);
-        
+
         prop_assert!(difficulty > 0.0,
             "Difficulty must be positive: Difficulty({}) = {} should be > 0",
             target, difficulty);
@@ -1244,7 +1244,7 @@ proptest! {
         use blvm_consensus::pow;
         use blvm_consensus::types::BlockHeader;
         use blvm_consensus::constants::{DIFFICULTY_ADJUSTMENT_INTERVAL, TARGET_TIME_PER_BLOCK};
-        
+
         // Create previous headers for adjustment
         let expected_time = DIFFICULTY_ADJUSTMENT_INTERVAL * TARGET_TIME_PER_BLOCK;
         let header1 = BlockHeader {
@@ -1255,7 +1255,7 @@ proptest! {
             bits: prev_bits,
             nonce: 0,
         };
-        
+
         let header2 = BlockHeader {
             version: 1,
             prev_block_hash: [0; 32],
@@ -1264,14 +1264,14 @@ proptest! {
             bits: prev_bits,
             nonce: 0,
         };
-        
+
         let prev_headers = vec![header1.clone(), header2.clone()];
         let current_header = header2.clone();
-        
+
         if let Ok(next_bits) = pow::get_next_work_required(&current_header, &prev_headers) {
             // Clamp timespan to [expected_time/4, expected_time*4]
             let clamped_timespan = time_span.max(expected_time / 4).min(expected_time * 4);
-            
+
             // Next target should be within reasonable bounds
             // If timespan is 4x expected, target should be 4x (bits decrease)
             // If timespan is 1/4x expected, target should be 1/4x (bits increase)
@@ -1294,10 +1294,10 @@ proptest! {
         avg_time_per_block in 300u64..900u64  // 5 to 15 minutes
     ) {
         use blvm_consensus::constants::TARGET_TIME_PER_BLOCK;
-        
+
         let total_time = num_blocks * avg_time_per_block;
         let expected_time = num_blocks * TARGET_TIME_PER_BLOCK;
-        
+
         // Average block time should be within reasonable bounds (5-15 minutes)
         prop_assert!(avg_time_per_block >= 300,
             "Block time should be >= 5 minutes: avg_time = {} seconds",
@@ -1316,15 +1316,15 @@ proptest! {
         bits in 0x1d00ffffu64..=0x1d00ffffu64
     ) {
         use blvm_consensus::pow;
-        
+
         // For valid bits, expansion should produce consistent results
         let result1 = pow::expand_target(bits);
         let result2 = pow::expand_target(bits);
-        
+
         // Format results before match (to avoid move issues)
         let r1_str = format!("{:?}", &result1);
         let r2_str = format!("{:?}", &result2);
-        
+
         // Same bits should produce same result (both Ok or both Err)
         match (result1, result2) {
             (Ok(_), Ok(_)) => {
@@ -1358,7 +1358,7 @@ proptest! {
         num_txs in 1usize..100usize
     ) {
         use blvm_consensus::constants::MAX_BLOCK_SIZE;
-        
+
         // Create a block with transactions
         let mut transactions = Vec::new();
         for i in 0..num_txs {
@@ -1379,10 +1379,10 @@ proptest! {
                 lock_time: 0,
             });
         }
-        
+
         // Estimate block size (simplified)
         let estimated_size = transactions.len() * 200; // Rough estimate per transaction
-        
+
         prop_assert!(estimated_size > 0,
             "Block size must be positive: size = {}",
             estimated_size);
@@ -1400,7 +1400,7 @@ proptest! {
         num_txs in 1usize..10usize
     ) {
         use blvm_consensus::mining;
-        
+
         let mut transactions = Vec::new();
         for i in 0..num_txs {
             transactions.push(Transaction {
@@ -1420,7 +1420,7 @@ proptest! {
                 lock_time: 0,
             });
         }
-        
+
         if let Ok(merkle_root) = mining::calculate_merkle_root(&transactions) {
             prop_assert_eq!(merkle_root.len(), 32,
                 "Merkle root must be 32 bytes: length = {}",
@@ -1440,7 +1440,7 @@ proptest! {
         nonce in 0u32..1000000u32
     ) {
         use sha2::{Sha256, Digest};
-        
+
         let header = BlockHeader {
             version: version as i64,
             prev_block_hash: [1; 32],  // Non-zero hash
@@ -1449,14 +1449,14 @@ proptest! {
             bits,
             nonce: nonce as u64,
         };
-        
+
         let serialized = crate::serialization::block::serialize_block_header(&header);
         let hash = Sha256::digest(&Sha256::digest(&serialized));
-        
+
         prop_assert_eq!(hash.len(), 32,
             "Block hash must be 32 bytes: length = {}",
             hash.len());
-        
+
         // Hash should be non-zero (with high probability)
         let is_zero = hash.iter().all(|&b| b == 0);
         prop_assert!(!is_zero,
@@ -1473,7 +1473,7 @@ proptest! {
         timestamp2 in 1000000u64..2000000u64
     ) {
         let (t1, t2) = if timestamp1 <= timestamp2 { (timestamp1, timestamp2) } else { (timestamp2, timestamp1) };
-        
+
         prop_assert!(t1 <= t2,
             "Block timestamps should be monotonic: timestamp1 = {} should be <= timestamp2 = {}",
             t1, t2);
@@ -1526,16 +1526,16 @@ proptest! {
         num_outputs in 1usize..5usize
     ) {
         use blvm_consensus::economic;
-        
+
         let mut utxo_set = UtxoSet::default();
         let mut total_input_value = 0i64;
-        
+
         // Create inputs with UTXOs
         let mut inputs = Vec::new();
         for i in 0..num_inputs {
             let value = 1000000 * (i as i64 + 1); // 0.01 BTC per input
             total_input_value += value;
-            
+
             let outpoint = OutPoint {
                 hash: [i as u8; 32],
                 index: i as u32,
@@ -1546,7 +1546,7 @@ proptest! {
                 height: 1,
                 is_coinbase: false,
             }));
-            
+
             inputs.push(TransactionInput {
                 prevout: OutPoint {
                     hash: [i as u8; 32],
@@ -1556,7 +1556,7 @@ proptest! {
                 sequence: 0xffffffff,
             });
         }
-        
+
         // Create outputs (sum <= total_input for valid tx; leave fee headroom)
         let output_budget = total_input_value - 1000; // Reserve min fee
         let mut outputs = Vec::new();
@@ -1573,19 +1573,19 @@ proptest! {
                 script_pubkey: vec![i as u8; 20].into(),
             });
         }
-        
+
         let tx = Transaction {
             version: 1,
             inputs: inputs.into(),
             outputs: outputs.into(),
             lock_time: 0,
         };
-        
+
         // For valid transactions, input value should be >= output value
         prop_assert!(total_input_value >= total_output_value,
             "Input value must be >= output value: inputs = {}, outputs = {}",
             total_input_value, total_output_value);
-        
+
         // Fee should be non-negative for valid transactions
         if let Ok(fee) = economic::calculate_fee(&tx, &utxo_set) {
             prop_assert!(fee >= 0,
@@ -1604,14 +1604,14 @@ proptest! {
         num_outputs in 1usize..5usize
     ) {
         use blvm_consensus::economic;
-        
+
         let mut utxo_set = UtxoSet::default();
-        
+
         // Create inputs with UTXOs
         let mut inputs = Vec::new();
         for i in 0..num_inputs {
             let value = 1000000 * (i as i64 + 1);
-            
+
             let outpoint = OutPoint {
                 hash: [i as u8; 32],
                 index: i as u32,
@@ -1622,7 +1622,7 @@ proptest! {
                 height: 1,
                 is_coinbase: false,
             }));
-            
+
             inputs.push(TransactionInput {
                 prevout: OutPoint {
                     hash: [i as u8; 32],
@@ -1632,7 +1632,7 @@ proptest! {
                 sequence: 0xffffffff,
             });
         }
-        
+
         // Create outputs (less than inputs to ensure non-negative fee)
         let mut outputs = Vec::new();
         for i in 0..num_outputs {
@@ -1642,14 +1642,14 @@ proptest! {
                 script_pubkey: vec![i as u8; 20].into(),
             });
         }
-        
+
         let tx = Transaction {
             version: 1,
             inputs: inputs.into(),
             outputs: outputs.into(),
             lock_time: 0,
         };
-        
+
         // Fee should be non-negative
         if let Ok(fee) = economic::calculate_fee(&tx, &utxo_set) {
             prop_assert!(fee >= 0,
@@ -1668,11 +1668,11 @@ proptest! {
         value_multiplier in 1i64..1000i64
     ) {
         use blvm_consensus::constants::MAX_MONEY;
-        
+
         let mut outputs = Vec::new();
         for i in 0..num_outputs {
             let value = value_multiplier * (i as i64 + 1) * 1000;
-            
+
             // Output value should be positive and <= MAX_MONEY
             prop_assert!(value > 0,
                 "Output value must be positive: value = {}",
@@ -1680,7 +1680,7 @@ proptest! {
             prop_assert!(value <= MAX_MONEY,
                 "Output value must be <= MAX_MONEY: value = {} > MAX_MONEY = {}",
                 value, MAX_MONEY);
-            
+
             outputs.push(TransactionOutput {
                 value,
                 script_pubkey: vec![i as u8; 20].into(),
@@ -1697,7 +1697,7 @@ proptest! {
         num_inputs in 1usize..100usize
     ) {
         use blvm_consensus::constants::MAX_INPUTS;
-        
+
         prop_assert!(num_inputs > 0,
             "Input count must be positive: count = {}",
             num_inputs);
@@ -1715,7 +1715,7 @@ proptest! {
         num_outputs in 1usize..100usize
     ) {
         use blvm_consensus::constants::MAX_OUTPUTS;
-        
+
         prop_assert!(num_outputs > 0,
             "Output count must be positive: count = {}",
             num_outputs);
@@ -1735,14 +1735,14 @@ proptest! {
     ) {
         use blvm_consensus::transaction;
         use blvm_consensus::constants::MAX_BLOCK_WEIGHT;
-        
+
         let mut tx = Transaction {
             version: 1,
             inputs: vec![].into(),
             outputs: vec![].into(),
             lock_time: 0,
         };
-        
+
         // Add inputs
         for i in 0..num_inputs {
             tx.inputs.push(TransactionInput {
@@ -1754,7 +1754,7 @@ proptest! {
                 sequence: 0xffffffff,
             });
         }
-        
+
         // Add outputs
         for i in 0..num_outputs {
             tx.outputs.push(TransactionOutput {
@@ -1762,12 +1762,12 @@ proptest! {
                 script_pubkey: vec![i as u8; 20].into(),
             });
         }
-        
+
         let size = transaction::calculate_transaction_size(&tx);
         prop_assert!(size > 0,
             "Transaction size must be positive: size = {}",
             size);
-        
+
         // Transaction size (stripped) * 4 should be <= MAX_BLOCK_WEIGHT
         prop_assert!(size * 4 <= MAX_BLOCK_WEIGHT,
             "Transaction weight must be <= MAX_BLOCK_WEIGHT: size = {}, weight = {} > {}",
@@ -1784,14 +1784,14 @@ proptest! {
         num_outputs in 1usize..5usize
     ) {
         use blvm_consensus::segwit;
-        
+
         let mut tx = Transaction {
             version: 1,
             inputs: vec![].into(),
             outputs: vec![].into(),
             lock_time: 0,
         };
-        
+
         // Add inputs
         for i in 0..num_inputs {
             tx.inputs.push(TransactionInput {
@@ -1803,7 +1803,7 @@ proptest! {
                 sequence: 0xffffffff,
             });
         }
-        
+
         // Add outputs
         for i in 0..num_outputs {
             tx.outputs.push(TransactionOutput {
@@ -1811,7 +1811,7 @@ proptest! {
                 script_pubkey: vec![i as u8; 20].into(),
             });
         }
-        
+
         // Calculate weight (without witness for simplicity)
         if let Ok(weight) = segwit::calculate_transaction_weight(&tx, None) {
             prop_assert!(weight > 0,
@@ -1886,26 +1886,26 @@ proptest! {
         stack_size in 0usize..10usize
     ) {
         use blvm_consensus::script;
-        
+
         // Create a simple script (OP_DUP OP_HASH160)
         let mut script = vec![0x76u8, 0xa9u8]; // OP_DUP, OP_HASH160
         script.extend(vec![0x14u8; script_len.min(20)]); // 20-byte hash
         script.push(0x88u8); // OP_EQUALVERIFY
         script.push(0xacu8); // OP_CHECKSIG
-        
+
         // Create a stack (StackElement = SmallVec in production)
         let mut stack1: Vec<script::StackElement> = (0..stack_size)
             .map(|i| script::to_stack_element(&vec![i as u8; 20]))
             .collect();
-        
+
         let mut stack2 = stack1.clone();
-        
+
         // Execute script twice with same inputs
         let mut stack1_copy = stack1.clone();
         let mut stack2_copy = stack2.clone();
         let result1 = script::eval_script(&script, &mut stack1_copy, 0, script::SigVersion::Base);
         let result2 = script::eval_script(&script, &mut stack2_copy, 0, script::SigVersion::Base);
-        
+
         // Results should be the same (both Ok or both Err)
         match (&result1, &result2) {
             (Ok(b1), Ok(b2)) => {
@@ -1936,15 +1936,15 @@ proptest! {
         num_checksig in 0u32..100u32
     ) {
         use blvm_consensus::sigop;
-        
+
         // Create a script with multiple OP_CHECKSIG operations
         let mut script = Vec::new();
         for _ in 0..num_checksig.min(100) {
             script.push(0xacu8); // OP_CHECKSIG
         }
-        
+
         let sigops = sigop::count_sigops_in_script(&script, false);
-        
+
         prop_assert!(sigops >= 0,
             "SigOps count must be non-negative: count = {}",
             sigops);
@@ -1969,21 +1969,21 @@ proptest! {
     ) {
         let mut utxo_set = UtxoSet::default();
         let mut seen_outpoints = std::collections::HashSet::new();
-        
+
         // Insert UTXOs
         for i in 0..num_utxos {
             let outpoint = OutPoint {
                 hash: [i as u8; 32],
                 index: i as u32,
             };
-            
+
             // Each outpoint should be unique
             let outpoint_clone = outpoint;
             prop_assert!(!seen_outpoints.contains(&outpoint_clone),
                 "UTXO outpoint must be unique: outpoint = {:?}",
                 outpoint_clone);
             seen_outpoints.insert(outpoint_clone);
-            
+
             utxo_set.insert(OutPoint {
                 hash: [i as u8; 32],
                 index: i as u32,
@@ -1994,7 +1994,7 @@ proptest! {
                 is_coinbase: false,
             }));
         }
-        
+
         // Verify all UTXOs are unique in the set
         prop_assert_eq!(utxo_set.len(), num_utxos,
             "UTXO set size should match number of unique insertions: size = {}, expected = {}",
@@ -2012,12 +2012,12 @@ proptest! {
     ) {
         let mut utxo_set = UtxoSet::default();
         let mut total_utxo_value = 0i64;
-        
+
         // Insert UTXOs with values
         for i in 0..num_utxos {
             let value = 1000 * (i as i64 + 1);
             total_utxo_value += value;
-            
+
             let outpoint = OutPoint {
                 hash: [i as u8; 32],
                 index: i as u32,
@@ -2029,10 +2029,10 @@ proptest! {
                 is_coinbase: false,
             }));
         }
-        
+
         // Total UTXO value should equal sum of individual values
         let actual_total: i64 = utxo_set.iter().map(|(_, utxo)| utxo.value).sum();
-        
+
         prop_assert_eq!(actual_total, total_utxo_value,
             "UTXO value conservation: sum(UTXOValue) = {} should equal expected = {}",
             actual_total, total_utxo_value);
@@ -2048,7 +2048,7 @@ proptest! {
     ) {
         let mut utxo_set1 = UtxoSet::default();
         let mut utxo_set2 = UtxoSet::default();
-        
+
         // Insert same UTXOs in same order
         for i in 0..num_utxos {
             let outpoint = OutPoint {
@@ -2061,18 +2061,18 @@ proptest! {
                 height: 1,
                 is_coinbase: false,
             };
-            
+
             let outpoint_clone1 = outpoint;
             let outpoint_clone2 = outpoint_clone1.clone();
             utxo_set1.insert(outpoint_clone1, std::sync::Arc::new(utxo.clone()));
             utxo_set2.insert(outpoint_clone2, std::sync::Arc::new(utxo));
         }
-        
+
         // Both sets should be identical
         prop_assert_eq!(utxo_set1.len(), utxo_set2.len(),
             "UTXO sets should have same size: size1 = {}, size2 = {}",
             utxo_set1.len(), utxo_set2.len());
-        
+
         // Verify all UTXOs match
         for (outpoint, utxo1) in &utxo_set1 {
             let outpoint_clone = outpoint.clone();
@@ -2098,7 +2098,7 @@ proptest! {
         num_insertions in 1usize..10usize
     ) {
         let mut utxo_set = UtxoSet::default();
-        
+
         // Insert initial UTXOs
         for i in 0..initial_size {
             let outpoint = OutPoint {
@@ -2112,9 +2112,9 @@ proptest! {
                 is_coinbase: false,
             }));
         }
-        
+
         let initial_len = utxo_set.len();
-        
+
         // Insert new UTXOs
         for i in 0..num_insertions {
             let outpoint = OutPoint {
@@ -2128,7 +2128,7 @@ proptest! {
                 is_coinbase: false,
             }));
         }
-        
+
         // Set size should increase by number of unique insertions
         prop_assert_eq!(utxo_set.len(), initial_len + num_insertions,
             "UTXO set size should increase after insertion: initial = {}, final = {}, insertions = {}",
@@ -2146,7 +2146,7 @@ proptest! {
     ) {
         let mut utxo_set = UtxoSet::default();
         let mut outpoints = Vec::new();
-        
+
         // Insert UTXOs
         for i in 0..num_utxos {
             let outpoint = OutPoint {
@@ -2164,15 +2164,15 @@ proptest! {
                 is_coinbase: false,
             }));
         }
-        
+
         let initial_len = utxo_set.len();
         let deletions = num_deletions.min(num_utxos);
-        
+
         // Delete UTXOs
         for i in 0..deletions {
             utxo_set.remove(&outpoints[i]);
         }
-        
+
         // Set size should decrease by number of deletions
         prop_assert_eq!(utxo_set.len(), initial_len - deletions,
             "UTXO set size should decrease after deletion: initial = {}, final = {}, deletions = {}",
@@ -2189,7 +2189,7 @@ proptest! {
     ) {
         let mut utxo_set = UtxoSet::default();
         let mut expected_utxos = std::collections::HashMap::new();
-        
+
         // Insert UTXOs
         for i in 0..num_utxos {
             let outpoint = OutPoint {
@@ -2202,13 +2202,13 @@ proptest! {
                 height: 1,
                 is_coinbase: false,
             };
-            
+
             let outpoint_clone1 = outpoint;
             let outpoint_clone2 = outpoint_clone1.clone();
             expected_utxos.insert(outpoint_clone1, utxo.value);
             utxo_set.insert(outpoint_clone2, std::sync::Arc::new(utxo));
         }
-        
+
         // Verify lookups
         for (outpoint, expected_value) in &expected_utxos {
             let outpoint_clone = outpoint.clone();
@@ -2239,15 +2239,15 @@ proptest! {
         stack_size in 0usize..5usize
     ) {
         use blvm_consensus::script;
-        
+
         let empty_script = vec![];
         let mut stack: Vec<script::StackElement> = (0..stack_size)
             .map(|i| script::to_stack_element(&vec![i as u8; 20]))
             .collect();
-        
+
         // Empty script should either succeed or fail gracefully
         let result = script::eval_script(&empty_script, &mut stack, 0, script::SigVersion::Base);
-        
+
         // Result should be consistent (either always Ok or always Err for same inputs)
         match result {
             Ok(_) | Err(_) => {
@@ -2266,15 +2266,15 @@ proptest! {
         script_len in (L_SCRIPT as usize - 100)..=(L_SCRIPT as usize + 100)
     ) {
         use blvm_consensus::script;
-        
+
         // Create script at boundary
         let script = vec![0x51u8; script_len.min(L_SCRIPT as usize)]; // OP_1 repeated
-        
+
         let mut stack = vec![script::to_stack_element(&[1u8; 20][..])];
-        
+
         // Script should execute or fail gracefully if too long
         let result = script::eval_script(&script, &mut stack, 0, script::SigVersion::Base);
-        
+
         // If script is within bounds, execution should be attempted
         if script_len <= L_SCRIPT as usize {
             match result {
@@ -2294,18 +2294,18 @@ proptest! {
         stack_size in (L_STACK as usize - 10)..=(L_STACK as usize + 10)
     ) {
         use blvm_consensus::script;
-        
+
         // Create stack at boundary
         let mut stack: Vec<script::StackElement> = (0..stack_size.min(L_STACK as usize))
             .map(|i| script::to_stack_element(&vec![i as u8; 20]))
             .collect();
-        
+
         // Simple script that doesn't modify stack much
         let script = vec![0x51u8]; // OP_1
-        
+
         // Script should execute or fail gracefully if stack too large
         let result = script::eval_script(&script, &mut stack, 0, script::SigVersion::Base);
-        
+
         // If stack is within bounds, execution should be attempted
         if stack_size <= L_STACK as usize {
             match result {
@@ -2325,18 +2325,18 @@ proptest! {
         num_ops in (L_OPS as usize - 10)..=(L_OPS as usize + 10)
     ) {
         use blvm_consensus::script;
-        
+
         // Create script with many operations (OP_DUP is a non-push opcode)
         let mut script = Vec::new();
         for _ in 0..num_ops.min(L_OPS as usize) {
             script.push(0x76u8); // OP_DUP
         }
-        
+
         let mut stack = vec![script::to_stack_element(&[1u8; 20][..])];
-        
+
         // Script should execute or fail gracefully if op count too high
         let result = script::eval_script(&script, &mut stack, 0, script::SigVersion::Base);
-        
+
         // If op count is within bounds, execution should be attempted
         if num_ops <= L_OPS as usize {
             match result {
@@ -2356,11 +2356,11 @@ proptest! {
         element_size in (L_ELEMENT as usize - 10)..=(L_ELEMENT as usize + 10)
     ) {
         use blvm_consensus::script;
-        
+
         // Create script with large element
         let mut script = Vec::new();
         let actual_size = element_size.min(L_ELEMENT as usize);
-        
+
         // Push large element: OP_PUSHDATA4 + size + data
         if actual_size <= 0x4b {
             // Direct push
@@ -2371,12 +2371,12 @@ proptest! {
             script.extend_from_slice(&(actual_size as u32).to_le_bytes());
         }
         script.extend(vec![0u8; actual_size]);
-        
+
         let mut stack: Vec<script::StackElement> = Vec::new();
-        
+
         // Script should execute or fail gracefully if element too large
         let result = script::eval_script(&script, &mut stack, 0, script::SigVersion::Base);
-        
+
         // If element is within bounds, execution should be attempted
         if element_size <= L_ELEMENT as usize {
             match result {
@@ -2396,18 +2396,18 @@ proptest! {
         num_ops in 1usize..(L_OPS as usize)
     ) {
         use blvm_consensus::script;
-        
+
         // Create script with bounded operations
         let mut script = Vec::new();
         for _ in 0..num_ops {
             script.push(0x51u8); // OP_1 (push operation, doesn't count toward op limit)
         }
-        
+
         let mut stack: Vec<script::StackElement> = Vec::new();
-        
+
         // Script should terminate (either succeed or fail, but not hang)
         let result = script::eval_script(&script, &mut stack, 0, script::SigVersion::Base);
-        
+
         // Result should be determined (not infinite loop)
         match result {
             Ok(_) | Err(_) => {
@@ -2425,14 +2425,14 @@ proptest! {
         opcode in 0u8..=0xffu8
     ) {
         use blvm_consensus::script;
-        
+
         // Create script with single opcode
         let script = vec![opcode];
         let mut stack = vec![script::to_stack_element(&[1u8; 20][..])];
-        
+
         // Script should either execute or fail with appropriate error
         let result = script::eval_script(&script, &mut stack, 0, script::SigVersion::Base);
-        
+
         // Result should be determined (valid opcode executes, invalid fails)
         match result {
             Ok(_) | Err(_) => {
@@ -2450,19 +2450,19 @@ proptest! {
         initial_stack_size in 1usize..10usize
     ) {
         use blvm_consensus::script;
-        
+
         // Create script that operates on stack
         let script = vec![0x76u8, 0x76u8]; // OP_DUP, OP_DUP
         let mut stack: Vec<script::StackElement> = Vec::new();
         for i in 0..initial_stack_size {
             stack.push(script::to_stack_element(&vec![i as u8; 20]));
         }
-        
+
         let initial_len = stack.len();
-        
+
         // Execute script
         let result = script::eval_script(&script, &mut stack, 0, script::SigVersion::Base);
-        
+
         // Stack operations should maintain type consistency
         // (Stack size may change, but operations should be valid)
         match result {
@@ -2484,17 +2484,17 @@ proptest! {
         stack_size in 0usize..3usize
     ) {
         use blvm_consensus::script;
-        
+
         // Create simple script
         let script = vec![0x51u8]; // OP_1
         let mut stack: Vec<script::StackElement> = Vec::new();
         for i in 0..stack_size {
             stack.push(script::to_stack_element(&vec![i as u8; 20]));
         }
-        
+
         // Script should handle boundary conditions gracefully
         let result = script::eval_script(&script, &mut stack, 0, script::SigVersion::Base);
-        
+
         match result {
             Ok(_) | Err(_) => {
                 prop_assert!(true, "Script handles boundary conditions");
@@ -2511,19 +2511,19 @@ proptest! {
         input_size in 0usize..520usize
     ) {
         use blvm_consensus::script;
-        
+
         // Create script that processes input
         let script = vec![0x76u8]; // OP_DUP
         let mut stack: Vec<script::StackElement> = Vec::new();
-        
+
         // Add input of varying sizes
         if input_size > 0 {
             stack.push(script::to_stack_element(&vec![0u8; input_size.min(L_ELEMENT as usize)]));
         }
-        
+
         // Script should handle edge case inputs
         let result = script::eval_script(&script, &mut stack, 0, script::SigVersion::Base);
-        
+
         match result {
             Ok(_) | Err(_) => {
                 prop_assert!(true, "Script handles edge case inputs");
@@ -2549,7 +2549,7 @@ proptest! {
         nonce in 0u32..1000000u32
     ) {
         use blvm_consensus::serialization::block::{serialize_block_header, deserialize_block_header};
-        
+
         let header = BlockHeader {
             version: version as i64,
             prev_block_hash: [1; 32],
@@ -2558,7 +2558,7 @@ proptest! {
             bits,
             nonce: nonce as u64,
         };
-        
+
         // Serialize and deserialize
         let serialized = serialize_block_header(&header);
         if let Ok(deserialized) = deserialize_block_header(&serialized) {
@@ -2583,14 +2583,14 @@ proptest! {
         num_outputs in 1usize..5usize
     ) {
         use blvm_consensus::serialization::transaction::{serialize_transaction, deserialize_transaction};
-        
+
         let mut tx = Transaction {
             version: 1,
             inputs: vec![].into(),
             outputs: vec![].into(),
             lock_time: 0,
         };
-        
+
         // Add inputs
         for i in 0..num_inputs {
             tx.inputs.push(TransactionInput {
@@ -2602,7 +2602,7 @@ proptest! {
                 sequence: 0xffffffff,
             });
         }
-        
+
         // Add outputs
         for i in 0..num_outputs {
             tx.outputs.push(TransactionOutput {
@@ -2610,7 +2610,7 @@ proptest! {
                 script_pubkey: vec![i as u8; 20].into(),
             });
         }
-        
+
         // Serialize and deserialize
         let serialized = serialize_transaction(&tx);
         if let Ok(deserialized) = deserialize_transaction(&serialized) {
@@ -2634,7 +2634,7 @@ proptest! {
         value in 0u64..0xFFFFFFFFFFFFFFFFu64
     ) {
         use blvm_consensus::serialization::varint::{encode_varint, decode_varint};
-        
+
         // Encode and decode
         let encoded = encode_varint(value);
         if let Ok((decoded, _)) = decode_varint(&encoded) {
@@ -2653,9 +2653,9 @@ proptest! {
         value in 0u64..0xFFFFFFFFFFFFFFFFu64
     ) {
         use blvm_consensus::serialization::varint::encode_varint;
-        
+
         let encoded = encode_varint(value);
-        
+
         prop_assert!(encoded.len() <= 9,
             "VarInt encoding length must be <= 9 bytes: length = {}, value = {}",
             encoded.len(), value);
@@ -2671,7 +2671,7 @@ proptest! {
         timestamp in 1000000u64..2000000u64
     ) {
         use blvm_consensus::serialization::block::serialize_block_header;
-        
+
         let header = BlockHeader {
             version: version as i64,
             prev_block_hash: [1; 32],
@@ -2680,11 +2680,11 @@ proptest! {
             bits: 0x1d00ffff,
             nonce: 0,
         };
-        
+
         // Serialize twice
         let serialized1 = serialize_block_header(&header);
         let serialized2 = serialize_block_header(&header);
-        
+
         prop_assert_eq!(serialized1, serialized2,
             "Serialization must be deterministic: serialized1 != serialized2");
     }
@@ -2705,19 +2705,19 @@ proptest! {
     ) {
         use blvm_consensus::mempool::Mempool;
         use blvm_consensus::config::get_consensus_config;
-        
+
         let config = get_consensus_config();
         let max_size = config.mempool.max_mempool_txs;
-        
+
         let mut mempool = Mempool::new();
-        
+
         // Add transactions up to num_txs
         for i in 0..num_txs.min(max_size) {
             let mut tx_id = [0u8; 32];
             tx_id[0] = i as u8;
             mempool.insert(tx_id);
         }
-        
+
         prop_assert!(mempool.len() <= max_size,
             "Mempool size must be <= MAX_MEMPOOL_SIZE: size = {} > max = {}",
             mempool.len(), max_size);
@@ -2732,15 +2732,15 @@ proptest! {
         num_txs in 1usize..100usize
     ) {
         use blvm_consensus::mempool::Mempool;
-        
+
         let mut mempool = Mempool::new();
         let mut seen_txids = std::collections::HashSet::new();
-        
+
         // Add transactions
         for i in 0..num_txs {
             let mut tx_id = [0u8; 32];
             tx_id[0] = i as u8;
-            
+
             // Each transaction should be unique
             prop_assert!(!seen_txids.contains(&tx_id),
                 "Transaction ID must be unique: tx_id = {:?}",
@@ -2748,7 +2748,7 @@ proptest! {
             seen_txids.insert(tx_id);
             mempool.insert(tx_id);
         }
-        
+
         // Mempool size should equal number of unique transactions
         prop_assert_eq!(mempool.len(), num_txs,
             "Mempool size should equal number of unique transactions: size = {}, expected = {}",
@@ -2765,11 +2765,11 @@ proptest! {
     ) {
         use blvm_consensus::mempool::Mempool;
         use blvm_consensus::block::calculate_tx_id;
-        
+
         // Create a chain of dependent transactions
         let mut mempool = Mempool::new();
         let mut prev_tx_id = [0u8; 32];
-        
+
         for i in 0..num_txs {
             // Create transaction that depends on previous
             let tx = Transaction {
@@ -2788,12 +2788,12 @@ proptest! {
                 }].into(),
                 lock_time: 0,
             };
-            
+
             let tx_id = calculate_tx_id(&tx);
             mempool.insert(tx_id);
             prev_tx_id = tx_id;
         }
-        
+
         // Mempool should contain all transactions in dependency order
         prop_assert_eq!(mempool.len(), num_txs,
             "Mempool should contain all transactions: size = {}, expected = {}",
@@ -2810,19 +2810,19 @@ proptest! {
     ) {
         use blvm_consensus::mempool::Mempool;
         use blvm_consensus::config::get_consensus_config;
-        
+
         let config = get_consensus_config();
         let max_size = config.mempool.max_mempool_txs;
-        
+
         let mut mempool = Mempool::new();
-        
+
         // Add transactions up to limit
         for i in 0..num_txs.min(max_size) {
             let mut tx_id = [0u8; 32];
             tx_id[0] = i as u8;
             mempool.insert(tx_id);
         }
-        
+
         // If mempool is full, adding more should require eviction
         if mempool.len() >= max_size {
             // Eviction policy: lowest fee rate should be evicted first
@@ -2844,10 +2844,10 @@ proptest! {
         use blvm_consensus::mempool::Mempool;
         use blvm_consensus::economic::calculate_fee;
         use blvm_consensus::transaction::calculate_transaction_size;
-        
+
         let mut mempool = Mempool::new();
         let mut utxo_set = UtxoSet::default();
-        
+
         // Create transactions with different fee rates
         let mut transactions = Vec::new();
         for i in 0..num_txs {
@@ -2863,7 +2863,7 @@ proptest! {
                 height: 1,
                 is_coinbase: false,
             }));
-            
+
             // Create transaction: higher i = smaller fee (fee_rate descending)
             let output_value = 500000 * (num_txs as i64 - i as i64);
             let tx = Transaction {
@@ -2882,10 +2882,10 @@ proptest! {
                 }].into(),
                 lock_time: 0,
             };
-            
+
             transactions.push(tx);
         }
-        
+
         // Calculate fee rates
         let mut fee_rates = Vec::new();
         for tx in &transactions {
@@ -2897,7 +2897,7 @@ proptest! {
                 }
             }
         }
-        
+
         // Fee rates should be in descending order (higher fee rate = higher priority)
         for i in 1..fee_rates.len() {
             prop_assert!(fee_rates[i-1] >= fee_rates[i] || fee_rates[i-1] == fee_rates[i],
@@ -2921,7 +2921,7 @@ proptest! {
         num_blocks in 1usize..10usize
     ) {
         use blvm_consensus::reorganization;
-        
+
         // Create a chain of blocks
         let mut blocks = Vec::new();
         for i in 0..num_blocks {
@@ -2937,7 +2937,7 @@ proptest! {
                 transactions: vec![].into(),
             });
         }
-        
+
         // Work should increase with chain length (test via should_reorganize)
         // Longer chain should have more work
         if num_blocks > 1 {
@@ -2962,7 +2962,7 @@ proptest! {
         prop_assert_eq!(num_blocks, num_blocks,
             "Chain height should equal number of blocks: height = {}, blocks = {}",
             num_blocks, num_blocks);
-        
+
         // Height should be non-negative
         prop_assert!(num_blocks >= 0,
             "Chain height must be non-negative: height = {}",
@@ -2988,7 +2988,7 @@ proptest! {
                 bits: 0x1d00ffff,
                 nonce: i as u64,
             };
-            
+
             // Calculate block hash
             use blvm_consensus::serialization::block::serialize_block_header;
             use sha2::{Digest, Sha256};
@@ -2997,11 +2997,11 @@ proptest! {
             let second_hash = Sha256::digest(&first_hash);
             let mut block_hash = [0u8; 32];
             block_hash.copy_from_slice(&second_hash);
-            
+
             // Next block should reference this block's hash
             prev_hash = block_hash;
         }
-        
+
         // Chain continuity is maintained if we can build the chain
         prop_assert!(true, "Chain continuity maintained");
     }
@@ -3016,7 +3016,7 @@ proptest! {
     ) {
         // Create blocks with unique hashes
         let mut seen_hashes = std::collections::HashSet::new();
-        
+
         for i in 0..num_blocks {
             let header = BlockHeader {
                 version: 1,
@@ -3026,7 +3026,7 @@ proptest! {
                 bits: 0x1d00ffff,
                 nonce: i as u64,
             };
-            
+
             // Calculate block hash
             use blvm_consensus::serialization::block::serialize_block_header;
             use sha2::{Digest, Sha256};
@@ -3035,14 +3035,14 @@ proptest! {
             let second_hash = Sha256::digest(&first_hash);
             let mut block_hash = [0u8; 32];
             block_hash.copy_from_slice(&second_hash);
-            
+
             // Each block hash should be unique
             prop_assert!(!seen_hashes.contains(&block_hash),
                 "Block hash must be unique: hash = {:?}",
                 block_hash);
             seen_hashes.insert(block_hash);
         }
-        
+
         prop_assert_eq!(seen_hashes.len(), num_blocks,
             "All blocks should have unique hashes: unique = {}, total = {}",
             seen_hashes.len(), num_blocks);
@@ -3058,11 +3058,11 @@ proptest! {
         chain2_len in 1usize..10usize
     ) {
         use blvm_consensus::reorganization;
-        
+
         // Create two chains
         let mut chain1 = Vec::new();
         let mut chain2 = Vec::new();
-        
+
         for i in 0..chain1_len {
             chain1.push(Block {
                 header: BlockHeader {
@@ -3076,7 +3076,7 @@ proptest! {
                 transactions: vec![].into(),
             });
         }
-        
+
         for i in 0..chain2_len {
             chain2.push(Block {
                 header: BlockHeader {
@@ -3090,7 +3090,7 @@ proptest! {
                 transactions: vec![].into(),
             });
         }
-        
+
         // Check which chain should win
         if let Ok(should_reorg) = reorganization::should_reorganize(&chain2, &chain1) {
             if chain2_len > chain1_len {
@@ -3120,13 +3120,13 @@ proptest! {
         data_len in 1usize..100usize
     ) {
         use sha2::{Digest, Sha256};
-        
+
         let data = vec![0u8; data_len];
-        
+
         // Hash twice
         let hash1 = Sha256::digest(&data);
         let hash2 = Sha256::digest(&data);
-        
+
         prop_assert_eq!(hash1, hash2,
             "Hash must be deterministic: hash1 = {:?}, hash2 = {:?}",
             hash1, hash2);
@@ -3142,18 +3142,18 @@ proptest! {
         byte_index in 0usize..100usize
     ) {
         use sha2::{Digest, Sha256};
-        
+
         let mut data1 = vec![0u8; data_len];
         let mut data2 = vec![0u8; data_len];
-        
+
         // Change one byte
         if byte_index < data_len {
             data2[byte_index] = 1;
         }
-        
+
         let hash1 = Sha256::digest(&data1);
         let hash2 = Sha256::digest(&data2);
-        
+
         // Hashes should be different (with high probability)
         if byte_index < data_len {
             prop_assert_ne!(hash1, hash2,
@@ -3171,19 +3171,19 @@ proptest! {
         data_len in 1usize..100usize
     ) {
         use sha2::{Digest, Sha256};
-        
+
         let data = vec![0u8; data_len];
-        
+
         // Single hash
         let first_hash = Sha256::digest(&data);
-        
+
         // Double hash
         let second_hash = Sha256::digest(&first_hash);
-        
+
         // Manual double hash
         let manual_first = Sha256::digest(&data);
         let manual_second = Sha256::digest(&manual_first);
-        
+
         prop_assert_eq!(second_hash, manual_second,
             "Double hash must be consistent: second_hash = {:?}, manual_second = {:?}",
             second_hash, manual_second);
@@ -3198,7 +3198,7 @@ proptest! {
         num_txs in 1usize..10usize
     ) {
         use blvm_consensus::mining::calculate_merkle_root;
-        
+
         let mut transactions = Vec::new();
         for i in 0..num_txs {
             transactions.push(Transaction {
@@ -3211,7 +3211,7 @@ proptest! {
                 lock_time: 0,
             });
         }
-        
+
         // Calculate Merkle root
         if let Ok(root1) = calculate_merkle_root(&transactions) {
             // Same transactions should produce same root
@@ -3238,15 +3238,15 @@ proptest! {
         _dummy in 0u8..1u8  // Proptest requires at least one parameter
     ) {
         use blvm_consensus::economic;
-        
+
         let height = 0;
-        
+
         // Genesis block should have initial subsidy
         let subsidy = economic::get_block_subsidy(height);
         prop_assert!(subsidy > 0,
             "Genesis block should have positive subsidy: subsidy = {}",
             subsidy);
-        
+
         // Total supply at height 0 = genesis block subsidy (block 0 exists)
         let total_supply = economic::total_supply(height);
         prop_assert_eq!(total_supply, subsidy,
@@ -3263,21 +3263,21 @@ proptest! {
         _dummy in 0u8..1u8  // Proptest requires at least one parameter
     ) {
         use blvm_consensus::economic;
-        
+
         // Test at first halving
         let height_before = H - 1;
         let height_at = H;
         let height_after = H + 1;
-        
+
         let subsidy_before = economic::get_block_subsidy(height_before);
         let subsidy_at = economic::get_block_subsidy(height_at);
         let subsidy_after = economic::get_block_subsidy(height_after);
-        
+
         // Subsidy should halve at H
         prop_assert_eq!(subsidy_at, subsidy_before / 2,
             "Subsidy should halve at height H: before = {}, at = {}, after = {}",
             subsidy_before, subsidy_at, subsidy_after);
-        
+
         // Subsidy should remain halved after H
         prop_assert_eq!(subsidy_after, subsidy_at,
             "Subsidy should remain halved after H: at = {}, after = {}",
@@ -3293,7 +3293,7 @@ proptest! {
         value in 0i64..21000000i64
     ) {
         use blvm_consensus::constants::MAX_MONEY;
-        
+
         prop_assert!(value >= 0,
             "Value must be non-negative: value = {}",
             value);
@@ -3314,11 +3314,10 @@ proptest! {
         prop_assert!(timestamp > 0,
             "Timestamp must be positive: timestamp = {}",
             timestamp);
-        
+
         // Timestamp should be reasonable (not overflow)
         prop_assert!(timestamp <= 0xFFFFFFFF,
             "Timestamp must fit in u32: timestamp = {} > 0xFFFFFFFF",
             timestamp);
     }
 }
-

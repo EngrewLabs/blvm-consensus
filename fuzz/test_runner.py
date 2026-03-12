@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Fuzz test runner for consensus-proof
+Fuzz test runner for blvm-consensus
 Similar to Bitcoin Core's test_runner.py but adapted for Rust/libFuzzer
 
 Usage:

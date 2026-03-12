@@ -424,14 +424,23 @@ pub const OP_DISABLED_NUMERIC_RANGE_END: u8 = OP_RSHIFT;
 // PUSH DATA HELPER CONSTANTS
 // ============================================================================
 
+/// Push 1 byte (direct push; opcodes 0x01-0x4b are push N bytes)
+pub const PUSH_1_BYTE: u8 = 0x01;
+
 /// Push 20 bytes (used in P2WPKH: OP_0 0x14 <20-byte-hash>)
 pub const PUSH_20_BYTES: u8 = 0x14;
 
 /// Push 32 bytes (used in P2WSH and P2TR: OP_0/OP_1 0x20 <32-byte-hash>)
 pub const PUSH_32_BYTES: u8 = 0x20;
 
+/// Push 33 bytes (used in P2PK compressed pubkey: 0x21 <33-byte-pubkey>)
+pub const PUSH_33_BYTES: u8 = 0x21;
+
 /// Push 36 bytes (used in tests / OP_RETURN outputs)
 pub const PUSH_36_BYTES: u8 = 0x24;
+
+/// Push 65 bytes (used in P2PK uncompressed pubkey: 0x41 <65-byte-pubkey>)
+pub const PUSH_65_BYTES: u8 = 0x41;
 
 // ============================================================================
 // PROTOCOL CONSTANTS
@@ -451,4 +460,3 @@ pub const VARINT_4BYTE_PREFIX: u8 = 0xfe;
 
 /// Prefix for 8-byte varint encoding (0xff + 8 bytes)
 pub const VARINT_8BYTE_PREFIX: u8 = 0xff;
-

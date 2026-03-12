@@ -1,7 +1,7 @@
 #!/bin/bash
 # Profile-Guided Optimization (PGO) Build Script
 #
-# This script automates the PGO build process for bllvm-consensus:
+# This script automates the PGO build process for blvm-consensus:
 # 1. Build with instrumentation to collect profile data
 # 2. Run benchmarks/tests to generate profile
 # 3. Build optimized binary using profile data

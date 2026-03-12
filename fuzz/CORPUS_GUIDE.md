@@ -60,7 +60,7 @@ echo "76a914..." > fuzz/corpus/script_execution/p2pkh.hex
 ## Initializing Corpus
 
 ```bash
-cd consensus-proof/fuzz
+cd blvm-consensus/fuzz
 
 # Initialize corpus directories with seed inputs
 ./init_corpus.sh
@@ -72,7 +72,7 @@ cd consensus-proof/fuzz
 ## Running with Corpus
 
 ```bash
-cd consensus-proof
+cd blvm-consensus
 
 # Run with corpus (merges new findings)
 cargo +nightly fuzz run transaction_validation -- -merge=1 fuzz/corpus/transaction_validation
@@ -113,5 +113,5 @@ The corpus initialization script automatically includes Bitcoin Core test vector
 - Mempool operations (RBF)
 - Multisig examples
 
-These are used as seed data only - consensus-proof validates independently.
+These are used as seed data only - blvm-consensus validates independently.
 

@@ -326,4 +326,3 @@ mod tests {
         assert!(!evaluate_sequence_locks(1098, 0, lock_pair));
     }
 }
-

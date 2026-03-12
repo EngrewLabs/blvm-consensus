@@ -139,7 +139,13 @@ fn test_reorganization_errors() {
     let current_chain = vec![];
     let utxo_set = UtxoSet::default();
 
-    let result = consensus.reorganize_chain(&new_chain, &current_chain, utxo_set, 0, blvm_consensus::types::Network::Regtest);
+    let result = consensus.reorganize_chain(
+        &new_chain,
+        &current_chain,
+        utxo_set,
+        0,
+        blvm_consensus::types::Network::Regtest,
+    );
     assert!(result.is_err());
 }
 

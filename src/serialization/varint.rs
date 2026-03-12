@@ -413,4 +413,3 @@ mod tests {
         assert_eq!(decode_varint(&encoded), Ok((0x100000000, 9)));
     }
 }
-

@@ -322,4 +322,3 @@ pub const GENESIS_BLOCK_NONCE: u32 = 2083236893;
 // These proofs directly verify that constant values match the Orange Paper
 // Section 4 (Consensus Constants) specification. This creates a cryptographic
 // lock between the Orange Paper (IR) and blvm-consensus implementation.
-

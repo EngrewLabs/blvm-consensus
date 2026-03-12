@@ -8,9 +8,9 @@ use blvm_consensus::crypto::OptimizedSha256;
 use blvm_consensus::economic;
 use blvm_consensus::orange_paper_constants::{C, H};
 use blvm_consensus::pow;
+use blvm_consensus::segwit::Witness;
 use blvm_consensus::transaction;
 use blvm_consensus::types::*;
-use blvm_consensus::segwit::Witness;
 use proptest::prelude::*;
 use sha2::{Digest, Sha256};
 
@@ -76,7 +76,7 @@ proptest! {
         height in 0u32..2100000u32 // Up to 10 halvings
     ) {
         use blvm_consensus::orange_paper_property_helpers::expected_getblocksubsidy_from_orange_paper;
-        
+
         let actual = economic::get_block_subsidy(height as u64);
         let expected = expected_getblocksubsidy_from_orange_paper(height as u64);
 
@@ -1642,7 +1642,7 @@ proptest! {
     ///   Then: expanded should be valid and non-zero (or zero with correct encoding)
     ///
     /// Note: compress_target is private, but the round-trip property is verified
-    /// by Kani proof: kani_target_expand_compress_round_trip
+    /// by spec-lock: target expand/compress round-trip
     #[test]
     fn prop_compress_target_round_trip(
         bits in 0x01000000u32..=0x1d00ffffu32
@@ -1652,7 +1652,7 @@ proptest! {
 
         if let Ok(_expanded_target) = expanded {
             // Expansion succeeded - verify it's valid
-            // The round-trip property is verified by Kani proof: kani_target_expand_compress_round_trip
+            // The round-trip property is verified by spec-lock (target expand/compress)
             // For property tests, we just verify expansion succeeds for valid bits
             prop_assert!(true, "Target expansion succeeded for bits={:x}", bits);
         } else {

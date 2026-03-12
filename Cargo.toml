@@ -23,10 +23,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 smallvec = { version = "1.11", optional = true, features = ["serde", "const_generics"] }
 
 # Consensus-critical cryptography - EXACT VERSIONS
-# Using fork with batch Schnorr verification support
-# CI: Uses git dependency from secsovereign/rust-secp256k1
-# Local dev: Override with [patch.crates-io] section below (automatically uses local if available)
-# crates.io secp256k1; batch path uses blvm-secp256k1 when enabled
+# Default: blvm-secp256k1 (batch verification). Fallback: crates.io secp256k1 0.28 (libsecp256k1). NO secp256k1-fork.
 secp256k1 = { version = "0.28", default-features = true }
 # blvm-secp256k1: pure Rust, BIP 341 correct TapTweak (use for Taproot path)
 blvm-secp256k1 = { path = "../blvm-secp256k1", optional = true }
@@ -107,6 +104,10 @@ benchmarking = []
 # UTXO commitments module
 # Enables UTXO set commitments and peer consensus sync
 utxo-commitments = ["sparse-merkle-tree", "dep:rand"]
+# Verify UTXO proofs during initial sync (optional, for coin-freeze attack mitigation)
+utxo-proof-verification = []
+# Parallel UTXO proof verification (requires rayon)
+parallel-verification = ["rayon"]
 
 # Property test strategies (transaction_with_witness_strategy, etc.) for spec-lock generated tests
 # Required for integration tests in tests/spec_property_tests.rs
@@ -223,5 +224,4 @@ lto = "thin"  # Faster than "fat" for iterative benchmarking
 codegen-units = 16  # Faster compilation
 
 # blvm-spec-lock uses path dependency above - no patch needed
-# [patch."https://github.com/secsovereign/rust-secp256k1.git"]
-# secp256k1 = { path = "../secp256k1-fork", default-features = true }
+# secp256k1: crates.io 0.28 only. blvm-secp256k1 is default backend via feature. NO secp256k1-fork.

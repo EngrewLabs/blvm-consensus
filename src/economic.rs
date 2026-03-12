@@ -3,8 +3,8 @@
 use crate::constants::*;
 use crate::error::{ConsensusError, Result};
 use crate::types::*;
-use std::borrow::Cow;
 use blvm_spec_lock::spec_locked;
+use std::borrow::Cow;
 
 /// GetBlockSubsidy: ℕ → ℤ
 ///
@@ -167,7 +167,6 @@ fn is_coinbase(tx: &Transaction) -> bool {
 /// - After 64 halvings, subsidy becomes 0
 /// - Subsidy is always non-negative
 /// - Total supply approaches 21M BTC asymptotically
-
 
 #[cfg(test)]
 mod property_tests {

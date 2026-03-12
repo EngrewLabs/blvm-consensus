@@ -4,8 +4,8 @@ use crate::block::connect_block;
 use crate::error::Result;
 use crate::segwit::Witness;
 use crate::types::*;
-use std::collections::HashMap;
 use blvm_spec_lock::spec_locked;
+use std::collections::HashMap;
 
 /// Reorganization: When a longer chain is found (simplified API)
 ///
@@ -45,7 +45,9 @@ pub fn reorganize_chain(
     let empty_witnesses: Vec<Vec<Vec<Witness>>> = new_chain
         .iter()
         .map(|block| {
-            block.transactions.iter()
+            block
+                .transactions
+                .iter()
                 .map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect())
                 .collect()
         })
@@ -249,14 +251,13 @@ pub fn reorganize_chain_with_witnesses(
         new_height += 1;
         // Get witnesses for this block
         // CRITICAL FIX: witnesses is now Vec<Vec<Witness>> (one Vec per transaction, each containing one Witness per input)
-        let witnesses = new_chain_witnesses
-            .get(i)
-            .cloned()
-            .unwrap_or_else(|| {
-                block.transactions.iter()
-                    .map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect())
-                    .collect()
-            });
+        let witnesses = new_chain_witnesses.get(i).cloned().unwrap_or_else(|| {
+            block
+                .transactions
+                .iter()
+                .map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect())
+                .collect()
+        });
 
         // Get recent headers for median time-past (if available)
         // For the first block in new chain, use provided headers
@@ -403,7 +404,7 @@ where
         for tx in &block.transactions {
             if !crate::transaction::is_coinbase(tx) {
                 for input in &tx.inputs {
-                    spent_outpoints.insert(input.prevout.clone());
+                    spent_outpoints.insert(input.prevout);
                 }
             }
         }
@@ -469,7 +470,10 @@ struct CommonAncestorResult {
 /// Algorithm: Start from the tips of both chains and work backwards,
 /// comparing blocks at the same distance from tip until we find a match.
 /// This is the common ancestor where the chains diverged.
-fn find_common_ancestor(new_chain: &[Block], current_chain: &[Block]) -> Result<CommonAncestorResult> {
+fn find_common_ancestor(
+    new_chain: &[Block],
+    current_chain: &[Block],
+) -> Result<CommonAncestorResult> {
     if new_chain.is_empty() || current_chain.is_empty() {
         return Err(crate::error::ConsensusError::ConsensusRuleViolation(
             "Cannot find common ancestor: empty chain".into(),
@@ -730,9 +734,9 @@ fn calculate_block_hash(header: &BlockHeader) -> Hash {
 // ============================================================================
 
 mod undo_entry_serde {
+    use crate::types::UTXO;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::sync::Arc;
-    use crate::types::UTXO;
 
     pub fn serialize<S>(opt: &Option<Arc<UTXO>>, s: S) -> Result<S::Ok, S::Error>
     where
@@ -830,7 +834,6 @@ pub struct ReorganizationResult {
 /// - Work calculation is deterministic
 /// - Empty chains are rejected
 /// - Chain work is always non-negative
-
 
 #[cfg(test)]
 mod property_tests {
@@ -1043,14 +1046,20 @@ mod tests {
         let ancestor = create_test_block_at_height(0);
         let mut new_block = create_test_block_at_height(1);
         new_block.header.nonce = 42; // Different block than ancestor
-        // Recalculate merkle root (nonce doesn't affect it, but prev_block_hash irrelevant for connect_block)
+                                     // Recalculate merkle root (nonce doesn't affect it, but prev_block_hash irrelevant for connect_block)
 
         let new_chain = vec![ancestor.clone(), new_block];
         let current_chain = vec![ancestor];
         let utxo_set = UtxoSet::default();
 
         // current_height = 1 (tip of current_chain at height 1)
-        let result = reorganize_chain(&new_chain, &current_chain, utxo_set, 1, crate::types::Network::Regtest);
+        let result = reorganize_chain(
+            &new_chain,
+            &current_chain,
+            utxo_set,
+            1,
+            crate::types::Network::Regtest,
+        );
         match result {
             Ok(reorg_result) => {
                 // Ancestor is at height 1 (current_height - 0 blocks after it = 1)
@@ -1083,7 +1092,13 @@ mod tests {
         let current_chain = vec![current_block1, current_block2];
         let utxo_set = UtxoSet::default();
 
-        let result = reorganize_chain(&new_chain, &current_chain, utxo_set, 2, crate::types::Network::Regtest);
+        let result = reorganize_chain(
+            &new_chain,
+            &current_chain,
+            utxo_set,
+            2,
+            crate::types::Network::Regtest,
+        );
         match result {
             Ok(reorg_result) => {
                 assert_eq!(reorg_result.connected_blocks.len(), 3);
@@ -1120,7 +1135,11 @@ mod tests {
         utxo_set.insert(outpoint.clone(), std::sync::Arc::new(utxo.clone()));
 
         // Connect block and get undo log
-        let witnesses: Vec<Vec<Witness>> = block.transactions.iter().map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect()).collect();
+        let witnesses: Vec<Vec<Witness>> = block
+            .transactions
+            .iter()
+            .map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect())
+            .collect();
         let (result, new_utxo_set, undo_log) = connect_block(
             &block,
             &witnesses,
@@ -1176,7 +1195,11 @@ mod tests {
         // Create a block at height 1 and connect it to get undo log
         let block = create_test_block_at_height(1);
         let utxo_set = UtxoSet::default();
-        let witnesses: Vec<Vec<Witness>> = block.transactions.iter().map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect()).collect();
+        let witnesses: Vec<Vec<Witness>> = block
+            .transactions
+            .iter()
+            .map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect())
+            .collect();
 
         let (result, connected_utxo_set, undo_log) = connect_block(
             &block,
@@ -1211,7 +1234,12 @@ mod tests {
         let current_chain = vec![block];
         let empty_witnesses: Vec<Vec<Vec<Witness>>> = new_chain
             .iter()
-            .map(|b| b.transactions.iter().map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect()).collect())
+            .map(|b| {
+                b.transactions
+                    .iter()
+                    .map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect())
+                    .collect()
+            })
             .collect();
 
         let reorg_result = reorganize_chain_with_witnesses(
@@ -1246,7 +1274,13 @@ mod tests {
         let current_chain = vec![create_test_block()];
         let utxo_set = UtxoSet::default();
 
-        let result = reorganize_chain(&new_chain, &current_chain, utxo_set, 1, crate::types::Network::Regtest);
+        let result = reorganize_chain(
+            &new_chain,
+            &current_chain,
+            utxo_set,
+            1,
+            crate::types::Network::Regtest,
+        );
         assert!(result.is_err());
     }
 
@@ -1256,7 +1290,13 @@ mod tests {
         let current_chain = vec![];
         let utxo_set = UtxoSet::default();
 
-        let result = reorganize_chain(&new_chain, &current_chain, utxo_set, 0, crate::types::Network::Regtest);
+        let result = reorganize_chain(
+            &new_chain,
+            &current_chain,
+            utxo_set,
+            0,
+            crate::types::Network::Regtest,
+        );
         assert!(result.is_err());
     }
 

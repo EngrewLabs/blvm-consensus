@@ -10,9 +10,7 @@
 
 use crate::spam_filter::{SpamBreakdown, SpamFilter, SpamFilterConfig, SpamSummary, SpamType};
 #[cfg(feature = "utxo-commitments")]
-use blvm_spec_lock::spec_locked;
-#[cfg(feature = "utxo-commitments")]
-use crate::types::{BlockHeader, Hash as HashType, Natural, OutPoint, Transaction, UTXO, UtxoSet};
+use crate::types::{BlockHeader, Hash as HashType, Natural, OutPoint, Transaction, UtxoSet, UTXO};
 #[cfg(feature = "utxo-commitments")]
 use crate::utxo_commitments::data_structures::{
     UtxoCommitment, UtxoCommitmentError, UtxoCommitmentResult,
@@ -20,9 +18,11 @@ use crate::utxo_commitments::data_structures::{
 #[cfg(feature = "utxo-commitments")]
 use crate::utxo_commitments::merkle_tree::UtxoMerkleTree;
 #[cfg(feature = "utxo-commitments")]
-use crate::utxo_commitments::network_integration::{UtxoCommitmentsNetworkClient, FullBlock};
+use crate::utxo_commitments::network_integration::UtxoCommitmentsNetworkClient;
 #[cfg(feature = "utxo-commitments")]
 use crate::utxo_commitments::peer_consensus::{ConsensusConfig, PeerConsensus, PeerInfo};
+#[cfg(feature = "utxo-commitments")]
+use blvm_spec_lock::spec_locked;
 
 /// Initial sync manager
 pub struct InitialSync {
@@ -235,10 +235,12 @@ impl InitialSync {
                 network_time,
                 network,
             )
-            .map_err(|e| UtxoCommitmentError::VerificationFailed(format!(
-                "connect_block failed at height {}: {}",
-                height, e
-            )))?;
+            .map_err(|e| {
+                UtxoCommitmentError::VerificationFailed(format!(
+                    "connect_block failed at height {}: {}",
+                    height, e
+                ))
+            })?;
 
             // Reject if validation failed
             if !matches!(validation_result, crate::types::ValidationResult::Valid) {
@@ -366,9 +368,10 @@ impl InitialSync {
                         Ok(Some(utxo)) => {
                             // Remove the UTXO (even if transaction is spam)
                             if let Err(e) = utxo_tree.remove(&input.prevout, &utxo) {
-                                return Err(UtxoCommitmentError::TransactionApplication(
-                                    format!("Failed to remove spent input: {:?}", e)
-                                ));
+                                return Err(UtxoCommitmentError::TransactionApplication(format!(
+                                    "Failed to remove spent input: {:?}",
+                                    e
+                                )));
                             }
                         }
                         Ok(None) => {
@@ -377,9 +380,10 @@ impl InitialSync {
                             // Continue but log - this should be validated before calling
                         }
                         Err(e) => {
-                            return Err(UtxoCommitmentError::TransactionApplication(
-                                format!("Failed to get UTXO for removal: {:?}", e)
-                            ));
+                            return Err(UtxoCommitmentError::TransactionApplication(format!(
+                                "Failed to get UTXO for removal: {:?}",
+                                e
+                            )));
                         }
                     }
                 }
@@ -402,11 +406,10 @@ impl InitialSync {
                     };
 
                     if let Err(e) = utxo_tree.insert(outpoint, utxo) {
-                        return Err(
-                            UtxoCommitmentError::TransactionApplication(
-                                format!("Failed to add output: {:?}", e),
-                            ),
-                        );
+                        return Err(UtxoCommitmentError::TransactionApplication(format!(
+                            "Failed to add output: {:?}",
+                            e
+                        )));
                     }
                 }
             }
@@ -477,7 +480,7 @@ pub fn update_commitments_after_block(
     block: &crate::types::Block,
     block_height: Natural,
     spam_filter: Option<&SpamFilter>,
-    ) -> UtxoCommitmentResult<HashType> {
+) -> UtxoCommitmentResult<HashType> {
     use crate::block::calculate_tx_id;
     use crate::transaction::is_coinbase;
 
@@ -510,9 +513,10 @@ pub fn update_commitments_after_block(
                             // Continue but this should have been caught during validation
                         }
                         Err(e) => {
-                            return Err(UtxoCommitmentError::TransactionApplication(
-                                format!("Failed to get UTXO for removal: {:?}", e)
-                            ));
+                            return Err(UtxoCommitmentError::TransactionApplication(format!(
+                                "Failed to get UTXO for removal: {:?}",
+                                e
+                            )));
                         }
                     }
                 }

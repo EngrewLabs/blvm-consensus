@@ -1,5 +1,5 @@
 [package]
-name = "consensus-proof-fuzz"
+name = "blvm-consensus-fuzz"
 version = "0.0.0"
 authors = ["BTCDecoded Team"]
 edition = "2021"

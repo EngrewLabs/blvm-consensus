@@ -1,6 +1,6 @@
 # Test Data Directory
 
-This directory contains all test data used by consensus-proof tests.
+This directory contains all test data used by blvm-consensus tests.
 
 ## Directory Structure
 

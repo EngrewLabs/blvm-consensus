@@ -1,6 +1,8 @@
 //! Secp256k1 backend abstraction.
 //!
-//! Allows blvm-consensus to use libsecp256k1 (secp256k1-fork or crates.io) or blvm-secp256k1.
+//! Supports both **libsecp256k1** (secp256k1 crate, crates.io) and **blvm-secp256k1** (pure Rust).
+//! Uses blvm-secp256k1 batch verification when the `blvm-secp256k1` feature is enabled (default
+//! with production). When not enabled, falls back to libsecp256k1 with per-signature verification.
 //! API surface is identical across backends.
 
 mod secp256k1_impl;
@@ -34,6 +36,7 @@ pub fn verify_schnorr(sig: &[u8; 64], msg: &[u8], pubkey: &[u8; 32]) -> Result<b
 }
 
 /// Schnorr batch verify: returns Vec<bool> with one result per signature.
+/// Uses blvm-secp256k1 batch API when available; otherwise per-sig loop via libsecp256k1.
 pub fn verify_schnorr_batch(
     sigs: &[[u8; 64]],
     msgs: &[&[u8]],
@@ -47,7 +50,7 @@ pub fn verify_schnorr_batch(
 }
 
 /// Direct ECDSA verify from DER sig bytes + pubkey bytes + msg hash.
-/// Bypasses secp256k1-fork C library entirely; goes straight through blvm-secp256k1.
+/// Uses blvm-secp256k1 directly (no libsecp256k1 FFI).
 /// Returns Some(true/false) or None on parse error.
 #[cfg(feature = "blvm-secp256k1")]
 #[inline]
@@ -58,7 +61,13 @@ pub fn verify_ecdsa_direct(
     strict_der: bool,
     enforce_low_s: bool,
 ) -> Option<bool> {
-    blvm_secp256k1::ecdsa::verify_ecdsa_direct(der_sig, pubkey_bytes, msg_hash, strict_der, enforce_low_s)
+    blvm_secp256k1::ecdsa::verify_ecdsa_direct(
+        der_sig,
+        pubkey_bytes,
+        msg_hash,
+        strict_der,
+        enforce_low_s,
+    )
 }
 
 /// Taproot output key from internal key and merkle root (BIP 341).

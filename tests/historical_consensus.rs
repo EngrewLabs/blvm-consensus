@@ -293,7 +293,15 @@ fn test_cve_2018_17144_double_spend_in_block() {
 
     // Block should be rejected due to double-spend
     let witnesses = vec![vec![], vec![], vec![]]; // Empty witnesses
-    let result = connect_block(&block, &witnesses, utxo_set, 1, None::<&[BlockHeader]>, 0u64, Network::Mainnet);
+    let result = connect_block(
+        &block,
+        &witnesses,
+        utxo_set,
+        1,
+        None::<&[BlockHeader]>,
+        0u64,
+        Network::Mainnet,
+    );
 
     // Block should be invalid due to double-spend
     if let Ok((validation_result, _, _undo_log)) = result {
@@ -439,13 +447,13 @@ fn test_historical_block_subsidy() {
     // Using Orange Paper constant H (halving interval = 210,000)
     use blvm_consensus::orange_paper_constants::{C, H};
     let heights = vec![
-        0,              // Genesis block: 50 BTC
-        H - 1,          // Last block before first halving: 50 BTC
-        H,              // First halving: 25 BTC
-        H * 2 - 1,      // Last block before second halving: 25 BTC
-        H * 2,          // Second halving: 12.5 BTC
-        H * 3 - 1,      // Last block before third halving: 12.5 BTC
-        H * 3,          // Third halving: 6.25 BTC
+        0,         // Genesis block: 50 BTC
+        H - 1,     // Last block before first halving: 50 BTC
+        H,         // First halving: 25 BTC
+        H * 2 - 1, // Last block before second halving: 25 BTC
+        H * 2,     // Second halving: 12.5 BTC
+        H * 3 - 1, // Last block before third halving: 12.5 BTC
+        H * 3,     // Third halving: 6.25 BTC
     ];
 
     for height in heights {

@@ -4,8 +4,6 @@
 //! with the P2P network layer in blvm-node.
 
 #[cfg(feature = "utxo-commitments")]
-use blvm_spec_lock::spec_locked;
-#[cfg(feature = "utxo-commitments")]
 use crate::spam_filter::{SpamFilter, SpamSummary};
 #[cfg(feature = "utxo-commitments")]
 use crate::types::{BlockHeader, Hash as HashType, Natural, Transaction};
@@ -13,6 +11,8 @@ use crate::types::{BlockHeader, Hash as HashType, Natural, Transaction};
 use crate::utxo_commitments::data_structures::{
     UtxoCommitment, UtxoCommitmentError, UtxoCommitmentResult,
 };
+#[cfg(feature = "utxo-commitments")]
+use blvm_spec_lock::spec_locked;
 
 /// Filtered block structure
 #[derive(Debug, Clone)]

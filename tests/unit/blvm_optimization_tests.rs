@@ -1,6 +1,6 @@
-//! Unit tests for BLLVM optimizations
+//! Unit tests for BLVM optimizations
 //!
-//! Tests verify that BLLVM optimizations (pre-allocation, cache alignment)
+//! Tests verify that BLVM optimizations (pre-allocation, cache alignment)
 //! maintain correctness while improving performance.
 
 use blvm_consensus::{

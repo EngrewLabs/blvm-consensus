@@ -52,8 +52,11 @@ fn test_mempool_to_block_integration() {
     assert!(is_coinbase(&block.transactions[0]));
 
     // 5. Validate the created block
-    let witnesses: Vec<Vec<blvm_consensus::segwit::Witness>> =
-        block.transactions.iter().map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect()).collect();
+    let witnesses: Vec<Vec<blvm_consensus::segwit::Witness>> = block
+        .transactions
+        .iter()
+        .map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect())
+        .collect();
     let time_context = None;
     // Use Regtest to skip PoW check (test blocks don't have valid PoW)
     let network = blvm_consensus::types::Network::Regtest;
@@ -174,8 +177,11 @@ fn test_pow_block_integration() {
 
     // 4. Validate block (should pass other validations even if PoW fails)
     let utxo_set = UtxoSet::default();
-    let witnesses: Vec<Vec<blvm_consensus::segwit::Witness>> =
-        block.transactions.iter().map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect()).collect();
+    let witnesses: Vec<Vec<blvm_consensus::segwit::Witness>> = block
+        .transactions
+        .iter()
+        .map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect())
+        .collect();
     let time_context = None;
     let network = blvm_consensus::types::Network::Mainnet;
     let (validation_result, _new_utxo_set) = consensus
@@ -349,7 +355,7 @@ fn create_valid_block() -> Block {
                 sequence: 0xffffffff,
             }],
             outputs: tx_outputs![TransactionOutput {
-                value: 50 * blvm_consensus::orange_paper_constants::C as i64,  // Initial subsidy = 50 BTC
+                value: 50 * blvm_consensus::orange_paper_constants::C as i64, // Initial subsidy = 50 BTC
                 script_pubkey: vec![0x51].into(),
             }],
             lock_time: 0,

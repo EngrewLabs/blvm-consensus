@@ -1,13 +1,14 @@
 //! Mempool validation functions from Orange Paper Section 9
 
 use crate::constants::*;
-use blvm_spec_lock::spec_locked;
 use crate::economic::calculate_fee;
+use crate::opcodes::*;
 use crate::error::{ConsensusError, Result};
 use crate::script::verify_script;
 use crate::segwit::Witness;
 use crate::transaction::{check_transaction, check_tx_inputs};
 use crate::types::*;
+use blvm_spec_lock::spec_locked;
 use std::collections::HashSet;
 
 /// AcceptToMemoryPool: 𝒯𝒳 × 𝒰𝒮 → {accepted, rejected}
@@ -161,11 +162,7 @@ pub fn accept_to_memory_pool(
                     "Input index {} out of bounds in script validation loop",
                     i
                 );
-                // Invariant assertion: Script result must be boolean
-                assert!(
-                    is_valid == true || is_valid == false,
-                    "Script result must be boolean"
-                );
+                // Invariant: is_valid is bool from verify_script
                 if !is_valid {
                     return Ok(MempoolResult::Rejected(format!(
                         "Invalid script at input {}",
@@ -235,7 +232,12 @@ fn calculate_script_flags(tx: &Transaction, witnesses: Option<&[Witness]>) -> u3
     // Check if witness data is present (optimization: just check bool, no witness needed)
     let has_witness = witnesses.map(|w| !w.is_empty()).unwrap_or(false);
     const MEMPOOL_POLICY_HEIGHT: u64 = 1_000_000; // All soft forks active at this height
-    crate::block::calculate_script_flags_for_block(tx, has_witness, MEMPOOL_POLICY_HEIGHT, crate::types::Network::Mainnet)
+    crate::block::calculate_script_flags_for_block(
+        tx,
+        has_witness,
+        MEMPOOL_POLICY_HEIGHT,
+        crate::types::Network::Mainnet,
+    )
 }
 
 /// IsStandardTx: 𝒯𝒳 → {true, false}
@@ -586,7 +588,7 @@ where
     for tx in &block.transactions {
         if !crate::transaction::is_coinbase(tx) {
             for input in &tx.inputs {
-                spent_outpoints.insert(input.prevout.clone());
+                spent_outpoints.insert(input.prevout);
             }
         }
     }
@@ -913,7 +915,6 @@ fn is_coinbase(tx: &Transaction) -> bool {
 /// - Accepted transactions are valid
 /// - RBF rules are enforced
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1015,7 +1016,7 @@ mod tests {
         };
         let new_utxo = UTXO {
             value: 10000,
-            script_pubkey: vec![0x51].into(),
+            script_pubkey: vec![OP_1].into(),
             height: 0,
             is_coinbase: false,
         };
@@ -1103,7 +1104,7 @@ mod tests {
     fn test_is_standard_tx_large_script() {
         let mut tx = create_valid_transaction();
         // Create a script that's too large
-        tx.inputs[0].script_sig = vec![0x51; MAX_SCRIPT_SIZE + 1];
+        tx.inputs[0].script_sig = vec![OP_1; MAX_SCRIPT_SIZE + 1];
 
         let result = is_standard_tx(&tx).unwrap();
         assert!(!result);
@@ -1113,7 +1114,7 @@ mod tests {
     fn test_is_standard_tx_large_output_script() {
         let mut tx = create_valid_transaction();
         // Create an output script that's too large
-        tx.outputs[0].script_pubkey = vec![0x51; MAX_SCRIPT_SIZE + 1];
+        tx.outputs[0].script_pubkey = vec![OP_1; MAX_SCRIPT_SIZE + 1];
 
         let result = is_standard_tx(&tx).unwrap();
         assert!(!result);
@@ -1307,21 +1308,21 @@ mod tests {
 
     #[test]
     fn test_is_standard_script_too_large() {
-        let script = vec![0x51; MAX_SCRIPT_SIZE + 1];
+        let script = vec![OP_1; MAX_SCRIPT_SIZE + 1];
         let result = is_standard_script(&script).unwrap();
         assert!(!result);
     }
 
     #[test]
     fn test_is_standard_script_non_standard_opcode() {
-        let script = vec![0x65]; // Non-standard opcode
+        let script = vec![OP_VERIF]; // Non-standard opcode (disabled)
         let result = is_standard_script(&script).unwrap();
         assert!(!result);
     }
 
     #[test]
     fn test_is_standard_script_valid() {
-        let script = vec![0x51]; // OP_1
+        let script = vec![OP_1];
         let result = is_standard_script(&script).unwrap();
         assert!(result);
     }
@@ -1401,7 +1402,7 @@ mod tests {
                 hash: [1; 32],
                 index: 0,
             },
-            script_sig: vec![0x51], // OP_1 for valid script
+            script_sig: vec![OP_1],
             sequence: 0xffffffff,
         }
     }
@@ -1409,7 +1410,7 @@ mod tests {
     fn create_dummy_output() -> TransactionOutput {
         TransactionOutput {
             value: 1000,
-            script_pubkey: vec![0x51].into(), // OP_1 for valid script
+            script_pubkey: vec![OP_1].into(), // OP_1 for valid script
         }
     }
 
@@ -1421,7 +1422,7 @@ mod tests {
         };
         let utxo = UTXO {
             value: 10000,
-            script_pubkey: vec![0x51].into(), // OP_1 for valid script
+            script_pubkey: vec![OP_1].into(), // OP_1 for valid script
             height: 0,
             is_coinbase: false,
         };
@@ -1450,4 +1451,3 @@ mod tests {
         }
     }
 }
-

@@ -100,11 +100,9 @@ pub fn calculate_transaction_weight_segwit(base_size: Natural, total_size: Natur
 ///
 /// Mathematical specification:
 /// - vsize = ⌈weight / 4⌉
-/// - Implemented as: vsize = (weight + 3) / 4 (integer ceiling division)
 #[spec_locked("11.1")]
 pub fn weight_to_vsize(weight: Natural) -> Natural {
-    #[allow(clippy::manual_div_ceil)]
-    let result = (weight + 3) / 4; // Ceiling division
+    let result = weight.div_ceil(4);
 
     // Runtime assertion: Verify ceiling division property
     // vsize must be >= weight / 4 (ceiling property)
@@ -293,16 +291,54 @@ mod tests {
         // extract_witness_program should return just the program bytes (after push opcode)
         // Note: 0x01 to PUSH_20_BYTES is 20 bytes (1, 2, 3, ..., 20)
         let segwit_script = vec![
-            OP_0, PUSH_20_BYTES, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
-            0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, PUSH_20_BYTES,
+            OP_0,
+            PUSH_20_BYTES,
+            0x01,
+            0x02,
+            0x03,
+            0x04,
+            0x05,
+            0x06,
+            0x07,
+            0x08,
+            0x09,
+            0x0a,
+            0x0b,
+            0x0c,
+            0x0d,
+            0x0e,
+            0x0f,
+            0x10,
+            0x11,
+            0x12,
+            0x13,
+            PUSH_20_BYTES,
         ];
         let program = extract_witness_program(&segwit_script, WitnessVersion::SegWitV0);
         // Should return the 20 bytes after the push opcode (PUSH_20_BYTES)
         assert_eq!(
             program,
             Some(vec![
-                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
-                0x0f, 0x10, 0x11, 0x12, 0x13, PUSH_20_BYTES
+                0x01,
+                0x02,
+                0x03,
+                0x04,
+                0x05,
+                0x06,
+                0x07,
+                0x08,
+                0x09,
+                0x0a,
+                0x0b,
+                0x0c,
+                0x0d,
+                0x0e,
+                0x0f,
+                0x10,
+                0x11,
+                0x12,
+                0x13,
+                PUSH_20_BYTES
             ])
         );
     }
@@ -345,4 +381,3 @@ mod tests {
         assert!(!is_witness_empty(&vec![vec![0x01]]));
     }
 }
-

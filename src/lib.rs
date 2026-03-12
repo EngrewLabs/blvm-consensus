@@ -40,6 +40,12 @@
 //! ```
 
 #![allow(unused_doc_comments)] // Allow doc comments before macros (proptest, etc.)
+#![allow(unused_variables, unused_assignments, dead_code)] // Many paths are feature-gated or used conditionally
+#![allow(
+    clippy::too_many_arguments,  // Script/block have 8–17 args; struct refactor is large
+    clippy::type_complexity,     // Performance-critical types (OnceLock<RwLock<LruCache<...>>>)
+    clippy::large_enum_variant,  // NetworkResponse::SendMessage; boxing changes layout
+)]
 
 pub mod config;
 pub mod constants;
@@ -65,21 +71,19 @@ pub use script::{
 #[cfg(all(feature = "production", feature = "benchmarking"))]
 pub use transaction_hash::clear_sighash_templates;
 // Re-export core types and constants for convenience
-pub use types::*;
 pub use constants::*;
 pub use error::ConsensusError;
+pub use types::*;
 
 pub mod bip113;
 #[cfg(feature = "ctv")]
 pub mod bip119;
-#[cfg(all(feature = "production", feature = "rayon"))]
-pub mod checkqueue;
-#[cfg(all(feature = "production", feature = "rayon"))]
-pub(crate) mod script_exec_cache;
 #[cfg(any(feature = "csfs", feature = "production"))]
 pub mod bip348;
 pub mod bip_validation;
 pub mod block;
+#[cfg(all(feature = "production", feature = "rayon"))]
+pub mod checkqueue;
 pub mod crypto;
 pub mod economic;
 pub mod locktime;
@@ -89,6 +93,8 @@ pub mod network;
 pub mod optimizations;
 pub mod pow;
 pub mod reorganization;
+#[cfg(all(feature = "production", feature = "rayon"))]
+pub(crate) mod script_exec_cache;
 pub mod secp256k1_backend;
 pub mod segwit;
 pub mod sequence_locks;
@@ -126,7 +132,10 @@ impl ConsensusProof {
 
     /// Validate a transaction according to consensus rules
     #[spec_locked("5.1")]
-    pub fn validate_transaction(&self, tx: &types::Transaction) -> error::Result<types::ValidationResult> {
+    pub fn validate_transaction(
+        &self,
+        tx: &types::Transaction,
+    ) -> error::Result<types::ValidationResult> {
         transaction::check_transaction(tx)
     }
 
@@ -150,7 +159,8 @@ impl ConsensusProof {
         height: types::Natural,
     ) -> error::Result<(types::ValidationResult, types::UtxoSet)> {
         // Create empty witnesses for backward compatibility
-        let witnesses: Vec<Vec<segwit::Witness>> = block.transactions.iter().map(|_| Vec::new()).collect();
+        let witnesses: Vec<Vec<segwit::Witness>> =
+            block.transactions.iter().map(|_| Vec::new()).collect();
         let network_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -328,7 +338,13 @@ impl ConsensusProof {
         current_height: types::Natural,
         network: types::Network,
     ) -> error::Result<reorganization::ReorganizationResult> {
-        reorganization::reorganize_chain(new_chain, current_chain, current_utxo_set, current_height, network)
+        reorganization::reorganize_chain(
+            new_chain,
+            current_chain,
+            current_utxo_set,
+            current_height,
+            network,
+        )
     }
 
     /// Check if reorganization is beneficial
@@ -393,9 +409,9 @@ impl ConsensusProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Transaction;
-    use crate::transaction::check_transaction;
     use crate::network::{ChainState, NetworkAddress, NetworkMessage, PeerState, VersionMessage};
+    use crate::transaction::check_transaction;
+    use crate::types::Transaction;
 
     #[test]
     fn test_validate_transaction() {

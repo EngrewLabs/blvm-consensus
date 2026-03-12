@@ -15,7 +15,7 @@ use libfuzzer_sys::fuzz_target;
 /// - Weight calculations are idempotent
 /// - Economic calculations are consistent
 ///
-/// This does NOT call consensus - it tests consensus-proof internally.
+/// This does NOT call consensus - it tests blvm-consensus internally.
 fuzz_target!(|data: &[u8]| {
     // Test 1: Transaction serialization round-trip preserves validation
     if data.len() >= 4 {

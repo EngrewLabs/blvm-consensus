@@ -145,8 +145,11 @@ fn test_validate_block() {
     };
 
     let utxo_set = UtxoSet::default();
-    let witnesses: Vec<Vec<blvm_consensus::segwit::Witness>> =
-        block.transactions.iter().map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect()).collect();
+    let witnesses: Vec<Vec<blvm_consensus::segwit::Witness>> = block
+        .transactions
+        .iter()
+        .map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect())
+        .collect();
     let time_context = None;
     let network = blvm_consensus::types::Network::Mainnet;
     let (result, new_utxo_set) = consensus
@@ -231,7 +234,7 @@ fn test_get_block_subsidy() {
     // Using Orange Paper constants
     use blvm_consensus::orange_paper_constants::{C, H};
     let initial_subsidy = (50 * C) as i64;
-    
+
     // Test genesis block
     let subsidy = consensus.get_block_subsidy(0);
     assert_eq!(subsidy, initial_subsidy);
@@ -605,7 +608,13 @@ fn test_reorganize_chain() {
     }];
 
     let utxo_set = UtxoSet::default();
-    let result = consensus.reorganize_chain(&new_chain, &current_chain, utxo_set, 1, blvm_consensus::types::Network::Regtest);
+    let result = consensus.reorganize_chain(
+        &new_chain,
+        &current_chain,
+        utxo_set,
+        1,
+        blvm_consensus::types::Network::Regtest,
+    );
 
     // This might fail due to simplified validation, which is expected
     match result {

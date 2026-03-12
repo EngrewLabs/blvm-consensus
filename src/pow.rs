@@ -3,8 +3,8 @@
 use crate::constants::*;
 use crate::error::{ConsensusError, Result};
 use crate::types::*;
-use sha2::{Digest, Sha256};
 use blvm_spec_lock::spec_locked;
+use sha2::{Digest, Sha256};
 
 /// GetNextWorkRequired: ℋ × ℋ* → ℕ
 ///
@@ -236,11 +236,11 @@ pub fn batch_check_proof_of_work(headers: &[BlockHeader]) -> Result<Vec<(bool, O
         #[cfg(feature = "rayon")]
         {
             use rayon::prelude::*;
-            headers.par_iter().map(|header| serialize_header(header)).collect()
+            headers.par_iter().map(serialize_header).collect()
         }
         #[cfg(not(feature = "rayon"))]
         {
-            headers.iter().map(|header| serialize_header(header)).collect()
+            headers.iter().map(serialize_header).collect()
         }
     };
 
@@ -706,10 +706,9 @@ fn compress_target(target: &U256) -> Result<Natural> {
         .highest_set_bit()
         .ok_or_else(|| ConsensusError::InvalidProofOfWork("Cannot compress zero target".into()))?;
 
-    // Calculate size in bytes: nSize = (bits + 7) / 8 (ceiling division)
+    // Calculate size in bytes: nSize = ceil((bits + 1) / 8)
     // This is the number of bytes needed to represent the target
-    #[allow(clippy::manual_div_ceil)]
-    let n_size = (highest_bit + 1 + 7) / 8;
+    let n_size = (highest_bit + 1).div_ceil(8);
 
     // Calculate compact representation
     // nCompact is computed as uint64 first, then converted to uint32
@@ -796,7 +795,6 @@ fn u256_from_bytes(bytes: &[u8]) -> u128 {
 /// - Difficulty adjustment respects bounds [0.25, 4.0]
 /// - Work calculation is deterministic
 
-
 #[cfg(test)]
 mod property_tests {
     use super::*;
@@ -880,7 +878,6 @@ mod property_tests {
             }
         }
     }
-
 }
 
 #[cfg(test)]
@@ -1450,10 +1447,17 @@ mod tests {
 
         let bytes1 = serialize_header(&header1);
         let bytes2 = serialize_header(&header2);
-        assert_ne!(bytes1, bytes2, "Different nonces must produce different serializations");
+        assert_ne!(
+            bytes1, bytes2,
+            "Different nonces must produce different serializations"
+        );
 
         // Specifically, only the nonce bytes (76-79) should differ
-        assert_eq!(bytes1[..76], bytes2[..76], "Non-nonce bytes should be identical");
+        assert_eq!(
+            bytes1[..76],
+            bytes2[..76],
+            "Non-nonce bytes should be identical"
+        );
         assert_ne!(bytes1[76..], bytes2[76..], "Nonce bytes should differ");
     }
 

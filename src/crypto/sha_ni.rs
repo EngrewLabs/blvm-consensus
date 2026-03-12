@@ -15,9 +15,9 @@
 //! # Reference
 //! Based on Intel's SHA-NI reference implementation and the reference sha256_shani.cpp
 
+use blvm_spec_lock::spec_locked;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
-use blvm_spec_lock::spec_locked;
 
 /// Check if SHA-NI is available at runtime
 #[cfg(target_arch = "x86_64")]

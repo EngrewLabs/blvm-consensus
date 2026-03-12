@@ -2,6 +2,7 @@
 
 use crate::economic::get_block_subsidy;
 use crate::error::Result;
+use crate::opcodes::*;
 use crate::pow::get_next_work_required;
 use crate::transaction::check_transaction;
 use crate::types::*;
@@ -286,14 +287,14 @@ pub fn calculate_merkle_root(transactions: &[Transaction]) -> Result<Hash> {
                 use rayon::prelude::*;
                 transactions
                     .par_iter()
-                    .map(|tx| serialize_tx_for_hash(tx)) // Uses prealloc_tx_buffer internally
+                    .map(serialize_tx_for_hash) // Uses prealloc_tx_buffer internally
                     .collect()
             }
             #[cfg(not(feature = "rayon"))]
             {
                 transactions
                     .iter()
-                    .map(|tx| serialize_tx_for_hash(tx)) // Uses prealloc_tx_buffer internally
+                    .map(serialize_tx_for_hash) // Uses prealloc_tx_buffer internally
                     .collect()
             }
         };
@@ -350,7 +351,11 @@ pub fn calculate_merkle_root(transactions: &[Transaction]) -> Result<Hash> {
                 .map(|chunk| {
                     let mut combined = [0u8; 64];
                     combined[..32].copy_from_slice(chunk[0].as_bytes());
-                    combined[32..].copy_from_slice(if chunk.len() == 2 { chunk[1].as_bytes() } else { chunk[0].as_bytes() });
+                    combined[32..].copy_from_slice(if chunk.len() == 2 {
+                        chunk[1].as_bytes()
+                    } else {
+                        chunk[0].as_bytes()
+                    });
                     CacheAlignedHash::new(double_sha256_hash(&combined))
                 })
                 .collect();
@@ -413,7 +418,11 @@ fn merkle_tree_from_hashes(hashes: &mut Vec<Hash>) -> Result<Hash> {
         for chunk in hashes.chunks(2) {
             let mut combined = [0u8; 64];
             combined[..32].copy_from_slice(&chunk[0]);
-            combined[32..].copy_from_slice(if chunk.len() == 2 { &chunk[1] } else { &chunk[0] });
+            combined[32..].copy_from_slice(if chunk.len() == 2 {
+                &chunk[1]
+            } else {
+                &chunk[0]
+            });
             next_level.push(double_sha256_hash(&combined));
         }
 
@@ -611,8 +620,8 @@ mod tests {
         let mut prev_header2 = prev_header.clone();
         prev_header2.timestamp = prev_header.timestamp + 600; // 10 minutes later
         let prev_headers = vec![prev_header.clone(), prev_header2];
-        let coinbase_script = vec![0x51]; // OP_1
-        let coinbase_address = vec![0x51]; // OP_1
+        let coinbase_script = vec![OP_1];
+        let coinbase_address = vec![OP_1];
 
         // get_next_work_required can fail in some cases (e.g., invalid target expansion)
         // Handle errors gracefully like test_create_block_template_comprehensive does
@@ -660,8 +669,8 @@ mod tests {
         let height = 100;
         let prev_header = create_valid_block_header();
         let prev_headers = vec![prev_header.clone()];
-        let coinbase_script = vec![0x51];
-        let coinbase_address = vec![0x51];
+        let coinbase_script = vec![OP_1];
+        let coinbase_address = vec![OP_1];
 
         // This will fail due to target expansion, but that's expected for now
         let result = create_block_template(
@@ -682,8 +691,8 @@ mod tests {
     fn test_coinbase_transaction() {
         let height = 100;
         let subsidy = get_block_subsidy(height);
-        let script = vec![0x51];
-        let address = vec![0x51];
+        let script = vec![OP_1];
+        let address = vec![OP_1];
 
         let coinbase_tx = create_coinbase_transaction(height, subsidy, &script, &address).unwrap();
 
@@ -736,8 +745,8 @@ mod tests {
         let mut prev_header2 = prev_header.clone();
         prev_header2.timestamp = prev_header.timestamp + 600; // 10 minutes later
         let prev_headers = vec![prev_header.clone(), prev_header2];
-        let coinbase_script = vec![0x51];
-        let coinbase_address = vec![0x52];
+        let coinbase_script = vec![OP_1];
+        let coinbase_address = vec![OP_2];
 
         let result = create_block_template(
             &utxo_set,
@@ -995,8 +1004,8 @@ mod tests {
         let height = 100;
         let prev_header = create_valid_block_header();
         let prev_headers = vec![prev_header.clone(), prev_header.clone()];
-        let coinbase_script = vec![0x51];
-        let coinbase_address = vec![0x52];
+        let coinbase_script = vec![OP_1];
+        let coinbase_address = vec![OP_2];
 
         let result = create_block_template(
             &utxo_set,
@@ -1051,10 +1060,10 @@ mod tests {
                 // Make script_sig unique by adding counter as extra data (OP_PUSHDATA + counter bytes)
                 // This ensures transaction hash is unique without affecting script execution
                 script_sig: {
-                    let mut sig = vec![0x51]; // OP_1 pushes 1
+                    let mut sig = vec![OP_1]; // OP_1 pushes 1
                                               // Add counter as extra push data (will be on stack but script_pubkey is empty, so it doesn't matter)
                     if counter > 0 {
-                        sig.push(0x01); // Push 1 byte
+                        sig.push(PUSH_1_BYTE); // Push 1 byte
                         sig.push((counter & 0xff) as u8); // Push counter byte
                     }
                     sig
@@ -1094,8 +1103,8 @@ mod tests {
     fn test_create_coinbase_transaction_zero_subsidy() {
         let height = 100;
         let subsidy = 0; // Zero subsidy
-        let script = vec![0x51];
-        let address = vec![0x51];
+        let script = vec![OP_1];
+        let address = vec![OP_1];
 
         let coinbase_tx = create_coinbase_transaction(height, subsidy, &script, &address).unwrap();
 
@@ -1107,8 +1116,8 @@ mod tests {
     fn test_create_coinbase_transaction_large_subsidy() {
         let height = 100;
         let subsidy = 2100000000000000; // Large subsidy
-        let script = vec![0x51];
-        let address = vec![0x51];
+        let script = vec![OP_1];
+        let address = vec![OP_1];
 
         let coinbase_tx = create_coinbase_transaction(height, subsidy, &script, &address).unwrap();
 
@@ -1121,7 +1130,7 @@ mod tests {
         let height = 100;
         let subsidy = 5000000000;
         let script = vec![]; // Empty script
-        let address = vec![0x51];
+        let address = vec![OP_1];
 
         let coinbase_tx = create_coinbase_transaction(height, subsidy, &script, &address).unwrap();
 
@@ -1133,7 +1142,7 @@ mod tests {
     fn test_create_coinbase_transaction_empty_address() {
         let height = 100;
         let subsidy = 5000000000;
-        let script = vec![0x51];
+        let script = vec![OP_1];
         let address = vec![]; // Empty address
 
         let coinbase_tx = create_coinbase_transaction(height, subsidy, &script, &address).unwrap();
@@ -1248,7 +1257,10 @@ mod tests {
         let root_from_ids = calculate_merkle_root_from_tx_ids(&[txid]).unwrap();
 
         assert_eq!(root_from_txs, txid, "Single tx merkle root must equal txid");
-        assert_eq!(root_from_ids, txid, "Single txid merkle root must equal txid");
+        assert_eq!(
+            root_from_ids, txid,
+            "Single txid merkle root must equal txid"
+        );
     }
 
     #[test]
@@ -1298,7 +1310,8 @@ mod tests {
         let txid4 = calculate_tx_hash(&tx4);
 
         let root_from_txs = calculate_merkle_root(&[tx1, tx2, tx3, tx4]).unwrap();
-        let root_from_ids = calculate_merkle_root_from_tx_ids(&[txid1, txid2, txid3, txid4]).unwrap();
+        let root_from_ids =
+            calculate_merkle_root_from_tx_ids(&[txid1, txid2, txid3, txid4]).unwrap();
 
         assert_eq!(root_from_txs, root_from_ids);
     }
@@ -1349,7 +1362,9 @@ mod tests {
 
         // Also verify it's different from single SHA256
         let single = sha256_hash(&[]);
-        assert_ne!(result, single, "double SHA256 must differ from single SHA256");
+        assert_ne!(
+            result, single,
+            "double SHA256 must differ from single SHA256"
+        );
     }
 }
-

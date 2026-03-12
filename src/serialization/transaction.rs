@@ -341,12 +341,12 @@ pub fn deserialize_transaction(data: &[u8]) -> Result<Transaction> {
             // Number of stack items for this input
             let (stack_count, varint_len) = decode_varint(&data[offset..])?;
             offset += varint_len;
-            
+
             // Skip each stack item
             for _ in 0..stack_count {
                 let (item_len, varint_len) = decode_varint(&data[offset..])?;
                 offset += varint_len;
-                
+
                 if data.len() < offset + item_len as usize {
                     return Err(ConsensusError::Serialization(Cow::Owned(
                         TransactionParseError::InsufficientBytes.to_string(),
@@ -379,10 +379,12 @@ pub fn deserialize_transaction(data: &[u8]) -> Result<Transaction> {
 }
 
 /// Deserialize a transaction from Bitcoin wire format, returning transaction, witness, and bytes consumed
-/// 
+///
 /// This is used by block deserialization to track how many bytes each transaction uses.
 #[spec_locked("8.2.2")]
-pub fn deserialize_transaction_with_witness(data: &[u8]) -> Result<(Transaction, Vec<crate::witness::Witness>, usize)> {
+pub fn deserialize_transaction_with_witness(
+    data: &[u8],
+) -> Result<(Transaction, Vec<crate::witness::Witness>, usize)> {
     let mut offset = 0;
 
     // Version (4 bytes)
@@ -424,7 +426,7 @@ pub fn deserialize_transaction_with_witness(data: &[u8]) -> Result<(Transaction,
     let mut inputs = SmallVec::<[TransactionInput; 2]>::new();
     #[cfg(not(feature = "production"))]
     let mut inputs = Vec::new();
-    
+
     for _ in 0..input_count {
         // Previous output hash (32 bytes)
         if data.len() < offset + 32 {
@@ -498,7 +500,7 @@ pub fn deserialize_transaction_with_witness(data: &[u8]) -> Result<(Transaction,
     let mut outputs = SmallVec::<[TransactionOutput; 2]>::new();
     #[cfg(not(feature = "production"))]
     let mut outputs = Vec::new();
-    
+
     for _ in 0..output_count {
         // Value (8 bytes)
         if data.len() < offset + 8 {
@@ -507,8 +509,14 @@ pub fn deserialize_transaction_with_witness(data: &[u8]) -> Result<(Transaction,
             )));
         }
         let value = i64::from_le_bytes([
-            data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
-            data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+            data[offset + 4],
+            data[offset + 5],
+            data[offset + 6],
+            data[offset + 7],
         ]);
         offset += 8;
 
@@ -541,15 +549,15 @@ pub fn deserialize_transaction_with_witness(data: &[u8]) -> Result<(Transaction,
             // Number of stack items for this input
             let (stack_count, varint_len) = decode_varint(&data[offset..])?;
             offset += varint_len;
-            
+
             // Create witness stack for this input
             let mut witness_stack: Witness = Vec::new();
-            
+
             // Parse each stack item
             for _ in 0..stack_count {
                 let (item_len, varint_len) = decode_varint(&data[offset..])?;
                 offset += varint_len;
-                
+
                 if data.len() < offset + item_len as usize {
                     return Err(ConsensusError::Serialization(Cow::Owned(
                         TransactionParseError::InsufficientBytes.to_string(),
@@ -558,7 +566,7 @@ pub fn deserialize_transaction_with_witness(data: &[u8]) -> Result<(Transaction,
                 witness_stack.push(data[offset..offset + item_len as usize].to_vec());
                 offset += item_len as usize;
             }
-            
+
             all_witnesses.push(witness_stack);
         }
     } else {
@@ -646,4 +654,3 @@ mod tests {
         assert!(deserialize_transaction(&[0, 0, 0, 0, 1]).is_err()); // Version + input count
     }
 }
-

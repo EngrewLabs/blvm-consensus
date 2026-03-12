@@ -27,13 +27,12 @@
 //! - **Input validation**: All inputs are validated before processing
 //! - **Feature flag**: CSFS is behind a feature flag to prevent accidental use before activation
 
+use crate::crypto::OptimizedSha256;
 use crate::error::{ConsensusError, Result};
-use crate::types::{ByteString, Hash};
-use secp256k1::{XOnlyPublicKey, Message, schnorr::Signature};
+use blvm_spec_lock::spec_locked;
 #[cfg(all(feature = "production", feature = "rayon"))]
 use rayon::prelude::*;
-use crate::crypto::OptimizedSha256;
-use blvm_spec_lock::spec_locked;
+use secp256k1::{schnorr::Signature, Message, XOnlyPublicKey};
 #[cfg(feature = "production")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -131,11 +130,9 @@ impl SchnorrSignatureCollector {
             .map(|(msg, pk, sig)| (msg.as_slice(), pk.as_slice(), sig.as_slice()))
             .collect();
         if let Ok(results) = batch_verify_signatures_from_stack(&task_refs) {
-            let partial: Vec<(usize, bool)> = indices
-                .into_iter()
-                .zip(results.into_iter())
-                .collect();
-            let _ = self.streaming_results.push(partial);
+            let partial: Vec<(usize, bool)> =
+                indices.into_iter().zip(results.into_iter()).collect();
+            self.streaming_results.push(partial);
         }
     }
 
@@ -153,7 +150,13 @@ impl SchnorrSignatureCollector {
 
     /// Collect with explicit global index (for CCheckQueue-style parallel script verification).
     /// Enables deterministic (tx, input) order when workers collect out of order.
-    pub fn collect_with_index(&self, global_index: usize, message: &[u8], pubkey: &[u8], signature: &[u8]) {
+    pub fn collect_with_index(
+        &self,
+        global_index: usize,
+        message: &[u8],
+        pubkey: &[u8],
+        signature: &[u8],
+    ) {
         if let Some(ref soa) = self.soa {
             if message.len() != 32 || pubkey.len() != 32 || signature.len() != 64 {
                 return;
@@ -188,7 +191,8 @@ impl SchnorrSignatureCollector {
         }
 
         #[cfg(all(feature = "production", feature = "rayon"))]
-        let streaming: Vec<Vec<(usize, bool)>> = std::iter::from_fn(|| self.streaming_results.pop()).collect();
+        let streaming: Vec<Vec<(usize, bool)>> =
+            std::iter::from_fn(|| self.streaming_results.pop()).collect();
 
         let mut tasks: Vec<(usize, (Vec<u8>, Vec<u8>, Vec<u8>))> =
             std::iter::from_fn(|| self.tasks.pop()).collect();
@@ -224,7 +228,10 @@ impl SchnorrSignatureCollector {
     }
 
     fn verify_soa_batch(soa: &SchnorrSoAStorage, count: usize) -> Result<Vec<bool>> {
-        let inner = soa.inner.lock().map_err(|_| ConsensusError::BlockValidation("SoA lock poisoned".into()))?;
+        let inner = soa
+            .inner
+            .lock()
+            .map_err(|_| ConsensusError::BlockValidation("SoA lock poisoned".into()))?;
         let task_refs: Vec<(&[u8], &[u8], &[u8])> = (0..count)
             .map(|slot| {
                 (
@@ -323,7 +330,7 @@ pub fn verify_signature_from_stack(
         // BIP 340 Schnorr signature verification
         // Message is NOT hashed by BIP 340 spec, but we need 32 bytes for secp256k1
         // Use SHA256 to hash message to 32 bytes (matches BIP348 reference implementation)
-        
+
         // Signature must be 64 bytes (BIP 340 Schnorr)
         if signature.len() != 64 {
             return Ok(false);
@@ -359,7 +366,7 @@ pub fn verify_signature_from_stack(
         let msg = Message::from_digest_slice(&message_hash)
             .map_err(|_| ConsensusError::InvalidSignature("Invalid message".into()))?;
 
-        // Verify using backend (secp256k1-fork or blvm-secp256k1)
+        // Verify using backend (libsecp256k1 or blvm-secp256k1)
         let pk_bytes: [u8; 32] = pubkey_xonly.serialize();
         Ok(crate::secp256k1_backend::verify_schnorr(
             &sig.serialize(),
@@ -475,7 +482,8 @@ pub fn batch_verify_signatures_from_stack(
     let msg_refs: Vec<&[u8]> = msgs.iter().map(|m| m.as_slice()).collect();
 
     let perf = &crate::config::get_consensus_config_ref().performance;
-    let chunk_threshold = crate::ibd_tuning::chunk_threshold_config_or_hardware(perf.ibd_chunk_threshold);
+    let chunk_threshold =
+        crate::ibd_tuning::chunk_threshold_config_or_hardware(perf.ibd_chunk_threshold);
     let min_chunk = crate::ibd_tuning::min_chunk_size_config_or_hardware(perf.ibd_min_chunk_size);
     let n = sigs.len();
 
@@ -571,13 +579,9 @@ pub fn verify_tapscript_schnorr_signature(
         Err(_) => return Ok(false), // Invalid signature format
     };
 
-    // Verify using backend (secp256k1-fork or commons-secp256k1)
+    // Verify using backend (libsecp256k1 or blvm-secp256k1)
     let pk_bytes: [u8; 32] = pubkey_xonly.serialize();
-    Ok(crate::secp256k1_backend::verify_schnorr(
-        &sig.serialize(),
-        sighash,
-        &pk_bytes,
-    )?)
+    crate::secp256k1_backend::verify_schnorr(&sig.serialize(), sighash, &pk_bytes)
 }
 
 #[cfg(test)]
@@ -589,8 +593,14 @@ mod tests {
         let message = b"test message";
         let pubkey = vec![];
         let signature = vec![0u8; 64];
-        
-        let result = verify_signature_from_stack(message, &pubkey, &signature, #[cfg(feature = "production")] None);
+
+        let result = verify_signature_from_stack(
+            message,
+            &pubkey,
+            &signature,
+            #[cfg(feature = "production")]
+            None,
+        );
         assert!(result.is_err());
     }
 
@@ -599,9 +609,15 @@ mod tests {
         let message = b"test message";
         let pubkey = vec![1u8; 33]; // 33-byte pubkey (unknown type)
         let signature = vec![0u8; 64];
-        
+
         // Unknown pubkey type should succeed
-        let result = verify_signature_from_stack(message, &pubkey, &signature, #[cfg(feature = "production")] None);
+        let result = verify_signature_from_stack(
+            message,
+            &pubkey,
+            &signature,
+            #[cfg(feature = "production")]
+            None,
+        );
         assert_eq!(result.unwrap(), true);
     }
 
@@ -610,9 +626,14 @@ mod tests {
         let message = b"test message";
         let pubkey = vec![1u8; 32]; // Valid 32-byte pubkey
         let signature = vec![0u8; 63]; // Invalid length (not 64 bytes)
-        
-        let result = verify_signature_from_stack(message, &pubkey, &signature, #[cfg(feature = "production")] None);
+
+        let result = verify_signature_from_stack(
+            message,
+            &pubkey,
+            &signature,
+            #[cfg(feature = "production")]
+            None,
+        );
         assert_eq!(result.unwrap(), false);
     }
 }
-

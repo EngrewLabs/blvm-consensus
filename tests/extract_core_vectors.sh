@@ -2,7 +2,7 @@
 # Extract Bitcoin Core test vectors for integration
 #
 # This script extracts test vectors from Bitcoin Core repository
-# and prepares them for use in consensus-proof tests.
+# and prepares them for use in blvm-consensus tests.
 
 set -e
 

@@ -8,7 +8,7 @@ All consensus-critical cryptographic dependencies are pinned to exact versions f
 
 - **Consensus-critical cryptography**: Exact versions (`=`) for `secp256k1`, `ripemd`, `bitcoin_hashes`
 - **Non-consensus utilities**: Exact versions for supply chain security (`serde`, `serde_json`, `anyhow`, `thiserror`)
-- **Formal verification tools**: Exact versions for reproducibility (`proptest`, `kani-verifier`)
+- **Formal verification tools**: Exact versions for reproducibility (`proptest`, `blvm-spec-lock`)
 
 **Rationale**: Consensus-critical code must be deterministic and reproducible. Exact version pinning prevents:
 - Supply chain attacks through dependency updates
@@ -29,7 +29,7 @@ See `Cargo.toml` for complete dependency list with exact versions.
 
 ### Critical Security Issues
 
-If you discover a security vulnerability in consensus-proof, please report it immediately:
+If you discover a security vulnerability in blvm-consensus, please report it immediately:
 
 1. **DO NOT** create a public GitHub issue
 2. **DO NOT** discuss the vulnerability publicly
@@ -38,7 +38,7 @@ If you discover a security vulnerability in consensus-proof, please report it im
 ### How to Report
 
 **Email:** security@btcdecoded.org  
-**Subject:** [SECURITY] consensus-proof vulnerability
+**Subject:** [SECURITY] blvm-consensus vulnerability
 
 Include the following information:
 - Description of the vulnerability

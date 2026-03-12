@@ -28,7 +28,7 @@
 //! - Insert: O(1)
 //! - Memory: O(block_tx_count) instead of O(utxo_set_size)
 
-use crate::types::{utxo_set_insert, OutPoint, UTXO, UtxoSet};
+use crate::types::{OutPoint, UtxoSet, UTXO};
 #[cfg(feature = "production")]
 use rustc_hash::{FxHashMap, FxHashSet};
 #[cfg(not(feature = "production"))]
@@ -60,15 +60,15 @@ fn key_to_outpoint(key: &OutPointKey) -> OutPoint {
 pub trait UtxoLookup {
     /// Look up a UTXO by outpoint.
     fn get(&self, outpoint: &OutPoint) -> Option<&UTXO>;
-    
+
     /// Check if a UTXO exists.
     fn contains_key(&self, outpoint: &OutPoint) -> bool {
         self.get(outpoint).is_some()
     }
-    
+
     /// Get the number of UTXOs (approximate for overlays).
     fn len(&self) -> usize;
-    
+
     /// Check if empty.
     fn is_empty(&self) -> bool {
         self.len() == 0
@@ -87,9 +87,13 @@ impl UtxoLookup for UtxoSet {
         FxHashMap::contains_key(self, outpoint)
     }
     #[inline]
-    fn len(&self) -> usize { FxHashMap::len(self) }
+    fn len(&self) -> usize {
+        FxHashMap::len(self)
+    }
     #[inline]
-    fn is_empty(&self) -> bool { FxHashMap::is_empty(self) }
+    fn is_empty(&self) -> bool {
+        FxHashMap::is_empty(self)
+    }
 }
 #[cfg(not(feature = "production"))]
 impl UtxoLookup for UtxoSet {
@@ -102,9 +106,13 @@ impl UtxoLookup for UtxoSet {
         std::collections::HashMap::contains_key(self, outpoint)
     }
     #[inline]
-    fn len(&self) -> usize { std::collections::HashMap::len(self) }
+    fn len(&self) -> usize {
+        std::collections::HashMap::len(self)
+    }
     #[inline]
-    fn is_empty(&self) -> bool { std::collections::HashMap::is_empty(self) }
+    fn is_empty(&self) -> bool {
+        std::collections::HashMap::is_empty(self)
+    }
 }
 
 /// Zero-copy overlay for UTXO set modifications during block validation.
@@ -125,7 +133,7 @@ pub struct UtxoOverlay<'a> {
 
 impl<'a> UtxoOverlay<'a> {
     /// Create a new overlay over the given UTXO set.
-    /// 
+    ///
     /// This is O(1) - no copying of the base set.
     #[inline]
     pub fn new(base: &'a UtxoSet) -> Self {
@@ -150,19 +158,19 @@ impl<'a> UtxoOverlay<'a> {
     }
 
     /// Look up a UTXO by outpoint.
-    /// 
+    ///
     /// First checks deletions, then additions, then base set.
     #[inline]
     pub fn get(&self, outpoint: &OutPoint) -> Option<&UTXO> {
         if self.has_deletions && self.deletions.contains(&outpoint_to_key(outpoint)) {
             return None;
         }
-        
+
         // Check additions first (for intra-block spending)
         if let Some(arc) = self.additions.get(outpoint) {
             return Some(arc.as_ref());
         }
-        
+
         // Fall back to base set (UtxoSet holds Arc<UTXO>; deref to &UTXO)
         self.base.get(outpoint).map(|a| a.as_ref())
     }
@@ -223,7 +231,7 @@ impl<'a> UtxoOverlay<'a> {
             self.has_deletions = true;
             return Some(std::sync::Arc::clone(arc));
         }
-        
+
         None
     }
 
@@ -280,8 +288,17 @@ impl<'a> UtxoOverlay<'a> {
     ///
     /// Returns (additions, deletions) — the net UTXO changes from this block.
     #[inline]
-    pub fn into_changes(self) -> (FxHashMap<OutPoint, std::sync::Arc<UTXO>>, FxHashSet<OutPoint>) {
-        let deletions = self.deletions.into_iter().map(|k| key_to_outpoint(&k)).collect();
+    pub fn into_changes(
+        self,
+    ) -> (
+        FxHashMap<OutPoint, std::sync::Arc<UTXO>>,
+        FxHashSet<OutPoint>,
+    ) {
+        let deletions = self
+            .deletions
+            .into_iter()
+            .map(|k| key_to_outpoint(&k))
+            .collect();
         (self.additions, deletions)
     }
 }
@@ -306,7 +323,7 @@ impl<'a> UtxoLookup for UtxoOverlay<'a> {
         }
         self.additions.contains_key(outpoint) || self.base.contains_key(outpoint)
     }
-    
+
     #[inline]
     fn len(&self) -> usize {
         // Approximate: base size + additions - deletions
@@ -316,7 +333,7 @@ impl<'a> UtxoLookup for UtxoOverlay<'a> {
 }
 
 /// Fast UTXO set using FxHash for better performance.
-/// 
+///
 /// FxHashMap uses a faster hash function than the default SipHash.
 /// For fixed-size keys like OutPoint (36 bytes), this is 2-3x faster.
 #[cfg(feature = "production")]
@@ -329,17 +346,13 @@ pub type FastUtxoSet = std::collections::HashMap<OutPoint, UTXO>;
 #[cfg(feature = "production")]
 #[inline]
 pub fn to_fast_utxo_set(utxo_set: &UtxoSet) -> FastUtxoSet {
-    utxo_set.iter()
-        .map(|(k, v)| (k.clone(), (**v).clone()))
-        .collect()
+    utxo_set.iter().map(|(k, v)| (*k, (**v).clone())).collect()
 }
 
 #[cfg(not(feature = "production"))]
 #[inline]
 pub fn to_fast_utxo_set(utxo_set: &UtxoSet) -> FastUtxoSet {
-    utxo_set.iter()
-        .map(|(k, v)| (k.clone(), (**v).clone()))
-        .collect()
+    utxo_set.iter().map(|(k, v)| (*k, (**v).clone())).collect()
 }
 
 /// Apply a transaction to the overlay (for validation phase).
@@ -357,9 +370,9 @@ pub fn apply_transaction_to_overlay(
 ) -> Vec<crate::reorganization::UndoEntry> {
     use crate::reorganization::UndoEntry;
     use crate::transaction::is_coinbase;
-    
+
     let mut undo_entries = Vec::with_capacity(tx.inputs.len() + tx.outputs.len());
-    
+
     // Remove spent inputs (except for coinbase)
     if !is_coinbase(tx) {
         for input in &tx.inputs {
@@ -373,21 +386,21 @@ pub fn apply_transaction_to_overlay(
             }
         }
     }
-    
+
     // Add new outputs
     for (i, output) in tx.outputs.iter().enumerate() {
         let outpoint = OutPoint {
             hash: tx_id,
             index: i as u32,
         };
-        
+
         let utxo = UTXO {
             value: output.value,
             script_pubkey: output.script_pubkey.as_slice().into(),
             height,
             is_coinbase: is_coinbase(tx),
         };
-        
+
         let utxo_arc = std::sync::Arc::new(utxo);
         // Record new UTXO for undo log
         undo_entries.push(UndoEntry {
@@ -395,10 +408,10 @@ pub fn apply_transaction_to_overlay(
             previous_utxo: None, // Newly created
             new_utxo: Some(std::sync::Arc::clone(&utxo_arc)),
         });
-        
+
         overlay.insert_arc(outpoint, utxo_arc);
     }
-    
+
     undo_entries
 }
 
@@ -415,14 +428,14 @@ pub fn apply_transaction_to_overlay_no_undo(
     height: crate::types::Natural,
 ) {
     use crate::transaction::is_coinbase;
-    
+
     // Remove spent inputs (except for coinbase). Use mark_spent to avoid cloning UTXO.
     if !is_coinbase(tx) {
         for input in &tx.inputs {
             overlay.mark_spent(&input.prevout);
         }
     }
-    
+
     // Add new outputs
     let is_cb = is_coinbase(tx);
     for (i, output) in tx.outputs.iter().enumerate() {
@@ -430,14 +443,14 @@ pub fn apply_transaction_to_overlay_no_undo(
             hash: tx_id,
             index: i as u32,
         };
-        
+
         let utxo = UTXO {
             value: output.value,
             script_pubkey: output.script_pubkey.as_slice().into(),
             height,
             is_coinbase: is_cb,
         };
-        
+
         overlay.insert(outpoint, utxo);
     }
 }
@@ -445,6 +458,7 @@ pub fn apply_transaction_to_overlay_no_undo(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utxo_set_insert;
 
     fn make_outpoint(idx: u8) -> OutPoint {
         OutPoint {
@@ -467,9 +481,9 @@ mod tests {
         let mut base = UtxoSet::default();
         utxo_set_insert(&mut base, make_outpoint(1), make_utxo(1000));
         utxo_set_insert(&mut base, make_outpoint(2), make_utxo(2000));
-        
+
         let overlay = UtxoOverlay::new(&base);
-        
+
         assert_eq!(overlay.get(&make_outpoint(1)).unwrap().value, 1000);
         assert_eq!(overlay.get(&make_outpoint(2)).unwrap().value, 2000);
         assert!(overlay.get(&make_outpoint(3)).is_none());
@@ -479,9 +493,9 @@ mod tests {
     fn test_overlay_additions() {
         let base = UtxoSet::default();
         let mut overlay = UtxoOverlay::new(&base);
-        
+
         overlay.insert(make_outpoint(1), make_utxo(1000));
-        
+
         assert_eq!(overlay.get(&make_outpoint(1)).unwrap().value, 1000);
         assert_eq!(overlay.additions_len(), 1);
     }
@@ -490,9 +504,9 @@ mod tests {
     fn test_overlay_deletions() {
         let mut base = UtxoSet::default();
         utxo_set_insert(&mut base, make_outpoint(1), make_utxo(1000));
-        
+
         let mut overlay = UtxoOverlay::new(&base);
-        
+
         let removed = overlay.remove(&make_outpoint(1));
         assert_eq!(removed.unwrap().value, 1000);
         assert!(overlay.get(&make_outpoint(1)).is_none());
@@ -504,16 +518,16 @@ mod tests {
         // Simulate spending an output created in the same block
         let base = UtxoSet::default();
         let mut overlay = UtxoOverlay::new(&base);
-        
+
         // Add output
         overlay.insert(make_outpoint(1), make_utxo(1000));
         assert!(overlay.get(&make_outpoint(1)).is_some());
-        
+
         // Spend it in same block
         let removed = overlay.remove(&make_outpoint(1));
         assert_eq!(removed.unwrap().value, 1000);
         assert!(overlay.get(&make_outpoint(1)).is_none());
-        
+
         // Should not be in deletions (was only in additions)
         assert_eq!(overlay.deletions_len(), 0);
         assert_eq!(overlay.additions_len(), 0);
@@ -524,15 +538,15 @@ mod tests {
         let mut base = UtxoSet::default();
         utxo_set_insert(&mut base, make_outpoint(1), make_utxo(1000));
         utxo_set_insert(&mut base, make_outpoint(2), make_utxo(2000));
-        
+
         let mut overlay = UtxoOverlay::new(&base);
-        
+
         // Remove one, add one
         overlay.remove(&make_outpoint(1));
         overlay.insert(make_outpoint(3), make_utxo(3000));
-        
+
         let result = overlay.apply_to_base();
-        
+
         assert!(result.get(&make_outpoint(1)).is_none()); // Removed
         assert_eq!(result.get(&make_outpoint(2)).unwrap().value, 2000); // Unchanged
         assert_eq!(result.get(&make_outpoint(3)).unwrap().value, 3000); // Added
@@ -545,14 +559,17 @@ mod tests {
         for i in 0..10000 {
             utxo_set_insert(&mut base, make_outpoint(i as u8), make_utxo(i as i64));
         }
-        
+
         // Creating overlay should be instant (no clone)
         let start = std::time::Instant::now();
         let _overlay = UtxoOverlay::new(&base);
         let elapsed = start.elapsed();
-        
+
         // Should be sub-microsecond (just pointer + empty hashmap allocation)
-        assert!(elapsed.as_micros() < 100, "Overlay creation took {:?}", elapsed);
+        assert!(
+            elapsed.as_micros() < 100,
+            "Overlay creation took {:?}",
+            elapsed
+        );
     }
 }
-

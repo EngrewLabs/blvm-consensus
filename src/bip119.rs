@@ -68,8 +68,8 @@
 use crate::error::{ConsensusError, Result};
 use crate::serialization::varint::encode_varint;
 use crate::types::*;
-use sha2::{Digest, Sha256};
 use blvm_spec_lock::spec_locked;
+use sha2::{Digest, Sha256};
 
 /// Calculate transaction template hash for BIP119 CTV
 ///
@@ -262,7 +262,6 @@ pub fn is_ctv_script(script: &[u8]) -> bool {
     use crate::opcodes::OP_CHECKTEMPLATEVERIFY;
     script.contains(&OP_CHECKTEMPLATEVERIFY) // OP_CHECKTEMPLATEVERIFY (OP_NOP4)
 }
-
 
 #[cfg(test)]
 mod tests {

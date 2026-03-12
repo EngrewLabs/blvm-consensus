@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Initial release of consensus-proof crate
+- Initial release of blvm-consensus crate
 - Core Bitcoin consensus validation functions
 - Transaction validation and script execution
 - Block validation and proof of work verification
@@ -82,7 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 0.1.0 - Initial Release
 
-This is the initial release of consensus-proof, providing a direct mathematical implementation of Bitcoin consensus rules from the Orange Paper.
+This is the initial release of blvm-consensus, providing a direct mathematical implementation of Bitcoin consensus rules from the Orange Paper.
 
 **Key Features:**
 - Pure mathematical implementation of Bitcoin consensus

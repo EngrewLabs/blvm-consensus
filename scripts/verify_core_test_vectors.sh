@@ -90,7 +90,7 @@ echo "=== Next Steps ==="
 echo ""
 echo "1. Run: cargo test --test integration_test (if Cargo.lock is compatible)"
 echo "2. Verify transaction vectors execute correctly"
-echo "3. Document results in tests/core_test_vectors/VERIFICATION_RESULTS.md"
+echo "3. Document verification results as needed"
 echo "4. Fix any test failures found"
 echo ""
 

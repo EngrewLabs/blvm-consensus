@@ -1,4 +1,4 @@
-//! Regression tests for consensus-proof
+//! Regression tests for blvm-consensus
 
 mod edge_cases;
 

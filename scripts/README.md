@@ -1,6 +1,6 @@
 # Consensus Scripts
 
-This directory contains scripts for managing test data and verification for bllvm-consensus.
+This directory contains scripts for managing test data and verification for blvm-consensus.
 
 ## Scripts
 
@@ -16,7 +16,7 @@ These scripts are used to:
 - Verify against Bitcoin Core test vectors
 - Prepare test data for fuzzing and property testing
 
-See [bllvm-consensus/README.md](../README.md) for more information about the consensus layer.
+See [blvm-consensus/README.md](../README.md) for more information about the consensus layer.
 
 ## Related
 

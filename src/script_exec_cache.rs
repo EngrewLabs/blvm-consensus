@@ -17,15 +17,26 @@ const CACHE_CAPACITY: usize = 65536;
 static CACHE: OnceLock<std::sync::Mutex<lru::LruCache<[u8; 32], ()>>> = OnceLock::new();
 
 fn get_cache() -> Option<&'static std::sync::Mutex<lru::LruCache<[u8; 32], ()>>> {
-    if std::env::var("BLVM_SCRIPT_EXEC_CACHE").map(|s| s == "1" || s.eq_ignore_ascii_case("true")).unwrap_or(false) {
-        Some(CACHE.get_or_init(|| std::sync::Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(CACHE_CAPACITY).unwrap()))))
+    if std::env::var("BLVM_SCRIPT_EXEC_CACHE")
+        .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        Some(CACHE.get_or_init(|| {
+            std::sync::Mutex::new(lru::LruCache::new(
+                std::num::NonZeroUsize::new(CACHE_CAPACITY).unwrap(),
+            ))
+        }))
     } else {
         None
     }
 }
 
 /// Compute cache key: SHA256(witness_hash || flags_le) where witness_hash = SHA256d(serialize_tx_with_witness).
-pub fn compute_key(tx: &Transaction, witnesses: &[crate::witness::Witness], flags: u32) -> [u8; 32] {
+pub fn compute_key(
+    tx: &Transaction,
+    witnesses: &[crate::witness::Witness],
+    flags: u32,
+) -> [u8; 32] {
     let bytes = serialize_transaction_with_witness(tx, witnesses);
     let witness_hash = sha256d::Hash::hash(&bytes);
     let mut hasher = bitcoin_hashes::sha256::Hash::engine();

@@ -1,4 +1,4 @@
-//! Comprehensive unit tests for consensus-proof modules
+//! Comprehensive unit tests for blvm-consensus modules
 
 use blvm_consensus::economic::*;
 use blvm_consensus::pow::*;

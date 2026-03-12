@@ -5,8 +5,6 @@
 //! without trusting any single peer.
 
 #[cfg(feature = "utxo-commitments")]
-use blvm_spec_lock::spec_locked;
-#[cfg(feature = "utxo-commitments")]
 use crate::types::{BlockHeader, Hash, Natural};
 #[cfg(feature = "utxo-commitments")]
 use crate::utxo_commitments::data_structures::{
@@ -16,6 +14,8 @@ use crate::utxo_commitments::data_structures::{
 use crate::utxo_commitments::network_integration::UtxoCommitmentsNetworkClient;
 #[cfg(feature = "utxo-commitments")]
 use crate::utxo_commitments::verification::{verify_header_chain, verify_supply};
+#[cfg(feature = "utxo-commitments")]
+use blvm_spec_lock::spec_locked;
 #[cfg(feature = "utxo-commitments")]
 use sparse_merkle_tree::MerkleProof;
 #[cfg(feature = "utxo-commitments")]
@@ -478,11 +478,7 @@ impl PeerConsensus {
     pub fn verify_utxo_proofs(
         &self,
         consensus: &ConsensusResult,
-        utxos_to_verify: Vec<(
-            crate::types::OutPoint,
-            crate::types::UTXO,
-            MerkleProof,
-        )>,
+        utxos_to_verify: Vec<(crate::types::OutPoint, crate::types::UTXO, MerkleProof)>,
     ) -> UtxoCommitmentResult<bool> {
         use crate::utxo_commitments::merkle_tree::UtxoMerkleTree;
 
@@ -526,11 +522,7 @@ impl PeerConsensus {
     pub fn verify_utxo_proofs_parallel(
         &self,
         consensus: &ConsensusResult,
-        utxos_to_verify: Vec<(
-            crate::types::OutPoint,
-            crate::types::UTXO,
-            MerkleProof,
-        )>,
+        utxos_to_verify: Vec<(crate::types::OutPoint, crate::types::UTXO, MerkleProof)>,
     ) -> UtxoCommitmentResult<bool> {
         use crate::utxo_commitments::merkle_tree::UtxoMerkleTree;
         use rayon::prelude::*;
@@ -571,11 +563,7 @@ impl PeerConsensus {
     pub fn verify_utxo_proofs_parallel_fallback(
         &self,
         consensus: &ConsensusResult,
-        utxos_to_verify: Vec<(
-            crate::types::OutPoint,
-            crate::types::UTXO,
-            MerkleProof,
-        )>,
+        utxos_to_verify: Vec<(crate::types::OutPoint, crate::types::UTXO, MerkleProof)>,
     ) -> UtxoCommitmentResult<bool> {
         // Use sequential verification as fallback
         self.verify_utxo_proofs(consensus, utxos_to_verify)

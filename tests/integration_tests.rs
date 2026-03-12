@@ -1,4 +1,4 @@
-//! Integration tests for consensus-proof
+//! Integration tests for blvm-consensus
 
 use blvm_consensus::*;
 

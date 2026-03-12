@@ -1,10 +1,10 @@
-//! Performance benchmarks for BLLVM optimizations
+//! Performance benchmarks for BLVM optimizations
 //!
-//! These benchmarks measure the performance impact of BLLVM optimizations:
+//! These benchmarks measure the performance impact of BLVM optimizations:
 //! - Pre-allocation (Phase 1)
 //! - Cache alignment (Phase 2)
 //!
-//! Run with: cargo bench --bench bllvm_optimizations --features production
+//! Run with: cargo bench --bench blvm_optimizations --features production
 
 #[cfg(feature = "production")]
 use blvm_consensus::optimizations;

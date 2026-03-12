@@ -6,8 +6,8 @@
 //! Run test: BLVM_IBD_FAILURE_HEIGHT=N cargo test --test block_ibd_repro -- --ignored
 
 use blvm_consensus::block::connect_block_ibd;
-use blvm_consensus::types::{Block, Network, OutPoint, UTXO, UtxoSet};
 use blvm_consensus::segwit::Witness;
+use blvm_consensus::types::{Block, Network, OutPoint, UtxoSet, UTXO};
 use blvm_consensus::ValidationResult;
 use std::path::Path;
 use std::sync::Arc;
@@ -37,11 +37,18 @@ fn dump_dir() -> std::path::PathBuf {
 }
 
 /// Dump format: HashMap<OutPoint, UTXO> (no Arc in serialized form)
-fn load_dump(dir: &Path) -> Result<(Block, Vec<Vec<Witness>>, UtxoSet), Box<dyn std::error::Error + Send + Sync>> {
-    let block: Block = bincode::deserialize_from(std::io::BufReader::new(std::fs::File::open(dir.join("block.bin"))?))?;
-    let witnesses: Vec<Vec<Witness>> = bincode::deserialize_from(std::io::BufReader::new(std::fs::File::open(dir.join("witnesses.bin"))?))?;
-    let raw: std::collections::HashMap<OutPoint, UTXO> =
-        bincode::deserialize_from(std::io::BufReader::new(std::fs::File::open(dir.join("utxo_set.bin"))?))?;
+fn load_dump(
+    dir: &Path,
+) -> Result<(Block, Vec<Vec<Witness>>, UtxoSet), Box<dyn std::error::Error + Send + Sync>> {
+    let block: Block = bincode::deserialize_from(std::io::BufReader::new(std::fs::File::open(
+        dir.join("block.bin"),
+    )?))?;
+    let witnesses: Vec<Vec<Witness>> = bincode::deserialize_from(std::io::BufReader::new(
+        std::fs::File::open(dir.join("witnesses.bin"))?,
+    ))?;
+    let raw: std::collections::HashMap<OutPoint, UTXO> = bincode::deserialize_from(
+        std::io::BufReader::new(std::fs::File::open(dir.join("utxo_set.bin"))?),
+    )?;
     let utxo_set: UtxoSet = raw.into_iter().map(|(k, v)| (k, Arc::new(v))).collect();
     Ok((block, witnesses, utxo_set))
 }
@@ -88,7 +95,12 @@ fn block_ibd_repro() {
     }
 
     // Diagnostic: individually verify each input of the failing transaction
-    eprintln!("Block {}: {} txs, utxo_set size {}", h, block.transactions.len(), utxo_set.len());
+    eprintln!(
+        "Block {}: {} txs, utxo_set size {}",
+        h,
+        block.transactions.len(),
+        utxo_set.len()
+    );
     for (tx_idx, tx) in block.transactions.iter().enumerate() {
         if blvm_consensus::transaction::is_coinbase(tx) {
             continue;
@@ -97,20 +109,34 @@ fn block_ibd_repro() {
             let utxo = match utxo_set.get(&input.prevout) {
                 Some(u) => u,
                 None => {
-                    eprintln!("  tx {} input {}: UTXO not found for prevout", tx_idx, inp_idx);
+                    eprintln!(
+                        "  tx {} input {}: UTXO not found for prevout",
+                        tx_idx, inp_idx
+                    );
                     continue;
                 }
             };
             let script_pubkey = &utxo.script_pubkey;
             let witness = witnesses.get(tx_idx).and_then(|w| w.get(inp_idx));
             let wit_ref = witness.and_then(|w| if w.is_empty() { None } else { Some(w) });
-            let has_witness = witness.map(|w| w.iter().any(|x| !x.is_empty())).unwrap_or(false);
+            let has_witness = witness
+                .map(|w| w.iter().any(|x| !x.is_empty()))
+                .unwrap_or(false);
             let flags = 0u32; // height 139758 is before BIP16/66/65 activations
-            let prevout_values: Vec<i64> = tx.inputs.iter()
+            let prevout_values: Vec<i64> = tx
+                .inputs
+                .iter()
                 .map(|i| utxo_set.get(&i.prevout).map(|u| u.value).unwrap_or(0))
                 .collect();
-            let prevout_scripts: Vec<&[u8]> = tx.inputs.iter()
-                .map(|i| utxo_set.get(&i.prevout).map(|u| u.script_pubkey.as_ref()).unwrap_or(&[]))
+            let prevout_scripts: Vec<&[u8]> = tx
+                .inputs
+                .iter()
+                .map(|i| {
+                    utxo_set
+                        .get(&i.prevout)
+                        .map(|u| u.script_pubkey.as_ref())
+                        .unwrap_or(&[])
+                })
                 .collect();
             let result = blvm_consensus::script::verify_script_with_context_full(
                 &input.script_sig,
@@ -139,9 +165,20 @@ fn block_ibd_repro() {
             );
             match &result {
                 Ok(valid) if !valid => {
-                    eprintln!("  tx {} input {}: SCRIPT INVALID (verify returned false)", tx_idx, inp_idx);
-                    eprintln!("    script_pubkey ({} bytes): {:02x?}", script_pubkey.len(), &script_pubkey[..script_pubkey.len().min(40)]);
-                    eprintln!("    script_sig ({} bytes): {:02x?}", input.script_sig.len(), &input.script_sig[..input.script_sig.len().min(40)]);
+                    eprintln!(
+                        "  tx {} input {}: SCRIPT INVALID (verify returned false)",
+                        tx_idx, inp_idx
+                    );
+                    eprintln!(
+                        "    script_pubkey ({} bytes): {:02x?}",
+                        script_pubkey.len(),
+                        &script_pubkey[..script_pubkey.len().min(40)]
+                    );
+                    eprintln!(
+                        "    script_sig ({} bytes): {:02x?}",
+                        input.script_sig.len(),
+                        &input.script_sig[..input.script_sig.len().min(40)]
+                    );
                     if let Some(w) = witness {
                         eprintln!("    witness: {} items", w.len());
                     }
@@ -151,7 +188,12 @@ fn block_ibd_repro() {
                 }
                 Ok(true) => {
                     if tx_idx == 8 {
-                        eprintln!("  tx {} input {}: OK (spk {} bytes)", tx_idx, inp_idx, script_pubkey.len());
+                        eprintln!(
+                            "  tx {} input {}: OK (spk {} bytes)",
+                            tx_idx,
+                            inp_idx,
+                            script_pubkey.len()
+                        );
                     }
                 }
                 _ => {}

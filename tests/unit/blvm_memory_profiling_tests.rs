@@ -7,8 +7,8 @@
 //!
 //! To run with memory profiling:
 //!   1. Install valgrind or heaptrack
-//!   2. Run: cargo test --features production --test bllvm_memory_profiling_tests
-//!   3. Or use: valgrind --tool=massif cargo test --features production --test bllvm_memory_profiling_tests
+//!   2. Run: cargo test --features production --test blvm_memory_profiling_tests
+//!   3. Or use: valgrind --tool=massif cargo test --features production --test blvm_memory_profiling_tests
 
 use blvm_consensus::{
     mining::calculate_merkle_root,

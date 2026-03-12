@@ -1,4 +1,4 @@
-//! secp256k1-fork / libsecp256k1 backend implementation.
+//! crates.io secp256k1 0.28 backend implementation.
 
 use crate::error::{ConsensusError, Result};
 use crate::types::Hash;
@@ -9,6 +9,7 @@ pub fn verify_ecdsa(
     sig_compact: &[u8; 64],
     pubkey_compressed: &[u8; 33],
 ) -> Result<bool> {
+    let secp = Secp256k1::new();
     let msg = Message::from_digest(*msg_hash);
     let sig = match ecdsa::Signature::from_compact(sig_compact) {
         Ok(s) => s,
@@ -18,7 +19,6 @@ pub fn verify_ecdsa(
         Ok(p) => p,
         Err(_) => return Ok(false),
     };
-    let secp = Secp256k1::verification_only();
     Ok(secp.verify_ecdsa(&msg, &sig, &pk).is_ok())
 }
 
@@ -26,10 +26,7 @@ pub fn verify_schnorr(sig: &[u8; 64], msg: &[u8], pubkey: &[u8; 32]) -> Result<b
     if msg.len() != 32 {
         return Ok(false);
     }
-    let msg_secp = match Message::from_digest_slice(msg) {
-        Ok(m) => m,
-        Err(_) => return Ok(false),
-    };
+    let secp = Secp256k1::new();
     let pk = match XOnlyPublicKey::from_slice(pubkey) {
         Ok(p) => p,
         Err(_) => return Ok(false),
@@ -38,8 +35,11 @@ pub fn verify_schnorr(sig: &[u8; 64], msg: &[u8], pubkey: &[u8; 32]) -> Result<b
         Ok(s) => s,
         Err(_) => return Ok(false),
     };
-    let secp = Secp256k1::verification_only();
-    Ok(secp.verify_schnorr(&sig_parsed, &msg_secp, &pk).is_ok())
+    let message = match Message::from_digest_slice(msg) {
+        Ok(m) => m,
+        Err(_) => return Ok(false),
+    };
+    Ok(secp.verify_schnorr(&sig_parsed, &message, &pk).is_ok())
 }
 
 /// Per-sig fallback when using crates.io secp256k1 (no batch API). Batch path uses blvm_impl when blvm-secp256k1.
@@ -63,6 +63,7 @@ pub fn taproot_output_key(internal_pubkey: &[u8; 32], merkle_root: &Hash) -> Res
     use secp256k1::{Parity, Scalar, XOnlyPublicKey};
     use sha2::{Digest, Sha256};
 
+    let secp = Secp256k1::new();
     let internal_pk = match XOnlyPublicKey::from_slice(internal_pubkey) {
         Ok(pk) => pk,
         Err(_) => {
@@ -86,7 +87,6 @@ pub fn taproot_output_key(internal_pubkey: &[u8; 32], merkle_root: &Hash) -> Res
         }
     };
 
-    let secp = Secp256k1::verification_only();
     let full_pk = PublicKey::from_x_only_public_key(internal_pk, Parity::Even);
     let tweaked_pk = full_pk.add_exp_tweak(&secp, &tweak_scalar).map_err(|_| {
         ConsensusError::InvalidSignature("Failed to compute tweaked public key".into())

@@ -411,14 +411,12 @@ fn benchmark_batch_ecdsa_verification(c: &mut Criterion) {
 
         c.bench_function(&format!("batch_verify_signatures_{}", count), |b| {
             b.iter(|| {
-                black_box(
-                    batch_verify_signatures(
-                        black_box(&verification_tasks),
-                        0,  // flags
-                        0,  // height (post-BIP66)
-                        Network::Mainnet,
-                    )
-                )
+                black_box(batch_verify_signatures(
+                    black_box(&verification_tasks),
+                    0, // flags
+                    0, // height (post-BIP66)
+                    Network::Mainnet,
+                ))
             })
         });
 

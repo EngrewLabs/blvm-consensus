@@ -59,15 +59,17 @@ pub fn check_bip30(
     network: crate::types::Network,
     coinbase_txid: Option<&Hash>,
 ) -> Result<bool> {
-    use crate::constants::{BIP30_DEACTIVATION_MAINNET, BIP30_DEACTIVATION_TESTNET, BIP30_DEACTIVATION_REGTEST};
-    
+    use crate::constants::{
+        BIP30_DEACTIVATION_MAINNET, BIP30_DEACTIVATION_REGTEST, BIP30_DEACTIVATION_TESTNET,
+    };
+
     // Check if BIP30 is still active at this height
     let deactivation_height = match network {
         crate::types::Network::Mainnet => BIP30_DEACTIVATION_MAINNET,
         crate::types::Network::Testnet => BIP30_DEACTIVATION_TESTNET,
         crate::types::Network::Regtest => BIP30_DEACTIVATION_REGTEST,
     };
-    
+
     // BIP30 is disabled after deactivation height
     if height > deactivation_height {
         return Ok(true);
@@ -81,11 +83,13 @@ pub fn check_bip30(
             return Ok(true);
         }
 
-        let txid = coinbase_txid.copied().unwrap_or_else(|| calculate_tx_id(tx));
+        let txid = coinbase_txid
+            .copied()
+            .unwrap_or_else(|| calculate_tx_id(tx));
 
         // Fast path: O(1) lookup when index is provided
         if let Some(index) = bip30_index {
-            if index.get(&txid).map_or(false, |&c| c > 0) {
+            if index.get(&txid).is_some_and(|&c| c > 0) {
                 return Ok(false);
             }
             return Ok(true);
@@ -306,7 +310,7 @@ pub fn check_bip66(
 }
 
 /// Check if signature is strictly DER-encoded
-/// 
+///
 /// Implements IsValidSignatureEncoding (BIP66 strict DER) exactly.
 /// BIP66 requires strict DER encoding with specific rules:
 /// - Format: 0x30 [total-length] 0x02 [R-length] [R] 0x02 [S-length] [S] [sighash]
@@ -547,7 +551,6 @@ pub enum Bip147Network {
     Regtest,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -586,7 +589,15 @@ mod tests {
         };
 
         let utxo_set = UtxoSet::default();
-        let result = check_bip30(&block, &utxo_set, None, 0, crate::types::Network::Mainnet, None).unwrap();
+        let result = check_bip30(
+            &block,
+            &utxo_set,
+            None,
+            0,
+            crate::types::Network::Mainnet,
+            None,
+        )
+        .unwrap();
         assert!(result, "BIP30 should pass for new coinbase");
     }
 
@@ -757,7 +768,15 @@ mod tests {
         };
 
         // BIP30 should fail for duplicate coinbase
-        let result = check_bip30(&block, &utxo_set, None, 0, crate::types::Network::Mainnet, None).unwrap();
+        let result = check_bip30(
+            &block,
+            &utxo_set,
+            None,
+            0,
+            crate::types::Network::Mainnet,
+            None,
+        )
+        .unwrap();
         assert!(!result, "BIP30 should fail for duplicate coinbase");
     }
 

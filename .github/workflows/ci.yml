@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       skip_verification:
-        description: 'Skip Kani verification and attestation steps'
+        description: 'Skip spec-lock verification and attestation steps'
         required: false
         type: boolean
         default: false
@@ -21,16 +21,6 @@ on:
         required: false
         type: boolean
         default: false
-      run_proof_tier:
-        description: 'Run additional proof tier (strong always runs; choose: fast, fast_medium, or all)'
-        required: false
-        type: choice
-        options:
-          - ''
-          - fast
-          - fast_medium
-          - all
-        default: ''
 
 permissions:
   contents: read
@@ -373,194 +363,81 @@ jobs:
   verify:
     name: Verify
     needs: setup
-    runs-on: [self-hosted, Linux, X64, perf]
-    timeout-minutes: 360  # 6 hours for all proofs (195 proofs can take a long time)
+    runs-on: [self-hosted, Linux, X64, builds]
+    timeout-minutes: 60
     if: |
       (github.event_name != 'push' || github.event.head_commit == null || 
        (!contains(github.event.head_commit.message, '[skip ci]') &&
         !contains(github.event.head_commit.message, '[ci skip]') &&
-        !contains(github.event.head_commit.message, '[no ci]')))
-    outputs:
-      proof_tier: ${{ steps.set_tier_output.outputs.tier }}
-      ami_id: ${{ secrets.KANI_RUNNER_AMI_ID }}
+        !contains(github.event.head_commit.message, '[no ci]'))) &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.skip_verification != 'true')
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Setup blvm-spec-lock dependency
+        run: bash scripts/setup-spec-lock.sh
+      
+      - name: Cache
+        run: |
+          CACHE_ROOT="/tmp/runner-cache"
+          CACHE_KEY="${{ needs.setup.outputs.cache-key }}"
+          echo "CARGO_CACHE_DIR=$CACHE_ROOT/cargo/$CACHE_KEY" >> $GITHUB_ENV
+          echo "TARGET_CACHE_DIR=$CACHE_ROOT/target/$CACHE_KEY" >> $GITHUB_ENV
+      
+      - name: Restore registry
+        run: |
+          if [ -d "$CARGO_CACHE_DIR/registry" ] && [ "$(ls -A $CARGO_CACHE_DIR/registry 2>/dev/null)" ]; then
+            mkdir -p "$HOME/.cargo/registry"
+            rsync -a --delete "$CARGO_CACHE_DIR/registry/" "$HOME/.cargo/registry/" || true
+          fi
+      
+      - name: Restore target
+        run: |
+          if [ -d "$TARGET_CACHE_DIR" ] && [ "$(ls -A $TARGET_CACHE_DIR 2>/dev/null)" ]; then
+            rsync -a --delete "$TARGET_CACHE_DIR/" ./target/ || true
+          fi
       
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.88.0
       
-      - name: Verify Kani is available
+      - name: Build blvm-spec-lock
         run: |
-          echo "Checking for Kani model checker..."
-          # Check if kani is available (should be pre-installed on runner)
-          if command -v kani &> /dev/null; then
-            echo "✅ Found kani command: $(which kani)"
-            kani --version || echo "Version check failed, but kani exists"
-          elif command -v cargo &> /dev/null && cargo kani --version &> /dev/null; then
-            echo "✅ Found cargo kani subcommand"
-            cargo kani --version
-          else
-            echo "❌ Kani not found on runner"
-            echo "PATH: $PATH"
-            echo "Please ensure Kani is installed on the runner"
-            echo "Install with: curl -fsSL https://model-checking.github.io/kani/install.sh | sh -s -- -y"
-            exit 1
+          if [ ! -f "../blvm-spec-lock/target/release/cargo-spec-lock" ]; then
+            cd ../blvm-spec-lock
+            cargo build --release --bin cargo-spec-lock
+            cd ../blvm-consensus
           fi
+          echo "✅ cargo-spec-lock ready"
       
-      - name: Determine proof tier
-        id: proof_tier
+      - name: Run blvm-spec-lock verify
         run: |
-          # Strong tier ALWAYS runs (critical consensus proofs)
-          # Other tiers only run when manually triggered via workflow_dispatch
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.run_proof_tier }}" ]; then
-            # Manual trigger: Use specified tier
-            TIER="${{ github.event.inputs.run_proof_tier }}"
-            echo "tier=$TIER" >> $GITHUB_OUTPUT
-            case "$TIER" in
-              fast)
-                echo "description=Fast tier (unwind <= 3)" >> $GITHUB_OUTPUT
-                echo "unwind_max=3" >> $GITHUB_OUTPUT
-                ;;
-              fast_medium)
-                echo "description=Fast + Medium tier (unwind <= 9)" >> $GITHUB_OUTPUT
-                echo "unwind_max=9" >> $GITHUB_OUTPUT
-                ;;
-              all)
-                echo "description=All proofs (all unwind bounds)" >> $GITHUB_OUTPUT
-                echo "unwind_max=999" >> $GITHUB_OUTPUT
-                ;;
-              *)
-                echo "tier=" >> $GITHUB_OUTPUT
-                echo "description=No additional tier" >> $GITHUB_OUTPUT
-                ;;
-            esac
-          else
-            # Automatic runs: No additional tier (strong tier only)
-            echo "tier=" >> $GITHUB_OUTPUT
-            echo "description=Strong tier only (no additional tier)" >> $GITHUB_OUTPUT
-          fi
-          echo "Event: ${{ github.event_name }}"
-          echo "Ref: ${{ github.ref }}"
-          echo "Additional tier: ${{ steps.proof_tier.outputs.tier }}"
-          echo "Description: ${{ steps.proof_tier.outputs.description }}"
-      
-      - name: Run Kani proofs (Strong tier - ALWAYS, cannot be skipped)
-        run: |
-          echo "🔒 Running Kani proofs - STRONG TIER (critical consensus proofs)..."
-          echo "These proofs verify the minimum set for 'formally verified' status"
-          echo "Note: Running with increased parallelism (3 jobs) for better performance"
-          # Get list of strong tier proofs
-          STRONG_PROOFS=$(python3 scripts/get_proofs_by_tier.py strong)
-          PROOF_COUNT=$(echo "$STRONG_PROOFS" | wc -w)
-          echo "Found $PROOF_COUNT strong tier proofs to run"
-          if [ "$PROOF_COUNT" -eq 0 ]; then
-            echo "❌ No strong tier proofs found! This should never happen."
-            exit 1
-          fi
-          TEMP_OUTPUT=$(mktemp)
-          KANI_OUTPUT_FILE="kani_strong_output.txt"
-          trap "rm -f $TEMP_OUTPUT" EXIT
-          set +e
-          # Build harness filter arguments
-          HARNESS_ARGS=""
-          for proof in $STRONG_PROOFS; do
-            HARNESS_ARGS="$HARNESS_ARGS --harness $proof"
-          done
-          echo "Starting Kani verification at $(date)"
-          cargo kani --features verify --output-format terse --solver cadical --jobs 3 $HARNESS_ARGS 2>&1 | tee "$KANI_OUTPUT_FILE" | grep -v "aborting path on assume(false)" | tee "$TEMP_OUTPUT"
+          echo "🔒 Running blvm-spec-lock verification..."
+          ../blvm-spec-lock/target/release/cargo-spec-lock verify --crate-path . 2>&1 | tee spec_lock_output.txt
           EXIT_CODE=${PIPESTATUS[0]}
-          echo "Kani verification completed at $(date)"
-          set -e
           if [ $EXIT_CODE -ne 0 ]; then
-            if [ $EXIT_CODE -eq 143 ]; then
-              echo "⚠️  Strong tier Kani proofs were terminated (exit code 143 = SIGTERM)"
-              echo "This usually means the job timed out or was killed due to resource limits"
-              echo "Strong tier proofs are critical - they must pass for consensus correctness"
-              exit $EXIT_CODE
-            else
-              echo "❌ Strong tier Kani proofs failed (exit code: $EXIT_CODE)"
-              echo "CRITICAL: Strong tier proofs verify core consensus rules"
-              echo "Any failure here indicates a potential consensus-breaking bug"
-              exit $EXIT_CODE
-            fi
+            echo "❌ blvm-spec-lock verification failed"
+            exit $EXIT_CODE
           fi
-          echo "✅ Strong tier proofs verified successfully"
-          # Hash the Kani output for attestation
-          KANI_OUTPUT_HASH=$(sha256sum "$KANI_OUTPUT_FILE" | cut -d' ' -f1)
-          echo "kani_strong_output_hash=$KANI_OUTPUT_HASH" >> $GITHUB_ENV
-          echo "kani_strong_verified=true" >> $GITHUB_ENV
-          echo "kani_strong_proofs=$PROOF_COUNT" >> $GITHUB_ENV
-          echo "Kani strong tier output hash: $KANI_OUTPUT_HASH"
+          echo "✅ blvm-spec-lock verification passed"
       
-      - name: Upload Kani output for attestation (Strong tier)
+      - name: Create spec-lock attestation data
+        run: |
+          CONSENSUS_FUNCS=$(grep -c "Status: PASSED" spec_lock_output.txt 2>/dev/null || echo "0")
+          echo "spec_lock_consensus_functions=$CONSENSUS_FUNCS" >> $GITHUB_ENV
+          echo "spec_lock_verified=true" >> $GITHUB_ENV
+          HASH=$(sha256sum spec_lock_output.txt | cut -d' ' -f1)
+          echo "spec_lock_output_hash=$HASH" >> $GITHUB_ENV
+          echo "📋 Spec-lock: consensus=$CONSENSUS_FUNCS functions verified"
+      
+      - name: Upload spec-lock output for attestation
         if: github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
-          name: kani-strong-attestation-data
-          path: kani_strong_output.txt
+          name: spec-lock-attestation-data
+          path: spec_lock_output.txt
           retention-days: 90
-      
-      - name: Run Kani proofs (Fast - manual only)
-        if: steps.proof_tier.outputs.tier == 'fast'
-        run: |
-          echo "⚡ Running Kani proofs - Fast tier (unwind <= 3)..."
-          echo "Note: Strong tier already ran above. This runs additional fast proofs."
-          echo "Note: Running with minimal parallelism (2 jobs) to avoid OOM"
-          # Get list of fast proofs (strong tier excluded automatically)
-          FAST_PROOFS=$(python3 scripts/get_proofs_by_tier.py fast)
-          PROOF_COUNT=$(echo "$FAST_PROOFS" | wc -w)
-          echo "Found $PROOF_COUNT fast proofs to run"
-          if [ "$PROOF_COUNT" -eq 0 ]; then
-            echo "⚠️  No additional fast proofs found (all may be in strong tier)"
-            exit 0
-          fi
-          TEMP_OUTPUT=$(mktemp)
-          KANI_OUTPUT_FILE="kani_output.txt"
-          trap "rm -f $TEMP_OUTPUT" EXIT
-          set +e
-          # Build harness filter arguments
-          HARNESS_ARGS=""
-          for proof in $FAST_PROOFS; do
-            HARNESS_ARGS="$HARNESS_ARGS --harness $proof"
-          done
-          cargo kani --features verify --output-format terse --solver cadical --jobs 2 $HARNESS_ARGS 2>&1 | tee "$KANI_OUTPUT_FILE" | grep -v "aborting path on assume(false)" | tee "$TEMP_OUTPUT"
-          EXIT_CODE=${PIPESTATUS[0]}
-          set -e
-          if [ $EXIT_CODE -ne 0 ]; then
-            if [ $EXIT_CODE -eq 143 ]; then
-              echo "⚠️  Fast Kani proofs were terminated (exit code 143 = SIGTERM)"
-              echo "This usually means the job timed out or was killed due to resource limits"
-              echo "Consider running proofs in smaller batches or increasing timeout"
-              exit $EXIT_CODE
-            else
-              echo "❌ Fast Kani proofs failed (exit code: $EXIT_CODE)"
-              exit $EXIT_CODE
-            fi
-          fi
-          echo "✅ Fast proofs verified successfully"
-          # Hash the Kani output for attestation (only on main branch)
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            KANI_OUTPUT_HASH=$(sha256sum "$KANI_OUTPUT_FILE" | cut -d' ' -f1)
-            echo "kani_output_hash=$KANI_OUTPUT_HASH" >> $GITHUB_ENV
-            echo "kani_verified=true" >> $GITHUB_ENV
-            echo "kani_proofs=$PROOF_COUNT" >> $GITHUB_ENV
-            echo "Kani output hash: $KANI_OUTPUT_HASH"
-          fi
-      
-      - name: Upload Kani output for attestation (Fast)
-        if: steps.proof_tier.outputs.tier == 'fast' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
-        with:
-          name: kani-attestation-data
-          path: kani_output.txt
-          retention-days: 90
-      
-      - name: Set proof tier output
-        id: set_tier_output
-        run: |
-          echo "tier=${{ steps.proof_tier.outputs.tier }}" >> $GITHUB_OUTPUT
       
       - name: Run property tests with all features
         run: |
@@ -593,179 +470,6 @@ jobs:
             exit 0
           }
           echo "✅ MIRI checks passed"
-
-  provision-spot-runner:
-    name: Provision Spot Runner
-    needs: [verify]
-    if: |
-      needs.verify.result == 'success' &&
-      (needs.verify.outputs.proof_tier == 'fast_medium' ||
-       needs.verify.outputs.proof_tier == 'all')
-    uses: BTCDecoded/blvm/.github/workflows/provision-spot-runner.yml@main
-    with:
-      repo_name: blvm-consensus
-      ami_id: ${{ needs.verify.outputs.ami_id }}
-      instance_type: c6i.4xlarge
-      runner_labels: 'self-hosted, Linux, X64, spot, kani'
-      workload_type: kani
-    secrets: inherit
-
-  verify-medium-slow:
-    name: Verify (Medium + Slow Proofs on Spot Runner)
-    needs: [verify, provision-spot-runner]
-    runs-on: [self-hosted, Linux, X64, spot, kani]
-    timeout-minutes: 360  # 6 hours for medium + slow proofs
-    if: |
-      needs.verify.result == 'success' &&
-      needs.provision-spot-runner.result == 'success' &&
-      (needs.verify.outputs.proof_tier == 'fast_medium' ||
-       needs.verify.outputs.proof_tier == 'all')
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.88.0
-      
-      - name: Verify Kani is available
-        run: |
-          if command -v kani &> /dev/null; then
-            echo "✅ Found kani command: $(which kani)"
-            kani --version
-          else
-            echo "❌ Kani not found on runner"
-            exit 1
-          fi
-      
-      - name: Run Kani proofs (Fast + Medium on Spot Runner)
-        if: needs.verify.outputs.proof_tier == 'fast_medium'
-        run: |
-          echo "🔍 Running Kani proofs - Fast + Medium tier (unwind <= 9) on spot runner..."
-          echo "Note: Strong tier already ran on regular runner. This runs additional fast + medium proofs."
-          echo "Note: Running with minimal parallelism (2 jobs) to avoid OOM"
-          # Get list of fast + medium proofs (strong tier excluded automatically)
-          FAST_MEDIUM_PROOFS=$(python3 scripts/get_proofs_by_tier.py fast_medium)
-          PROOF_COUNT=$(echo "$FAST_MEDIUM_PROOFS" | wc -w)
-          echo "Found $PROOF_COUNT fast + medium proofs to run (strong tier excluded)"
-          if [ "$PROOF_COUNT" -eq 0 ]; then
-            echo "⚠️  No additional fast + medium proofs found (all may be in strong tier)"
-            exit 0
-          fi
-          TEMP_OUTPUT=$(mktemp)
-          KANI_OUTPUT_FILE="kani_spot_output.txt"
-          trap "rm -f $TEMP_OUTPUT" EXIT
-          set +e
-          # Build harness filter arguments
-          HARNESS_ARGS=""
-          for proof in $FAST_MEDIUM_PROOFS; do
-            HARNESS_ARGS="$HARNESS_ARGS --harness $proof"
-          done
-          cargo kani --features verify --output-format terse --solver cadical --jobs 2 $HARNESS_ARGS 2>&1 | tee "$KANI_OUTPUT_FILE" | grep -v "aborting path on assume(false)" | tee "$TEMP_OUTPUT"
-          EXIT_CODE=${PIPESTATUS[0]}
-          set -e
-          if [ $EXIT_CODE -ne 0 ]; then
-            if [ $EXIT_CODE -eq 143 ]; then
-              echo "⚠️  Fast + Medium Kani proofs were terminated (exit code 143 = SIGTERM)"
-              echo "This usually means the job timed out or was killed due to resource limits"
-              echo "Consider running proofs in smaller batches or increasing timeout"
-              exit $EXIT_CODE
-            else
-              echo "❌ Fast + Medium Kani proofs failed (exit code: $EXIT_CODE)"
-              exit $EXIT_CODE
-            fi
-          fi
-          echo "✅ Fast + Medium proofs verified successfully on spot runner"
-          # Hash the Kani output for attestation (only on main branch)
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            KANI_OUTPUT_HASH=$(sha256sum "$KANI_OUTPUT_FILE" | cut -d' ' -f1)
-            echo "kani_spot_output_hash=$KANI_OUTPUT_HASH" >> $GITHUB_ENV
-            echo "kani_spot_verified=true" >> $GITHUB_ENV
-            echo "kani_spot_proofs=$PROOF_COUNT" >> $GITHUB_ENV
-            echo "Kani spot runner output hash: $KANI_OUTPUT_HASH"
-          fi
-      
-      - name: Run Kani proofs (All on Spot Runner)
-        if: needs.verify.outputs.proof_tier == 'all'
-        timeout-minutes: 360  # 6 hours - all proofs can take 4-6 hours
-        run: |
-          echo "🐌 Running Kani proofs - All tier (all unwind bounds) on spot runner..."
-          echo "Note: Strong tier already ran on regular runner. This runs all remaining proofs."
-          echo "Note: Running with minimal parallelism (2 jobs) to avoid OOM"
-          echo "This includes slow proofs (unwind >= 10) which take significantly longer"
-          echo "Expected duration: 4-6 hours for all proofs"
-          echo "Job timeout: 360 minutes (6 hours)"
-          # Get all proofs except strong tier
-          # This means getting slow tier (unwind >= 10) plus any medium not in strong
-          SLOW_PROOFS=$(python3 scripts/get_proofs_by_tier.py slow)
-          FAST_MEDIUM_PROOFS=$(python3 scripts/get_proofs_by_tier.py fast_medium)
-          PROOFS="$SLOW_PROOFS $FAST_MEDIUM_PROOFS"
-          PROOF_COUNT=$(echo "$PROOFS" | wc -w)
-          echo "Found $PROOF_COUNT proofs to run (all unwind bounds, strong tier excluded)"
-          if [ "$PROOF_COUNT" -eq 0 ]; then
-            echo "⚠️  No additional proofs found (all may be in strong tier)"
-            exit 0
-          fi
-          TEMP_OUTPUT=$(mktemp)
-          KANI_OUTPUT_FILE="kani_spot_output.txt"
-          trap "rm -f $TEMP_OUTPUT" EXIT
-          set +e
-          # Build harness filter arguments
-          HARNESS_ARGS=""
-          for proof in $PROOFS; do
-            HARNESS_ARGS="$HARNESS_ARGS --harness $proof"
-          done
-          cargo kani --features verify --output-format terse --solver cadical --jobs 2 $HARNESS_ARGS 2>&1 | tee "$KANI_OUTPUT_FILE" | grep -v "aborting path on assume(false)" | tee "$TEMP_OUTPUT"
-          EXIT_CODE=${PIPESTATUS[0]}
-          set -e
-          if [ $EXIT_CODE -ne 0 ]; then
-            if [ $EXIT_CODE -eq 143 ]; then
-              echo "⚠️  All Kani proofs were terminated (exit code 143 = SIGTERM)"
-              echo "This usually means the job timed out or was killed due to resource limits"
-              echo "The 'all' tier with all proofs can take 4-6 hours to complete"
-              echo "Consider:"
-              echo "  1. Increasing the job timeout (currently 360 minutes)"
-              echo "  2. Running proofs in smaller batches"
-              echo "  3. Using a runner with more memory/CPU"
-              exit $EXIT_CODE
-            else
-              echo "❌ All Kani proofs failed (exit code: $EXIT_CODE)"
-              echo "This is critical for consensus correctness - review proofs before release"
-              exit $EXIT_CODE
-            fi
-          fi
-          echo "✅ All Kani proofs verified successfully on spot runner"
-          # Hash the Kani output for attestation (only on main branch)
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            KANI_OUTPUT_HASH=$(sha256sum "$KANI_OUTPUT_FILE" | cut -d' ' -f1)
-            echo "kani_spot_output_hash=$KANI_OUTPUT_HASH" >> $GITHUB_ENV
-            echo "kani_spot_verified=true" >> $GITHUB_ENV
-            echo "kani_spot_proofs=$PROOF_COUNT" >> $GITHUB_ENV
-            echo "Kani spot runner output hash: $KANI_OUTPUT_HASH"
-          fi
-      
-      - name: Upload Kani output for attestation (Spot Runner)
-        if: github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
-        with:
-          name: kani-spot-attestation-data
-          path: kani_spot_output.txt
-          retention-days: 90
-
-  cleanup-spot-runner:
-    name: Cleanup Spot Runner
-    needs: [verify-medium-slow, provision-spot-runner]
-    if: |
-      always() &&
-      needs.provision-spot-runner.result != 'skipped'
-    runs-on: [self-hosted, Linux, X64, builds]
-    steps:
-      - name: Stop EC2 Runner
-        uses: machulav/ec2-github-runner@v2
-        with:
-          mode: stop
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          label: ${{ needs.provision-spot-runner.outputs.runner_label }}
 
   build:
     name: Build
@@ -1033,11 +737,6 @@ jobs:
           rm -f Cargo.lock
           cargo update
           echo "✅ Cargo.lock regenerated with latest dependencies"
-          # Verify kani-verifier version
-          if grep -q "kani-verifier" Cargo.lock 2>/dev/null; then
-            echo "kani-verifier version in Cargo.lock:"
-            grep -A 2 "name = \"kani-verifier\"" Cargo.lock | head -3
-          fi
       
       - name: Update version in Cargo.toml
         if: env.CARGO_REGISTRY_TOKEN != ''
@@ -1060,8 +759,6 @@ jobs:
           echo "✅ Updated Cargo.toml to version ${VERSION}"
           echo "Package version line:"
           grep "^version = " Cargo.toml | head -1
-          echo "Verifying kani-verifier is unchanged:"
-          grep -A 1 "\[dependencies.kani-verifier\]" Cargo.toml
       
       - name: Regenerate Cargo.lock after version change
         if: env.CARGO_REGISTRY_TOKEN != ''
@@ -1072,9 +769,9 @@ jobs:
           echo "✅ Cargo.lock regenerated after version update"
           
           # Verify the package version in Cargo.lock matches
-          if grep -q "name = \"bllvm-consensus\"" Cargo.lock 2>/dev/null; then
+          if grep -q "name = \"blvm-consensus\"" Cargo.lock 2>/dev/null; then
             echo "Package version in Cargo.lock:"
-            grep -A 1 "name = \"bllvm-consensus\"" Cargo.lock | grep "version" | head -1
+            grep -A 1 "name = \"blvm-consensus\"" Cargo.lock | grep "version" | head -1
           fi
       
       - name: Pre-release smoke test
@@ -1472,57 +1169,24 @@ jobs:
           RUSTC_VERSION=$(rustc --version | cut -d' ' -f2)
           CARGO_VERSION=$(cargo --version | cut -d' ' -f2)
           
-          # Get CBMC version from Kani (if available)
-          CBMC_VERSION=""
-          if command -v kani &> /dev/null; then
-            CBMC_VERSION=$(kani --version 2>&1 | grep -i cbmc | head -1 | sed -E 's/.*cbmc[^0-9]*([0-9.]+).*/\1/' || echo "")
-          fi
-          if [ -z "$CBMC_VERSION" ]; then
-            CBMC_VERSION="unknown"
-          fi
-          
           # Hash Cargo.lock
           CARGO_LOCK_HASH=$(sha256sum Cargo.lock | cut -d' ' -f1)
           
-          # Check if debug assertions are enabled (check Cargo.toml or build flags)
+          # Check if debug assertions are enabled
           DEBUG_ASSERTIONS="false"
           if grep -q "debug-assertions = true" Cargo.toml 2>/dev/null; then
             DEBUG_ASSERTIONS="true"
           fi
           
-          # Extract Kani data from artifacts
-          KANI_VERIFIED="false"
-          KANI_PROOFS="0"
-          KANI_OUTPUT_HASH=""
-          KANI_STRONG_VERIFIED="false"
-          KANI_STRONG_PROOFS="0"
-          KANI_STRONG_OUTPUT_HASH=""
-          
-          # Strong tier (always runs)
-          if [ -f "attestation-data/kani_strong_output.txt" ]; then
-            KANI_STRONG_VERIFIED="true"
-            KANI_STRONG_OUTPUT_HASH=$(sha256sum attestation-data/kani_strong_output.txt | cut -d' ' -f1)
-            KANI_STRONG_PROOFS=$(grep -c "Checking harness" attestation-data/kani_strong_output.txt 2>/dev/null || echo "0")
-            if [ "$KANI_STRONG_PROOFS" = "0" ]; then
-              # Fallback: count strong tier proofs
-              KANI_STRONG_PROOFS=$(python3 scripts/get_proofs_by_tier.py strong | wc -w)
-            fi
+          # Extract spec-lock data from artifacts
+          SPEC_LOCK_VERIFIED="false"
+          SPEC_LOCK_CONSENSUS_FUNCS="0"
+          SPEC_LOCK_OUTPUT_HASH=""
+          if [ -f "attestation-data/spec_lock_output.txt" ]; then
+            SPEC_LOCK_VERIFIED="true"
+            SPEC_LOCK_CONSENSUS_FUNCS=$(grep -c "Status: PASSED" attestation-data/spec_lock_output.txt 2>/dev/null || echo "0")
+            SPEC_LOCK_OUTPUT_HASH=$(sha256sum attestation-data/spec_lock_output.txt | cut -d' ' -f1)
           fi
-          
-          # Additional tier (manual only)
-          if [ -f "attestation-data/kani_output.txt" ]; then
-            KANI_VERIFIED="true"
-            KANI_OUTPUT_HASH=$(sha256sum attestation-data/kani_output.txt | cut -d' ' -f1)
-            # Count proofs from output (approximate)
-            KANI_PROOFS=$(grep -c "Checking harness" attestation-data/kani_output.txt 2>/dev/null || echo "0")
-            if [ "$KANI_PROOFS" = "0" ]; then
-              # Fallback: count from tier
-              KANI_PROOFS="0"
-            fi
-          fi
-          
-          # Total proofs = strong + additional
-          TOTAL_KANI_PROOFS=$((KANI_STRONG_PROOFS + KANI_PROOFS))
           
           # Extract test coverage from XML
           TEST_COVERAGE_PCT="0.00"
@@ -1537,34 +1201,24 @@ jobs:
           fi
           
           # Output all metadata
-          echo "kani_strong_verified=$KANI_STRONG_VERIFIED" >> $GITHUB_OUTPUT
-          echo "kani_strong_proofs=$KANI_STRONG_PROOFS" >> $GITHUB_OUTPUT
-          echo "kani_strong_output_hash=$KANI_STRONG_OUTPUT_HASH" >> $GITHUB_OUTPUT
-          echo "kani_verified=$KANI_VERIFIED" >> $GITHUB_OUTPUT
-          echo "kani_proofs=$KANI_PROOFS" >> $GITHUB_OUTPUT
-          echo "kani_output_hash=$KANI_OUTPUT_HASH" >> $GITHUB_OUTPUT
-          echo "kani_total_proofs=$TOTAL_KANI_PROOFS" >> $GITHUB_OUTPUT
+          echo "spec_lock_verified=$SPEC_LOCK_VERIFIED" >> $GITHUB_OUTPUT
+          echo "spec_lock_consensus_functions=$SPEC_LOCK_CONSENSUS_FUNCS" >> $GITHUB_OUTPUT
+          echo "spec_lock_output_hash=$SPEC_LOCK_OUTPUT_HASH" >> $GITHUB_OUTPUT
           echo "test_coverage_percent=$TEST_COVERAGE_PCT" >> $GITHUB_OUTPUT
           echo "unit_tests_hash=$UNIT_TESTS_HASH" >> $GITHUB_OUTPUT
           echo "debug_assertions_enabled=$DEBUG_ASSERTIONS" >> $GITHUB_OUTPUT
           echo "rustc_version=$RUSTC_VERSION" >> $GITHUB_OUTPUT
-          echo "cbmc_version=$CBMC_VERSION" >> $GITHUB_OUTPUT
           echo "cargo_version=$CARGO_VERSION" >> $GITHUB_OUTPUT
           echo "cargo_lock_hash=$CARGO_LOCK_HASH" >> $GITHUB_OUTPUT
           
           echo "📋 Build Metadata:"
-          echo "  Kani strong tier verified: $KANI_STRONG_VERIFIED"
-          echo "  Kani strong tier proofs: $KANI_STRONG_PROOFS"
-          echo "  Kani strong tier output hash: $KANI_STRONG_OUTPUT_HASH"
-          echo "  Kani additional tier verified: $KANI_VERIFIED"
-          echo "  Kani additional tier proofs: $KANI_PROOFS"
-          echo "  Kani additional tier output hash: $KANI_OUTPUT_HASH"
-          echo "  Kani total proofs: $TOTAL_KANI_PROOFS"
+          echo "  Spec-lock verified: $SPEC_LOCK_VERIFIED"
+          echo "  Spec-lock functions: $SPEC_LOCK_CONSENSUS_FUNCS"
+          echo "  Spec-lock output hash: $SPEC_LOCK_OUTPUT_HASH"
           echo "  Test coverage: ${TEST_COVERAGE_PCT}%"
           echo "  Unit tests hash: $UNIT_TESTS_HASH"
           echo "  Debug assertions: $DEBUG_ASSERTIONS"
           echo "  rustc version: $RUSTC_VERSION"
-          echo "  CBMC version: $CBMC_VERSION"
           echo "  cargo version: $CARGO_VERSION"
           echo "  Cargo.lock hash: $CARGO_LOCK_HASH"
       
@@ -1574,18 +1228,13 @@ jobs:
           # Create metadata JSON file for artifact storage
           cat > build-metadata.json << EOF
           {
-            "kani_strong_verified": ${{ steps.metadata.outputs.kani_strong_verified == 'true' && 'true' || 'false' }},
-            "kani_strong_proofs": ${{ steps.metadata.outputs.kani_strong_proofs }},
-            "kani_strong_output_hash": "${{ steps.metadata.outputs.kani_strong_output_hash }}",
-            "kani_verified": ${{ steps.metadata.outputs.kani_verified == 'true' && 'true' || 'false' }},
-            "kani_proofs": ${{ steps.metadata.outputs.kani_proofs }},
-            "kani_output_hash": "${{ steps.metadata.outputs.kani_output_hash }}",
-            "kani_total_proofs": ${{ steps.metadata.outputs.kani_total_proofs }},
+            "spec_lock_verified": ${{ steps.metadata.outputs.spec_lock_verified == 'true' && 'true' || 'false' }},
+            "spec_lock_consensus_functions": ${{ steps.metadata.outputs.spec_lock_consensus_functions }},
+            "spec_lock_output_hash": "${{ steps.metadata.outputs.spec_lock_output_hash }}",
             "test_coverage_percent": ${{ steps.metadata.outputs.test_coverage_percent }},
             "unit_tests_hash": "${{ steps.metadata.outputs.unit_tests_hash }}",
             "debug_assertions_enabled": ${{ steps.metadata.outputs.debug_assertions_enabled == 'true' && 'true' || 'false' }},
             "rustc_version": "${{ steps.metadata.outputs.rustc_version }}",
-            "cbmc_version": "${{ steps.metadata.outputs.cbmc_version }}",
             "cargo_version": "${{ steps.metadata.outputs.cargo_version }}",
             "cargo_lock_hash": "${{ steps.metadata.outputs.cargo_lock_hash }}"
           }
@@ -1604,7 +1253,7 @@ jobs:
         if: ${{ github.event_name != 'workflow_dispatch' || (github.event.inputs.skip_verification != 'true' && github.event.inputs.skip_tests != 'true') }}
         uses: actions/attest-build-provenance@v1
         with:
-          subject-name: "bllvm-consensus"
+          subject-name: "blvm-consensus"
           subject-digest: "sha256:${{ steps.metadata.outputs.cargo_lock_hash }}"
           push-to-registry: false
           show-summary: true

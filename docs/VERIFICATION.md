@@ -14,9 +14,9 @@ Verification approach follows: **"Rust + Tests + Math Specs = Source of Truth"**
 - **Integration tests**: Cross-system validation between consensus components
 
 ### Layer 2: Symbolic Verification (Required, Must Pass)
-- **Kani model checking**: Bounded symbolic verification with mathematical invariants
+- **blvm-spec-lock**: Z3-based verification of `#[spec_locked]` functions against Orange Paper
 - **Mathematical specifications**: Formal documentation of consensus rules
-- **State space exploration**: Verification of all possible execution paths
+- **Traceability**: Each verified function links to Orange Paper section
 
 ### Layer 3: CI Enforcement (Required, Blocks Merge)
 - **Automated verification**: All tests and proofs must pass before merge
@@ -94,7 +94,7 @@ Verification approach follows: **"Rust + Tests + Math Specs = Source of Truth"**
 - `check_proof_of_work`: Verifies hash < target
 - `expand_target`: Handles compact target representation
 - `compress_target`: Implements Bitcoin Core GetCompact() exactly
-- `kani_target_expand_compress_round_trip`: **Formally verified** - proves significant bits preserved
+- `expand_target`/`compress_target`: **Formally verified** via spec-lock - proves significant bits preserved
 - `get_next_work_required`: Respects difficulty bounds
 
 ### Transaction Validation (`src/transaction.rs`)
@@ -145,25 +145,18 @@ Verification approach follows: **"Rust + Tests + Math Specs = Source of Truth"**
 
 ## Verification Tools
 
-### Kani Model Checker
+### blvm-spec-lock
 
-**Purpose**: Symbolic verification with bounded model checking
-**Usage**: `cargo kani --features verify`
-**Coverage**: All `#[kani::proof]` functions
-**Bounded**: Uses `#[kani::unwind(N)]` for tractability
+**Purpose**: Z3-based formal verification against Orange Paper specifications
+**Usage**: `cargo spec-lock verify --crate-path .`
+**Coverage**: All functions with `#[spec_locked("section")]` annotations
+**Traceability**: Links implementation to Orange Paper sections
 
 **Example:**
 ```rust
-#[cfg(kani)]
-#[kani::proof]
-#[kani::unwind(10)]
-fn kani_verify_function() {
-    let input: InputType = kani::any();
-    kani::assume(input.is_valid());
-    
-    let result = function_under_test(input);
-    
-    assert!(result.property_holds());
+#[spec_locked("5.2")]
+pub fn expand_target(bits: u32) -> [u32; 4] {
+    // Implementation verified against Orange Paper section 5.2
 }
 ```
 
@@ -202,9 +195,9 @@ The `.github/workflows/verify.yml` workflow enforces verification:
    - `cargo test --all-features`
    - Must pass for CI to succeed
 
-2. **Kani Model Checking** (required)
-   - `cargo kani --features verify`
-   - Verifies all `#[kani::proof]` functions
+2. **Spec-Lock Verification** (required, runs in blvm-consensus CI)
+   - `cargo spec-lock verify --crate-path .`
+   - Verifies all `#[spec_locked]` functions
    - Must pass for CI to succeed
 
 3. **OpenTimestamps Audit** (non-blocking)
@@ -219,15 +212,15 @@ The `.github/workflows/verify.yml` workflow enforces verification:
 cargo test --all-features
 ```
 
-**Run Kani proofs:**
+**Run spec-lock verification:**
 ```bash
-cargo kani --features verify
+cargo spec-lock verify --crate-path .
 ```
 
 **Run specific verification:**
 ```bash
 cargo test --test property_tests
-cargo kani --features verify --harness kani_verify_function
+cargo test --test consensus_property_tests
 ```
 
 ## Adding New Verification
@@ -245,29 +238,16 @@ Document the mathematical invariant as a comment:
 /// - Invariant 2: Description
 ```
 
-### Step 2: Add Kani Proof
+### Step 2: Add Spec-Lock Annotation
 
-Create a bounded proof with assumptions:
+Add `#[spec_locked("section")]` to link the function to the Orange Paper:
 
 ```rust
-#[cfg(kani)]
-mod kani_proofs {
-    use super::*;
-    use kani::*;
+use blvm_spec_lock::spec_locked;
 
-    #[kani::proof]
-    #[kani::unwind(10)]
-    fn kani_verify_function_name() {
-        let input: InputType = kani::any();
-        
-        // Bound for tractability
-        kani::assume(input.len() <= 10);
-        
-        let result = function_under_test(input);
-        
-        // Assert invariants
-        assert!(result.property_holds());
-    }
+#[spec_locked("5.2")]
+pub fn function_under_test(input: InputType) -> ResultType {
+    // Implementation verified against Orange Paper section 5.2
 }
 ```
 
@@ -319,14 +299,14 @@ The verification system integrates with BTCDecoded governance at multiple levels
 
 ### Attack Vectors Mitigated
 
-1. **Consensus Rule Violations**: Kani proofs prevent invalid consensus
+1. **Consensus Rule Violations**: Spec-lock verification prevents invalid consensus
 2. **Edge Case Exploits**: Property tests discover boundary conditions
 3. **Implementation Bugs**: Mathematical specs document correct behavior
 4. **Governance Capture**: Multi-level enforcement prevents override
 
 ### Defense Mechanisms
 
-1. **Mathematical Proofs**: Kani verifies invariants symbolically
+1. **Mathematical Proofs**: Spec-lock verifies invariants against Orange Paper
 2. **Randomized Testing**: Proptest discovers unexpected behavior
 3. **Audit Trail**: OpenTimestamps provides immutable proof
 4. **CI Enforcement**: No human override of verification results
@@ -335,7 +315,7 @@ The verification system integrates with BTCDecoded governance at multiple levels
 
 ### Verification Bounds
 
-- **Kani proofs**: Bounded with `#[kani::unwind(N)]` for tractability
+- **Spec-lock**: Verifies functions against Orange Paper specifications
 - **Property tests**: Limited input ranges to prevent timeouts
 - **CI timeouts**: 5-minute limit per verification step
 
@@ -351,7 +331,7 @@ The verification system integrates with BTCDecoded governance at multiple levels
 ### Planned Improvements
 
 1. **Expanded Coverage**: Add verification to all consensus functions
-2. **Cross-Layer Verification**: Verify protocol-engine and reference-node
+2. **Cross-Layer Verification**: Verify blvm-protocol and blvm-node
 3. **Performance Optimization**: Reduce verification time
 4. **Documentation**: Add more mathematical specifications
 
@@ -366,10 +346,10 @@ The verification system integrates with BTCDecoded governance at multiple levels
 
 ### Common Issues
 
-**Kani proof fails:**
-- Check bounds with `#[kani::unwind(N)]`
-- Add assumptions with `kani::assume()`
-- Verify function is deterministic
+**Spec-lock verification fails:**
+- Check `#[spec_locked]` annotation matches Orange Paper section
+- Verify function preconditions and postconditions
+- Ensure function is deterministic
 
 **Property test fails:**
 - Check input strategy bounds
@@ -378,15 +358,12 @@ The verification system integrates with BTCDecoded governance at multiple levels
 
 **CI verification fails:**
 - Check all tests pass locally
-- Verify Kani proofs complete
+- Verify spec-lock passes
 - Check OpenTimestamps installation
 
 ### Debug Commands
 
 ```bash
-# Debug Kani proof
-cargo kani --features verify --harness kani_verify_function --debug
-
 # Debug property test
 RUST_LOG=debug cargo test prop_function_invariant
 
@@ -396,11 +373,11 @@ ots verify proof-artifacts.tar.gz.ots
 
 ## References
 
-- [Kani Documentation](https://model-checking.github.io/kani/)
+- [blvm-spec-lock](https://github.com/BTCDecoded/blvm-spec-lock)
 - [Proptest Documentation](https://docs.rs/proptest/)
 - [OpenTimestamps Protocol](https://opentimestamps.org/)
 - [BTCDecoded Governance](../governance/GOVERNANCE.md)
-- [Orange Paper](../the-orange-paper/THE_ORANGE_PAPER.md)
+- [Orange Paper](../blvm-spec/THE_ORANGE_PAPER.md)
 
 
 

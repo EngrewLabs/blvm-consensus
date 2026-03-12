@@ -29,7 +29,7 @@ fn test_coinbase_maturity_exact_boundary() {
             sequence: 0xffffffff,
         }],
         outputs: blvm_consensus::tx_outputs![TransactionOutput {
-            value: 50_0000_0000,       // 50 BTC
+            value: 50_0000_0000,              // 50 BTC
             script_pubkey: vec![0x51].into(), // OP_1
         }],
         lock_time: 0,
@@ -232,7 +232,15 @@ fn test_coinbase_maturity_block_validation() {
     // (This depends on actual validation implementation)
     // Provide empty witnesses for each transaction (non-SegWit)
     let witnesses: Vec<Vec<Witness>> = vec![Vec::new(), Vec::new()];
-    let result = connect_block(&block, &witnesses, utxo_set, height, None::<&[BlockHeader]>, 0u64, Network::Mainnet);
+    let result = connect_block(
+        &block,
+        &witnesses,
+        utxo_set,
+        height,
+        None::<&[BlockHeader]>,
+        0u64,
+        Network::Mainnet,
+    );
 
     // Result may be invalid due to immature coinbase
     assert!(result.is_ok() || result.is_err());

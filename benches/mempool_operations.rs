@@ -1,6 +1,4 @@
-use blvm_consensus::mempool::{
-    accept_to_memory_pool, is_standard_tx, replacement_checks, Mempool,
-};
+use blvm_consensus::mempool::{accept_to_memory_pool, is_standard_tx, replacement_checks, Mempool};
 use blvm_consensus::{OutPoint, Transaction, TransactionInput, TransactionOutput, UtxoSet};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::collections::HashSet;

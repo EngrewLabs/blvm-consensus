@@ -234,4 +234,3 @@ mod tests {
         assert!(is_sequence_disabled(0x80010000));
     }
 }
-

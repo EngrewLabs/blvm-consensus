@@ -212,6 +212,7 @@ mod tests {
 
     #[test]
     fn test_witness_data_pattern_detection() {
+        use blvm_consensus::opcodes::{OP_0, OP_IF, OP_ENDIF};
         use blvm_consensus::witness::Witness;
         
         let filter = SpamFilter::new();
@@ -219,19 +220,42 @@ mod tests {
         // Create transaction
         let tx = create_test_transaction(vec![0x76, 0xa9]);
         
-        // Create witness with suspicious data patterns (large non-signature elements)
+        // Create witness with envelope protocol (OP_0 OP_IF ... OP_ENDIF) - inscription pattern
+        // With ordinals_strict_mode, only envelope/pattern triggers Ordinals; large witness alone is LargeWitness
+        let envelope_element: Vec<u8> = vec![OP_0, OP_IF, 0x01, 0x02, 0x03, OP_ENDIF];
         let suspicious_witness: Witness = vec![
-            vec![0x00; 250], // Large element that's not a signature
-            vec![0x01; 300], // Another large element
-            vec![0x02; 200], // Third large element
+            envelope_element,
+            vec![0x01; 200], // Additional data
         ];
         let witnesses = vec![suspicious_witness];
         
         let result = filter.is_spam_with_witness(&tx, Some(&witnesses), None);
         
-        // Should detect as Ordinals (witness data pattern)
+        // Should detect as Ordinals (envelope in witness)
         assert!(result.is_spam);
         assert!(result.detected_types.contains(&SpamType::Ordinals));
+    }
+
+    #[test]
+    fn test_ordinals_strict_mode_large_witness_separate() {
+        use blvm_consensus::witness::Witness;
+        
+        // With ordinals_strict_mode (default), large witness alone → LargeWitness, NOT Ordinals
+        let filter = SpamFilter::new();
+        
+        let tx = create_test_transaction(vec![0x76, 0xa9]);
+        // Large witness but NO envelope - could be Miniscript/vault (1200 bytes > 1000 threshold)
+        let large_witness: Witness = vec![
+            vec![0x30; 600], // DER-like
+            vec![0x01; 600],
+        ];
+        let witnesses = vec![large_witness];
+        
+        let result = filter.is_spam_with_witness(&tx, Some(&witnesses), None);
+        
+        assert!(result.is_spam, "Should still be spam (LargeWitness)");
+        assert!(result.detected_types.contains(&SpamType::LargeWitness), "Large witness → LargeWitness");
+        assert!(!result.detected_types.contains(&SpamType::Ordinals), "No envelope → not Ordinals");
     }
 
     #[test]

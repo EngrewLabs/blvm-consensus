@@ -10,8 +10,8 @@
 //! Set BLVM_IBD_DUMP_DIR to point at the dump root if not using default.
 
 use blvm_consensus::block::connect_block_ibd;
-use blvm_consensus::types::{Block, Network, UTXO, UtxoSet};
 use blvm_consensus::segwit::Witness;
+use blvm_consensus::types::{Block, Network, UtxoSet, UTXO};
 use blvm_consensus::ValidationResult;
 use std::path::Path;
 use std::sync::Arc;
@@ -34,13 +34,18 @@ fn dump_dir() -> std::path::PathBuf {
         .join(format!("height_{}", HEIGHT))
 }
 
-fn load_dump(dir: &Path) -> Result<(Block, Vec<Vec<Witness>>, UtxoSet), Box<dyn std::error::Error + Send + Sync>> {
+fn load_dump(
+    dir: &Path,
+) -> Result<(Block, Vec<Vec<Witness>>, UtxoSet), Box<dyn std::error::Error + Send + Sync>> {
     let block_path = dir.join("block.bin");
     let witnesses_path = dir.join("witnesses.bin");
     let utxo_path = dir.join("utxo_set.bin");
 
-    let block: Block = bincode::deserialize_from(std::io::BufReader::new(std::fs::File::open(&block_path)?))?;
-    let witnesses: Vec<Vec<Witness>> = bincode::deserialize_from(std::io::BufReader::new(std::fs::File::open(&witnesses_path)?))?;
+    let block: Block =
+        bincode::deserialize_from(std::io::BufReader::new(std::fs::File::open(&block_path)?))?;
+    let witnesses: Vec<Vec<Witness>> = bincode::deserialize_from(std::io::BufReader::new(
+        std::fs::File::open(&witnesses_path)?,
+    ))?;
     // Dump format: HashMap<OutPoint, UTXO> (no Arc). UtxoSet uses Arc<UTXO>.
     let raw: std::collections::HashMap<_, UTXO> =
         bincode::deserialize_from(std::io::BufReader::new(std::fs::File::open(&utxo_path)?))?;
@@ -79,7 +84,8 @@ fn block_164676_connect_block_ibd_repro() {
         None,
         Some(std::sync::Arc::new(block.clone())),
         None,
-    ).expect("connect_block_ibd");
+    )
+    .expect("connect_block_ibd");
 
     match result {
         ValidationResult::Valid => {}

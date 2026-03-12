@@ -53,7 +53,7 @@ pub fn extract_taproot_output_key(script: &ByteString) -> Result<Option<[u8; 32]
 /// OutputKey = InternalPubKey + TaprootTweak(MerkleRoot) × G
 ///
 /// With `blvm-secp256k1` feature: uses BIP 341 tagged hash (correct).
-/// Without: uses secp256k1-fork with plain SHA256 (legacy, non-BIP341).
+/// Without: uses libsecp256k1 with plain SHA256 (legacy, non-BIP341).
 #[spec_locked("11.2")]
 pub fn compute_taproot_tweak(internal_pubkey: &[u8; 32], merkle_root: &Hash) -> Result<[u8; 32]> {
     crate::secp256k1_backend::taproot_output_key(internal_pubkey, merkle_root)
@@ -254,7 +254,9 @@ pub fn compute_taproot_signature_hash(
         sigmsg.extend([0u8; 8]);
     }
     if input_index < prevout_script_pubkeys.len() {
-        sigmsg.extend(encode_varint(prevout_script_pubkeys[input_index].len() as u64));
+        sigmsg.extend(encode_varint(
+            prevout_script_pubkeys[input_index].len() as u64
+        ));
         sigmsg.extend(prevout_script_pubkeys[input_index]);
     } else {
         sigmsg.push(0);
@@ -303,7 +305,9 @@ pub fn compute_tapscript_signature_hash(
         sigmsg.extend([0u8; 8]);
     }
     if input_index < prevout_script_pubkeys.len() {
-        sigmsg.extend(encode_varint(prevout_script_pubkeys[input_index].len() as u64));
+        sigmsg.extend(encode_varint(
+            prevout_script_pubkeys[input_index].len() as u64
+        ));
         sigmsg.extend(prevout_script_pubkeys[input_index]);
     } else {
         sigmsg.push(0);
@@ -403,7 +407,9 @@ mod tests {
     fn test_validate_taproot_script_path() {
         let script = vec![0x51, 0x52]; // OP_1, OP_2
         let merkle_proof = vec![[3u8; 32], [4u8; 32]];
-        let merkle_root = compute_script_merkle_root(&script, &merkle_proof, TAPROOT_LEAF_VERSION_TAPSCRIPT).unwrap();
+        let merkle_root =
+            compute_script_merkle_root(&script, &merkle_proof, TAPROOT_LEAF_VERSION_TAPSCRIPT)
+                .unwrap();
 
         assert!(validate_taproot_script_path(&script, &merkle_proof, &merkle_root).unwrap());
     }
@@ -470,7 +476,10 @@ mod tests {
             script_pubkey: create_taproot_script(&[1u8; 32]),
         }];
         let pv: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
-        let psp: Vec<&[u8]> = prevouts.iter().map(|p| p.script_pubkey.as_slice()).collect();
+        let psp: Vec<&[u8]> = prevouts
+            .iter()
+            .map(|p| p.script_pubkey.as_slice())
+            .collect();
         let sig_hash = compute_taproot_signature_hash(&tx, 0, &pv, &psp, 0x01).unwrap();
         assert_eq!(sig_hash.len(), 32);
     }
@@ -501,7 +510,10 @@ mod tests {
             script_pubkey: create_taproot_script(&[1u8; 32]),
         }];
         let pv: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
-        let psp: Vec<&[u8]> = prevouts.iter().map(|p| p.script_pubkey.as_slice()).collect();
+        let psp: Vec<&[u8]> = prevouts
+            .iter()
+            .map(|p| p.script_pubkey.as_slice())
+            .collect();
         // Use invalid input index (out of bounds)
         let sig_hash = compute_taproot_signature_hash(&tx, 1, &pv, &psp, 0x01).unwrap();
         assert_eq!(sig_hash.len(), 32);
@@ -530,7 +542,10 @@ mod tests {
 
         let prevouts: Vec<TransactionOutput> = vec![];
         let pv: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
-        let psp: Vec<&[u8]> = prevouts.iter().map(|p| p.script_pubkey.as_slice()).collect();
+        let psp: Vec<&[u8]> = prevouts
+            .iter()
+            .map(|p| p.script_pubkey.as_slice())
+            .collect();
         let sig_hash = compute_taproot_signature_hash(&tx, 0, &pv, &psp, 0x01).unwrap();
         assert_eq!(sig_hash.len(), 32);
     }
@@ -575,7 +590,9 @@ mod tests {
     fn test_validate_taproot_script_path_empty_proof() {
         let script = vec![0x51, 0x52]; // OP_1, OP_2
         let merkle_proof = vec![];
-        let merkle_root = compute_script_merkle_root(&script, &merkle_proof, TAPROOT_LEAF_VERSION_TAPSCRIPT).unwrap();
+        let merkle_root =
+            compute_script_merkle_root(&script, &merkle_proof, TAPROOT_LEAF_VERSION_TAPSCRIPT)
+                .unwrap();
 
         assert!(validate_taproot_script_path(&script, &merkle_proof, &merkle_root).unwrap());
     }
@@ -588,7 +605,8 @@ mod tests {
         assert_eq!(hash.len(), 32);
 
         let script2 = vec![0x53, 0x54];
-        let hash2 = crate::secp256k1_backend::tap_leaf_hash(TAPROOT_LEAF_VERSION_TAPSCRIPT, &script2);
+        let hash2 =
+            crate::secp256k1_backend::tap_leaf_hash(TAPROOT_LEAF_VERSION_TAPSCRIPT, &script2);
         assert_ne!(hash, hash2);
     }
 
@@ -708,7 +726,6 @@ mod tests {
         script
     }
 }
-
 
 #[cfg(test)]
 mod property_tests {
@@ -1026,4 +1043,3 @@ mod property_tests {
         })
     }
 }
-

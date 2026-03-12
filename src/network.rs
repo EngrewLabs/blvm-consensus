@@ -2,8 +2,8 @@
 
 use crate::error::Result;
 use crate::types::*;
-use std::collections::HashMap;
 use blvm_spec_lock::spec_locked;
+use std::collections::HashMap;
 
 /// NetworkMessage: 𝒯𝒳 × 𝒰𝒮 → {accepted, rejected}
 ///
@@ -353,7 +353,6 @@ fn process_feefilter_message(
     peer_state.min_fee_rate = Some(feefilter.feerate);
     Ok(NetworkResponse::Ok)
 }
-
 
 // ============================================================================
 // TYPES

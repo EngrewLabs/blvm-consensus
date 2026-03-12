@@ -9,8 +9,8 @@
 //! - Expected: 4-8x speedup for batch operations on AVX2-capable CPUs
 
 use crate::crypto::sha256_avx2;
-use sha2::{Digest, Sha256};
 use blvm_spec_lock::spec_locked;
+use sha2::{Digest, Sha256};
 
 /// Batch SHA256 using AVX2 8-way parallel processing
 ///

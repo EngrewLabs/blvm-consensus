@@ -5,8 +5,8 @@
 //!
 //! Reference: BIP-XXX Technical Improvement Plan - Category 1.1
 
-use crate::types::ByteString;
 use crate::opcodes::*;
+use crate::types::ByteString;
 
 /// Script type classification
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -39,38 +39,28 @@ impl ScriptType {
             return Self::Unknown;
         }
 
-        // P2TR: OP_1 (0x51) + 0x20 + 32-byte x-only pubkey = 34 bytes
-        if script_pubkey.len() == 34
-            && script_pubkey[0] == OP_1
-            && script_pubkey[1] == 0x20
-        {
+        // P2TR: OP_1 + PUSH_32_BYTES + 32-byte x-only pubkey = 34 bytes
+        if script_pubkey.len() == 34 && script_pubkey[0] == OP_1 && script_pubkey[1] == PUSH_32_BYTES {
             return Self::P2TR;
         }
 
-        // P2WPKH: OP_0 (0x00) + 0x14 + 20-byte hash = 22 bytes
-        if script_pubkey.len() == 22
-            && script_pubkey[0] == OP_0
-            && script_pubkey[1] == 0x14
-        {
+        // P2WPKH: OP_0 + PUSH_20_BYTES + 20-byte hash = 22 bytes
+        if script_pubkey.len() == 22 && script_pubkey[0] == OP_0 && script_pubkey[1] == PUSH_20_BYTES {
             return Self::P2WPKH;
         }
 
-        // P2WSH: OP_0 (0x00) + 0x20 + 32-byte hash = 34 bytes
-        if script_pubkey.len() == 34
-            && script_pubkey[0] == OP_0
-            && script_pubkey[1] == 0x20
-        {
+        // P2WSH: OP_0 + PUSH_32_BYTES + 32-byte hash = 34 bytes
+        if script_pubkey.len() == 34 && script_pubkey[0] == OP_0 && script_pubkey[1] == PUSH_32_BYTES {
             return Self::P2WSH;
         }
 
         // P2PKH: OP_DUP OP_HASH160 <20-byte-hash> OP_EQUALVERIFY OP_CHECKSIG
-        // Format: [0x76, 0xa9, 0x14, <20 bytes>, 0x88, 0xac]
         if script_pubkey.len() == 25
-            && script_pubkey[0] == 0x76  // OP_DUP
-            && script_pubkey[1] == 0xa9  // OP_HASH160
-            && script_pubkey[2] == 0x14  // push 20 bytes
-            && script_pubkey[23] == 0x88 // OP_EQUALVERIFY
-            && script_pubkey[24] == 0xac // OP_CHECKSIG
+            && script_pubkey[0] == OP_DUP
+            && script_pubkey[1] == OP_HASH160
+            && script_pubkey[2] == PUSH_20_BYTES
+            && script_pubkey[23] == OP_EQUALVERIFY
+            && script_pubkey[24] == OP_CHECKSIG
         {
             return Self::P2PKH;
         }
@@ -80,7 +70,8 @@ impl ScriptType {
         if script_pubkey.len() == 23
             && script_pubkey[0] == OP_HASH160  // OP_HASH160
             && script_pubkey[1] == PUSH_20_BYTES  // push 20 bytes
-            && script_pubkey[22] == OP_EQUAL // OP_EQUAL
+            && script_pubkey[22] == OP_EQUAL
+        // OP_EQUAL
         {
             return Self::P2SH;
         }
@@ -116,16 +107,16 @@ impl ScriptType {
 
         // Parse m (number of required signatures)
         let m_opcode = script[script.len() - 2];
-        let m = if m_opcode >= OP_1 && m_opcode <= OP_16 {
-            (m_opcode - OP_1 + 1) as u8
+        let m = if (OP_1..=OP_16).contains(&m_opcode) {
+            m_opcode - OP_1 + 1
         } else {
             return None;
         };
 
         // Parse n (number of public keys) - first opcode
         let n_opcode = script[0];
-        let n = if n_opcode >= OP_1 && n_opcode <= OP_16 {
-            (n_opcode - OP_1 + 1) as u8
+        let n = if (OP_1..=OP_16).contains(&n_opcode) {
+            n_opcode - OP_1 + 1
         } else {
             return None;
         };
@@ -163,7 +154,8 @@ impl ScriptType {
 
         // Check for common HTLC opcodes
         let has_conditional = script.contains(&OP_IF) || script.contains(&OP_NOTIF);
-        let has_time_lock = script.contains(&OP_CHECKLOCKTIMEVERIFY) || script.contains(&OP_CHECKSEQUENCEVERIFY);
+        let has_time_lock =
+            script.contains(&OP_CHECKLOCKTIMEVERIFY) || script.contains(&OP_CHECKSEQUENCEVERIFY);
         let has_hash = script.contains(&OP_HASH160) || script.contains(&OP_SHA256);
         let has_equal = script.contains(&OP_EQUALVERIFY);
 
@@ -178,8 +170,8 @@ impl ScriptType {
     /// refined with real-world data collection.
     pub fn expected_witness_size_range(&self) -> (usize, usize, usize) {
         match self {
-            Self::P2PKH => (0, 0, 0), // No witness
-            Self::P2SH => (0, 0, 0),  // No witness (unless nested SegWit)
+            Self::P2PKH => (0, 0, 0),        // No witness
+            Self::P2SH => (0, 0, 0),         // No witness (unless nested SegWit)
             Self::P2WPKH => (107, 107, 107), // 1 signature (71-73 bytes) + 1 pubkey (33 bytes) + varints
             Self::P2WSH => (200, 300, 500),  // Variable: depends on redeem script
             Self::P2TR => (64, 64, 64),      // 1 Schnorr signature (64 bytes) + varint
@@ -192,7 +184,7 @@ impl ScriptType {
                 (total / 2, total, total * 2) // Conservative range
             }
             Self::PaymentChannel => (300, 500, 1000), // HTLC scripts can be complex
-            Self::Unknown => (0, 200, 1000), // Unknown - use conservative default
+            Self::Unknown => (0, 200, 1000),          // Unknown - use conservative default
         }
     }
 
@@ -203,7 +195,7 @@ impl ScriptType {
     pub fn recommended_threshold(&self) -> usize {
         match self {
             Self::P2PKH | Self::P2SH => 0, // No witness
-            Self::P2WPKH => 150,            // 107 typical + 50% buffer
+            Self::P2WPKH => 150,           // 107 typical + 50% buffer
             Self::P2WSH => 800,            // 300 typical + buffer for complex scripts
             Self::P2TR => 100,             // 64 typical + buffer
             Self::MultiSig { n, m } => {
@@ -212,7 +204,7 @@ impl ScriptType {
                 base + (base / 2) // Add 50% buffer
             }
             Self::PaymentChannel => 1500, // HTLC scripts can be large
-            Self::Unknown => 1000,         // Conservative default
+            Self::Unknown => 1000,        // Conservative default
         }
     }
 }
@@ -269,13 +261,13 @@ impl TransactionType {
     pub fn detect(tx: &crate::types::Transaction) -> Self {
         let input_count = tx.inputs.len();
         let output_count = tx.outputs.len();
-        
+
         // Consolidation: many inputs, few outputs
         // Typical pattern: 10+ inputs, 1-3 outputs
         if input_count >= 10 && output_count <= 3 {
             return Self::Consolidation;
         }
-        
+
         // CoinJoin: many inputs, many outputs, similar output values
         // Typical pattern: 5+ inputs, 5+ outputs, output values within 10% of each other
         if input_count >= 5 && output_count >= 5 {
@@ -284,46 +276,46 @@ impl TransactionType {
                 return Self::CoinJoin;
             }
         }
-        
+
         // Payment channel: complex scripts, specific patterns
         // This is a simplified check - full implementation would parse scripts
         if Self::has_payment_channel_pattern(tx) {
             return Self::PaymentChannel;
         }
-        
+
         // Default to payment for normal transactions
         if input_count <= 5 && output_count <= 5 {
             return Self::Payment;
         }
-        
+
         Self::Unknown
     }
-    
+
     /// Check if output values are similar (within percentage threshold)
     fn has_similar_values(values: &[i64], threshold: f64) -> bool {
         if values.is_empty() {
             return false;
         }
-        
+
         let avg: f64 = values.iter().sum::<i64>() as f64 / values.len() as f64;
-        
+
         for &value in values {
             let diff = (value as f64 - avg).abs() / avg;
             if diff > threshold {
                 return false;
             }
         }
-        
+
         true
     }
-    
+
     /// Check if transaction has payment channel patterns
     fn has_payment_channel_pattern(tx: &crate::types::Transaction) -> bool {
         // Payment channels typically have:
         // - Complex scripts (HTLC patterns)
         // - Time locks
         // - Multiple outputs with similar values
-        
+
         // Check for complex scripts in outputs
         let mut has_complex_script = false;
         for output in &tx.outputs {
@@ -332,10 +324,10 @@ impl TransactionType {
                 break;
             }
         }
-        
+
         has_complex_script && tx.outputs.len() >= 2
     }
-    
+
     /// Get recommended size-to-value ratio threshold for this transaction type
     ///
     /// Consolidations and CoinJoins legitimately have high size-to-value ratios,
@@ -359,10 +351,31 @@ mod tests {
     fn test_detect_p2pkh() {
         // P2PKH: OP_DUP OP_HASH160 <20 bytes> OP_EQUALVERIFY OP_CHECKSIG
         let script = ByteString::from(vec![
-            OP_DUP, OP_HASH160, PUSH_20_BYTES, // OP_DUP OP_HASH160 push 20 bytes
-            OP_0, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
-            0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13,
-            OP_EQUALVERIFY, OP_CHECKSIG, // OP_EQUALVERIFY OP_CHECKSIG
+            OP_DUP,
+            OP_HASH160,
+            PUSH_20_BYTES, // OP_DUP OP_HASH160 push 20 bytes
+            OP_0,
+            0x01,
+            0x02,
+            0x03,
+            0x04,
+            0x05,
+            0x06,
+            0x07,
+            0x08,
+            0x09,
+            0x0a,
+            0x0b,
+            0x0c,
+            0x0d,
+            0x0e,
+            0x0f,
+            0x10,
+            0x11,
+            0x12,
+            0x13,
+            OP_EQUALVERIFY,
+            OP_CHECKSIG, // OP_EQUALVERIFY OP_CHECKSIG
         ]);
         assert_eq!(ScriptType::detect(&script), ScriptType::P2PKH);
     }
@@ -371,9 +384,28 @@ mod tests {
     fn test_detect_p2sh() {
         // P2SH: OP_HASH160 <20 bytes> OP_EQUAL
         let script = ByteString::from(vec![
-            OP_HASH160, PUSH_20_BYTES, // OP_HASH160 push 20 bytes
-            OP_0, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
-            0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13,
+            OP_HASH160,
+            PUSH_20_BYTES, // OP_HASH160 push 20 bytes
+            OP_0,
+            0x01,
+            0x02,
+            0x03,
+            0x04,
+            0x05,
+            0x06,
+            0x07,
+            0x08,
+            0x09,
+            0x0a,
+            0x0b,
+            0x0c,
+            0x0d,
+            0x0e,
+            0x0f,
+            0x10,
+            0x11,
+            0x12,
+            0x13,
             OP_EQUAL, // OP_EQUAL
         ]);
         assert_eq!(ScriptType::detect(&script), ScriptType::P2SH);
@@ -383,9 +415,28 @@ mod tests {
     fn test_detect_p2wpkh() {
         // P2WPKH: OP_0 <20-byte-hash>
         let script = ByteString::from(vec![
-            OP_0, PUSH_20_BYTES, // OP_0 push 20 bytes
-            OP_0, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
-            0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13,
+            OP_0,
+            PUSH_20_BYTES, // OP_0 push 20 bytes
+            OP_0,
+            0x01,
+            0x02,
+            0x03,
+            0x04,
+            0x05,
+            0x06,
+            0x07,
+            0x08,
+            0x09,
+            0x0a,
+            0x0b,
+            0x0c,
+            0x0d,
+            0x0e,
+            0x0f,
+            0x10,
+            0x11,
+            0x12,
+            0x13,
         ]);
         assert_eq!(ScriptType::detect(&script), ScriptType::P2WPKH);
     }
@@ -394,11 +445,40 @@ mod tests {
     fn test_detect_p2wsh() {
         // P2WSH: OP_0 <32-byte-hash>
         let script = ByteString::from(vec![
-            OP_0, PUSH_32_BYTES, // OP_0 push 32 bytes
-            OP_0, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
-            0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13,
-            PUSH_20_BYTES, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d,
-            0x1e, 0x1f,
+            OP_0,
+            PUSH_32_BYTES, // OP_0 push 32 bytes
+            OP_0,
+            0x01,
+            0x02,
+            0x03,
+            0x04,
+            0x05,
+            0x06,
+            0x07,
+            0x08,
+            0x09,
+            0x0a,
+            0x0b,
+            0x0c,
+            0x0d,
+            0x0e,
+            0x0f,
+            0x10,
+            0x11,
+            0x12,
+            0x13,
+            PUSH_20_BYTES,
+            0x15,
+            0x16,
+            0x17,
+            0x18,
+            0x19,
+            0x1a,
+            0x1b,
+            0x1c,
+            0x1d,
+            0x1e,
+            0x1f,
         ]);
         assert_eq!(ScriptType::detect(&script), ScriptType::P2WSH);
     }
@@ -407,11 +487,40 @@ mod tests {
     fn test_detect_p2tr() {
         // P2TR: OP_1 <32-byte-hash>
         let script = ByteString::from(vec![
-            OP_1, PUSH_32_BYTES, // OP_1 push 32 bytes
-            OP_0, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
-            0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13,
-            PUSH_20_BYTES, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d,
-            0x1e, 0x1f,
+            OP_1,
+            PUSH_32_BYTES, // OP_1 push 32 bytes
+            OP_0,
+            0x01,
+            0x02,
+            0x03,
+            0x04,
+            0x05,
+            0x06,
+            0x07,
+            0x08,
+            0x09,
+            0x0a,
+            0x0b,
+            0x0c,
+            0x0d,
+            0x0e,
+            0x0f,
+            0x10,
+            0x11,
+            0x12,
+            0x13,
+            PUSH_20_BYTES,
+            0x15,
+            0x16,
+            0x17,
+            0x18,
+            0x19,
+            0x1a,
+            0x1b,
+            0x1c,
+            0x1d,
+            0x1e,
+            0x1f,
         ]);
         assert_eq!(ScriptType::detect(&script), ScriptType::P2TR);
     }
@@ -421,9 +530,9 @@ mod tests {
         // 2-of-3 multi-sig: OP_3 <pubkey1> <pubkey2> <pubkey3> OP_2 OP_CHECKMULTISIG
         // Format: OP_n (n keys) <pubkey1>...<pubkeyn> OP_m (m required) OP_CHECKMULTISIG
         let mut script = vec![OP_3]; // n=3 keys
-        // Add 3 pubkeys (33 bytes each)
+                                     // Add 3 pubkeys (33 bytes each)
         for _ in 0..3 {
-            script.push(0x21); // push 33 bytes
+            script.push(PUSH_33_BYTES);
             script.extend(vec![0u8; 33]);
         }
         script.push(OP_2); // m=2 required signatures
@@ -464,5 +573,3 @@ mod tests {
         assert!(multisig.recommended_threshold() > 0);
     }
 }
-
-

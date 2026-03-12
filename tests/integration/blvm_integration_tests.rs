@@ -1,6 +1,6 @@
-//! Integration tests for BLLVM optimizations
+//! Integration tests for BLVM optimizations
 //!
-//! Tests verify that BLLVM optimizations work correctly in realistic scenarios,
+//! Tests verify that BLVM optimizations work correctly in realistic scenarios,
 //! including block validation, merkle root calculation, and batch operations.
 
 use blvm_consensus::{

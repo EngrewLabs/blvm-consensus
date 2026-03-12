@@ -36,45 +36,6 @@ pub mod precomputed_constants {
     pub const ONE_BTC_SATOSHIS: i64 = SATOSHIS_PER_BTC;
 }
 
-/// Bounds check optimization helper
-///
-/// Provides optimized bounds checking for proven-safe access patterns.
-/// Uses unsafe only when bounds have been statically proven.
-#[cfg(feature = "production")]
-pub mod bounds_optimization {
-
-    /// Optimized bounds-checked access with proven bounds
-    ///
-    /// Uses unsafe when bounds are statically known to be safe.
-    /// This optimization removes redundant runtime bounds checks.
-    #[inline(always)]
-    pub fn get_proven<T>(slice: &[T], index: usize, bound_check: bool) -> Option<&T> {
-        if bound_check {
-            // Bounds check optimized: compiler can prove index < len in many cases
-            slice.get(index)
-        } else {
-            // Unsafe only used when caller has proven bounds (via static analysis)
-            unsafe {
-                if index < slice.len() {
-                    Some(slice.get_unchecked(index))
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    /// Optimized slice access for arrays with known size
-    #[inline(always)]
-    pub fn get_array<T, const N: usize>(array: &[T; N], index: usize) -> Option<&T> {
-        if index < N {
-            unsafe { Some(array.get_unchecked(index)) }
-        } else {
-            None
-        }
-    }
-}
-
 /// Memory layout optimization: Cache-friendly hash array
 ///
 /// Optimizes hash array access for cache locality.
@@ -322,7 +283,7 @@ pub mod simd_vectorization {
             let hasher = OptimizedSha256::new();
             return inputs
                 .iter()
-                .map(|input| hasher.hash(input).into())
+                .map(|input| hasher.hash(input))
                 .collect();
         }
 
@@ -332,7 +293,7 @@ pub mod simd_vectorization {
             let mut results = Vec::with_capacity(inputs.len());
             for chunk in inputs.chunks(chunk_size()) {
                 for input in chunk {
-                    results.push(hasher.hash(input).into());
+                    results.push(hasher.hash(input));
                 }
             }
             return results;
@@ -358,7 +319,7 @@ pub mod simd_vectorization {
                 let hasher = OptimizedSha256::new();
                 chunk
                     .iter()
-                    .map(|input| hasher.hash(input).into())
+                    .map(|input| hasher.hash(input))
                     .collect::<Vec<_>>()
             })
             .flatten()
@@ -515,8 +476,8 @@ pub mod simd_vectorization {
             return inputs
                 .iter()
                 .map(|input| {
-                    let sha256_hash: [u8; 32] = hasher.hash(input).into();
-                    let ripemd160_hash = Ripemd160::digest(&sha256_hash);
+                    let sha256_hash: [u8; 32] = hasher.hash(input);
+                    let ripemd160_hash = Ripemd160::digest(sha256_hash);
                     let mut result = [0u8; 20];
                     result.copy_from_slice(&ripemd160_hash);
                     result
@@ -530,8 +491,8 @@ pub mod simd_vectorization {
             let mut results = Vec::with_capacity(inputs.len());
             for chunk in inputs.chunks(chunk_size()) {
                 for input in chunk {
-                    let sha256_hash: [u8; 32] = hasher.hash(input).into();
-                    let ripemd160_hash = Ripemd160::digest(&sha256_hash);
+                    let sha256_hash: [u8; 32] = hasher.hash(input);
+                    let ripemd160_hash = Ripemd160::digest(sha256_hash);
                     let mut result = [0u8; 20];
                     result.copy_from_slice(&ripemd160_hash);
                     results.push(result);
@@ -550,8 +511,8 @@ pub mod simd_vectorization {
                 chunk
                     .iter()
                     .map(|input| {
-                        let sha256_hash: [u8; 32] = hasher.hash(input).into();
-                        let ripemd160_hash = Ripemd160::digest(&sha256_hash);
+                        let sha256_hash: [u8; 32] = hasher.hash(input);
+                        let ripemd160_hash = Ripemd160::digest(sha256_hash);
                         let mut result = [0u8; 20];
                         result.copy_from_slice(&ripemd160_hash);
                         result
@@ -563,8 +524,6 @@ pub mod simd_vectorization {
     }
 }
 
-#[cfg(feature = "production")]
-pub use bounds_optimization::*;
 #[cfg(feature = "production")]
 pub use constant_folding::*;
 #[cfg(feature = "production")]

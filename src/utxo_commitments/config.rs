@@ -6,7 +6,7 @@
 //! - Sync mode selection
 //! - Verification levels
 
-use crate::spam_filter::{SpamFilterConfig, SpamFilterConfigSerializable};
+use crate::spam_filter::SpamFilterConfig;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "utxo-commitments")]

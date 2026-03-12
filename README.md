@@ -115,7 +115,7 @@ All critical Bitcoin Improvement Proposals (BIPs) are implemented and integrated
 - All BIPs integrated into block validation
 - BIP66 and BIP147 enforced during script verification (called for all transactions in `connect_block()`)
 - Integration tests verify enforcement
-- Kani proofs exist for critical BIPs
+- Spec-lock verification for critical BIPs
 
 BIP66 and BIP147 are enforced during script verification, which is called for all transactions in `connect_block()`. This is the correct approach as these BIPs apply to individual signatures and script execution.
 
@@ -187,8 +187,8 @@ cargo tarpaulin --out Html --output-dir coverage
 cargo test --test integration_tests
 cargo test --test integration_opportunities
 
-# Run formal verification
-cargo kani --features verify
+# Run formal verification (blvm-spec-lock)
+cargo spec-lock verify --crate-path .
 ```
 
 ## Mathematical Lock
@@ -196,15 +196,15 @@ cargo kani --features verify
 Implementation is mathematically locked to the Orange Paper specification:
 
 - Every function implements a mathematical specification from the Orange Paper
-- Every critical function has a Kani proof verifying correctness
-- All proofs reference Orange Paper sections and theorems
-- No consensus rule can be changed without updating both spec and proof
+- Critical functions have `#[spec_locked("section")]` annotations verified by blvm-spec-lock
+- All specs reference Orange Paper sections and theorems
+- No consensus rule can be changed without updating both spec and implementation
 
 Formal verification linkage level is unique among Bitcoin implementations.
 
 **Chain of Trust**:
 ```
-Orange Paper (Math Spec) → Kani Proof → Implementation → Bitcoin Consensus
+Orange Paper (Math Spec) → #[spec_locked] → Implementation → Bitcoin Consensus
 ```
 
 **Why This Matters for Bitcoin**:
@@ -214,7 +214,7 @@ Orange Paper (Math Spec) → Kani Proof → Implementation → Bitcoin Consensus
 - Mathematical proof exceeds human review
 
 **Verification Statistics**:
-- 201 Kani proofs verify all critical consensus functions (201 in `src/`, 9 in `tests/`)
+- Spec-lock verifies `#[spec_locked]` functions against Orange Paper
 - 35 property tests verify mathematical invariants
 - 913 runtime assertions catch edge cases (814 `assert!` + 99 `debug_assert!`)
 - 13 fuzz targets discover vulnerabilities
@@ -235,7 +235,7 @@ Covers all major Orange Paper sections:
 
 Implements mathematically verified Bitcoin consensus rules with:
 
-- **Formal Verification**: Kani model checking prevents consensus violations
+- **Formal Verification**: blvm-spec-lock prevents consensus violations
 - **Property Testing**: Randomized testing discovers edge cases
 - **Audit Trail**: OpenTimestamps provides immutable proof of verification
 - **CI Enforcement**: No human override of verification results

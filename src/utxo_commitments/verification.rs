@@ -181,4 +181,3 @@ pub fn verify_forward_consistency(
 // - Supply verification prevents inflation
 // - Forward consistency ensures commitments progress correctly
 // - Block hash verification ensures commitment matches actual block
-

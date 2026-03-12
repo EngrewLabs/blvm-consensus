@@ -52,27 +52,30 @@ pub fn count_sigops_in_script(script: &ByteString, accurate: bool) -> u32 {
             continue;
         } else if opcode == OP_PUSHDATA1 {
             // OP_PUSHDATA1: next byte is length
-            if i + 1 >= script.len() { break; }
+            if i + 1 >= script.len() {
+                break;
+            }
             let len = script[i + 1] as usize;
             last_opcode = Some(opcode);
             i += 2 + len;
             continue;
         } else if opcode == OP_PUSHDATA2 {
             // OP_PUSHDATA2: next 2 bytes (little-endian) are length
-            if i + 2 >= script.len() { break; }
+            if i + 2 >= script.len() {
+                break;
+            }
             let len = u16::from_le_bytes([script[i + 1], script[i + 2]]) as usize;
             last_opcode = Some(opcode);
             i += 3 + len;
             continue;
         } else if opcode == OP_PUSHDATA4 {
             // OP_PUSHDATA4: next 4 bytes (little-endian) are length
-            if i + 4 >= script.len() { break; }
-            let len = u32::from_le_bytes([
-                script[i + 1],
-                script[i + 2],
-                script[i + 3],
-                script[i + 4],
-            ]) as usize;
+            if i + 4 >= script.len() {
+                break;
+            }
+            let len =
+                u32::from_le_bytes([script[i + 1], script[i + 2], script[i + 3], script[i + 4]])
+                    as usize;
             last_opcode = Some(opcode);
             i += 5 + len;
             continue;
@@ -143,12 +146,9 @@ fn count_tapscript_sigops(script: &ByteString) -> u32 {
             if i + 4 >= script.len() {
                 break;
             }
-            let len = u32::from_le_bytes([
-                script[i + 1],
-                script[i + 2],
-                script[i + 3],
-                script[i + 4],
-            ]) as usize;
+            let len =
+                u32::from_le_bytes([script[i + 1], script[i + 2], script[i + 3], script[i + 4]])
+                    as usize;
             i += 5 + len;
             continue;
         }
@@ -380,8 +380,7 @@ fn count_witness_sigops<U: UtxoLookup>(
                             witness.len() - 2
                         };
                         let tapscript = &witness[script_idx];
-                        count = count
-                            .saturating_add(count_tapscript_sigops(tapscript) as u64);
+                        count = count.saturating_add(count_tapscript_sigops(tapscript) as u64);
                     }
                 }
             }
@@ -442,13 +441,17 @@ pub fn get_transaction_sigop_cost_with_utxos(
         for (input, utxo_opt) in tx.inputs.iter().zip(utxos.iter()) {
             if let Some(utxo) = utxo_opt {
                 if is_pay_to_script_hash(utxo.script_pubkey.as_ref()) {
-                    if let Some(redeem_script) = extract_redeem_script_from_scriptsig(&input.script_sig) {
-                        p2sh_count = p2sh_count.saturating_add(count_sigops_in_script(&redeem_script, true));
+                    if let Some(redeem_script) =
+                        extract_redeem_script_from_scriptsig(&input.script_sig)
+                    {
+                        p2sh_count =
+                            p2sh_count.saturating_add(count_sigops_in_script(&redeem_script, true));
                     }
                 }
             }
         }
-        total_cost = total_cost.saturating_add(p2sh_count.saturating_mul(WITNESS_SCALE_FACTOR as u32) as u64);
+        total_cost = total_cost
+            .saturating_add(p2sh_count.saturating_mul(WITNESS_SCALE_FACTOR as u32) as u64);
     }
 
     if let Some(witnesses) = witnesses {
@@ -456,7 +459,10 @@ pub fn get_transaction_sigop_cost_with_utxos(
             for (i, (input, utxo_opt)) in tx.inputs.iter().zip(utxos.iter()).enumerate() {
                 if let Some(utxo) = utxo_opt {
                     let script_pubkey = utxo.script_pubkey.as_ref();
-                    if script_pubkey.len() == 22 && script_pubkey[0] == OP_0 && script_pubkey[1] == 0x14 {
+                    if script_pubkey.len() == 22
+                        && script_pubkey[0] == OP_0
+                        && script_pubkey[1] == 0x14
+                    {
                         if let Some(witness) = witnesses.get(i) {
                             if !witness.is_empty() {
                                 total_cost = total_cost.saturating_add(1);
@@ -468,7 +474,11 @@ pub fn get_transaction_sigop_cost_with_utxos(
                     {
                         if let Some(witness) = witnesses.get(i) {
                             if let Some(witness_script) = witness.last() {
-                                total_cost = total_cost.saturating_add(count_sigops_in_script(witness_script, true) as u64);
+                                total_cost = total_cost.saturating_add(count_sigops_in_script(
+                                    witness_script,
+                                    true,
+                                )
+                                    as u64);
                             }
                         }
                     }
@@ -597,7 +607,8 @@ mod tests {
         // Sigop count must be 0.
         let script = vec![OP_PUSHDATA1, 0x03, OP_CHECKSIG, OP_CHECKSIG, OP_CHECKSIG];
         assert_eq!(
-            count_sigops_in_script(&script, false), 0,
+            count_sigops_in_script(&script, false),
+            0,
             "Push data containing 0xAC must NOT be counted as sigops"
         );
     }
@@ -606,9 +617,18 @@ mod tests {
     fn test_pushdata2_containing_checksig_byte_not_counted() {
         // OP_PUSHDATA2 <len=4 as u16 LE> <0xAC 0xAD 0xAE 0xAF>
         // These are push DATA bytes, not opcodes.
-        let script = vec![OP_PUSHDATA2, 0x04, 0x00, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_CHECKMULTISIG, OP_CHECKMULTISIGVERIFY];
+        let script = vec![
+            OP_PUSHDATA2,
+            0x04,
+            0x00,
+            OP_CHECKSIG,
+            OP_CHECKSIGVERIFY,
+            OP_CHECKMULTISIG,
+            OP_CHECKMULTISIGVERIFY,
+        ];
         assert_eq!(
-            count_sigops_in_script(&script, false), 0,
+            count_sigops_in_script(&script, false),
+            0,
             "Push data containing sigop-like bytes must NOT be counted"
         );
     }
@@ -616,9 +636,18 @@ mod tests {
     #[test]
     fn test_pushdata4_containing_checksig_byte_not_counted() {
         // OP_PUSHDATA4 <len=2 as u32 LE> <0xAC 0xAC>
-        let script = vec![OP_PUSHDATA4, 0x02, 0x00, 0x00, 0x00, OP_CHECKSIG, OP_CHECKSIG];
+        let script = vec![
+            OP_PUSHDATA4,
+            0x02,
+            0x00,
+            0x00,
+            0x00,
+            OP_CHECKSIG,
+            OP_CHECKSIG,
+        ];
         assert_eq!(
-            count_sigops_in_script(&script, false), 0,
+            count_sigops_in_script(&script, false),
+            0,
             "OP_PUSHDATA4 data containing 0xAC must NOT be counted"
         );
     }
@@ -627,9 +656,17 @@ mod tests {
     fn test_direct_push_containing_checksig_byte_not_counted() {
         // Direct push: opcode 0x05 means "push next 5 bytes"
         // Data contains OP_CHECKSIG byte which must NOT be counted.
-        let script = vec![0x05, OP_CHECKSIG, OP_CHECKSIG, OP_CHECKSIG, OP_CHECKSIG, OP_CHECKSIG];
+        let script = vec![
+            0x05,
+            OP_CHECKSIG,
+            OP_CHECKSIG,
+            OP_CHECKSIG,
+            OP_CHECKSIG,
+            OP_CHECKSIG,
+        ];
         assert_eq!(
-            count_sigops_in_script(&script, false), 0,
+            count_sigops_in_script(&script, false),
+            0,
             "Direct push data containing 0xAC must NOT be counted as sigops"
         );
     }
@@ -640,7 +677,8 @@ mod tests {
         // Only the real OP_CHECKSIG (after push data) should count.
         let script = vec![0x03, OP_CHECKSIG, OP_CHECKSIG, OP_CHECKSIG, OP_CHECKSIG]; // push 3, data, then OP_CHECKSIG
         assert_eq!(
-            count_sigops_in_script(&script, false), 1,
+            count_sigops_in_script(&script, false),
+            1,
             "Only real OP_CHECKSIG after push data should count"
         );
     }
@@ -649,15 +687,24 @@ mod tests {
     fn test_pushdata1_then_real_multisig() {
         // OP_PUSHDATA1 <len=2> <OP_CHECKSIG OP_CHECKSIG> then OP_2 OP_CHECKMULTISIG
         // The OP_CHECKSIG bytes in push data don't count. Only the real OP_CHECKMULTISIG counts.
-        let script = vec![OP_PUSHDATA1, 0x02, OP_CHECKSIG, OP_CHECKSIG, OP_2, OP_CHECKMULTISIG];
+        let script = vec![
+            OP_PUSHDATA1,
+            0x02,
+            OP_CHECKSIG,
+            OP_CHECKSIG,
+            OP_2,
+            OP_CHECKMULTISIG,
+        ];
         // Inaccurate mode: multisig = 20
         assert_eq!(
-            count_sigops_in_script(&script, false), 20,
+            count_sigops_in_script(&script, false),
+            20,
             "Only real OP_CHECKMULTISIG should count (inaccurate=20)"
         );
         // Accurate mode: OP_2 before OP_CHECKMULTISIG = 2
         assert_eq!(
-            count_sigops_in_script(&script, true), 2,
+            count_sigops_in_script(&script, true),
+            2,
             "Accurate mode: OP_2 before OP_CHECKMULTISIG = 2 sigops"
         );
     }
@@ -698,7 +745,8 @@ mod tests {
         let mut script = vec![OP_PUSHDATA2, 100, 0x00]; // OP_PUSHDATA2, length=100
         script.extend_from_slice(&[OP_CHECKSIG; 100]); // 100 bytes of OP_CHECKSIG data
         assert_eq!(
-            count_sigops_in_script(&script, false), 0,
+            count_sigops_in_script(&script, false),
+            0,
             "100 bytes of OP_CHECKSIG in push data must count as 0 sigops"
         );
     }
@@ -724,4 +772,3 @@ mod tests {
         assert_eq!(count_sigops_in_script(&script, true), 1);
     }
 }
-

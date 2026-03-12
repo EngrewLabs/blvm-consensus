@@ -119,5 +119,5 @@ fn fuzz_block_validation(data: &[u8]) {
 // # Or create fuzz/Cargo.toml with:
 // [dependencies]
 // libfuzzer-sys = "0.4"
-// consensus-proof = { path = "../" }
+// blvm-consensus = { path = "../" }
 

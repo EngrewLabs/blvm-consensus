@@ -7,8 +7,8 @@
 
 use crate::error::{ConsensusError, Result};
 use crate::script::verify_script_with_context_full;
-use crate::witness::is_witness_empty;
 use crate::types::{Block, Natural, Network};
+use crate::witness::is_witness_empty;
 use crate::witness::Witness;
 use crossbeam_queue::SegQueue;
 
@@ -186,7 +186,8 @@ impl ScriptCheckQueue {
         let witness_for_script = if session.height < 481824 {
             None
         } else {
-            session.witness_buffer
+            session
+                .witness_buffer
                 .get(ctx.tx_index)
                 .and_then(|w| w.get(check.input_idx))
                 .and_then(|w| if is_witness_empty(w) { None } else { Some(w) })
@@ -197,13 +198,15 @@ impl ScriptCheckQueue {
         let sighash_cache = ctx.sighash_midstate_cache.as_ref();
 
         #[cfg(feature = "production")]
-        let precomputed_sighash = session.precomputed_sighashes
+        let precomputed_sighash = session
+            .precomputed_sighashes
             .get(ecdsa_global_idx)
             .and_then(|s| *s);
         #[cfg(feature = "production")]
         let precomputed_p2pkh = match p2pkh_hash {
             Some(h) => Some(h),
-            None => session.precomputed_p2pkh_hashes
+            None => session
+                .precomputed_p2pkh_hashes
                 .get(ecdsa_global_idx)
                 .and_then(|h| *h),
         };
@@ -237,10 +240,15 @@ impl ScriptCheckQueue {
                 #[cfg(feature = "production")]
                 precomputed_p2pkh,
             )
-            .map_err(|e| ConsensusError::BlockValidation(format!(
-                "Script verification failed at tx {} input {}: {}",
-                ctx.tx_index, check.input_idx, e
-            ).into()))
+            .map_err(|e| {
+                ConsensusError::BlockValidation(
+                    format!(
+                        "Script verification failed at tx {} input {}: {}",
+                        ctx.tx_index, check.input_idx, e
+                    )
+                    .into(),
+                )
+            })
         };
 
         match prevout_values_prefetched {
@@ -264,7 +272,9 @@ impl ScriptCheckQueue {
         session: &'a BlockSessionContext,
         refs_buf: &mut Vec<&'a [u8]>,
     ) -> std::result::Result<bool, ConsensusError> {
-        let ctx = session.tx_contexts.get(check.tx_ctx_idx)
+        let ctx = session
+            .tx_contexts
+            .get(check.tx_ctx_idx)
             .ok_or_else(|| ConsensusError::BlockValidation("tx_ctx_idx out of range".into()))?;
         let buffer = session.script_pubkey_buffer.as_slice();
         let spi = session.script_pubkey_indices_buffer.as_slice();
@@ -275,12 +285,7 @@ impl ScriptCheckQueue {
             buffer[s..s + l].as_ref()
         }));
         Self::run_check_with_refs(
-            check,
-            session,
-            ctx,
-            refs_buf,
-            buffer,
-            None, // run_check has no batch context
+            check, session, ctx, refs_buf, buffer, None, // run_check has no batch context
             None, // script_pubkey_prefetched
             None, // prevout_values_prefetched
         )
@@ -363,13 +368,19 @@ impl ScriptCheckQueue {
                     let ctx = match session.tx_contexts.get(c.tx_ctx_idx) {
                         Some(ctx) => ctx,
                         None => {
-                            local_error = Some(ConsensusError::BlockValidation("tx_ctx_idx out of range".into()));
+                            local_error = Some(ConsensusError::BlockValidation(
+                                "tx_ctx_idx out of range".into(),
+                            ));
                             break;
                         }
                     };
                     let s = c.spk_offset as usize;
                     let l = c.spk_len as usize;
-                    let script_pubkey = if s + l <= buffer.len() { &buffer[s..s + l] } else { &[] };
+                    let script_pubkey = if s + l <= buffer.len() {
+                        &buffer[s..s + l]
+                    } else {
+                        &[]
+                    };
                     let (pv_base, pv_count) = ctx.prevout_values_range;
                     let prevout_slice = &pv[pv_base..][..pv_count];
                     if c.tx_ctx_idx != cached_ctx_idx {
@@ -377,7 +388,11 @@ impl ScriptCheckQueue {
                         let (spi_base, spi_count) = ctx.script_pubkey_indices_range;
                         for j in 0..spi_count {
                             let (start, len) = spi[spi_base + j];
-                            refs_buf.push(if start + len <= buffer.len() { &buffer[start..start + len] } else { &[] });
+                            refs_buf.push(if start + len <= buffer.len() {
+                                &buffer[start..start + len]
+                            } else {
+                                &[]
+                            });
                         }
                         cached_ctx_idx = c.tx_ctx_idx;
                     }
@@ -400,13 +415,17 @@ impl ScriptCheckQueue {
                 }
             }
             #[cfg(all(feature = "production", feature = "profile"))]
-            crate::script_profile::add_worker_run_check_loop_ns(t_run_check.elapsed().as_nanos() as u64);
+            crate::script_profile::add_worker_run_check_loop_ns(
+                t_run_check.elapsed().as_nanos() as u64
+            );
             if !batch_results.is_empty() {
                 #[cfg(all(feature = "production", feature = "profile"))]
                 let t_results = std::time::Instant::now();
                 session.results.push(batch_results);
                 #[cfg(all(feature = "production", feature = "profile"))]
-                crate::script_profile::add_worker_results_extend_ns(t_results.elapsed().as_nanos() as u64);
+                crate::script_profile::add_worker_results_extend_ns(
+                    t_results.elapsed().as_nanos() as u64
+                );
             }
         }
     }
@@ -502,13 +521,17 @@ impl ScriptCheckQueue {
                 loop {
                     if guard.n_todo == 0 {
                         guard.n_total -= 1;
-                        let results = guard.session.as_ref().map(|s| {
-                            let mut out = Vec::with_capacity(512);
-                            while let Some(batch) = s.results.pop() {
-                                out.extend(batch);
-                            }
-                            out
-                        }).unwrap_or_default();
+                        let results = guard
+                            .session
+                            .as_ref()
+                            .map(|s| {
+                                let mut out = Vec::with_capacity(512);
+                                while let Some(batch) = s.results.pop() {
+                                    out.extend(batch);
+                                }
+                                out
+                            })
+                            .unwrap_or_default();
                         guard.session = None;
                         if let Some(ref e) = guard.error_result {
                             return Err(e.clone());
@@ -559,13 +582,19 @@ impl ScriptCheckQueue {
                     let ctx = match session.tx_contexts.get(c.tx_ctx_idx) {
                         Some(ctx) => ctx,
                         None => {
-                            local_error = Some(ConsensusError::BlockValidation("tx_ctx_idx out of range".into()));
+                            local_error = Some(ConsensusError::BlockValidation(
+                                "tx_ctx_idx out of range".into(),
+                            ));
                             break;
                         }
                     };
                     let s = c.spk_offset as usize;
                     let l = c.spk_len as usize;
-                    let script_pubkey = if s + l <= buffer.len() { &buffer[s..s + l] } else { &[] };
+                    let script_pubkey = if s + l <= buffer.len() {
+                        &buffer[s..s + l]
+                    } else {
+                        &[]
+                    };
                     let (pv_base, pv_count) = ctx.prevout_values_range;
                     let prevout_slice = &pv[pv_base..][..pv_count];
                     if c.tx_ctx_idx != cached_ctx_idx {
@@ -573,7 +602,11 @@ impl ScriptCheckQueue {
                         let (spi_base, spi_count) = ctx.script_pubkey_indices_range;
                         for j in 0..spi_count {
                             let (start, len) = spi[spi_base + j];
-                            refs_buf.push(if start + len <= buffer.len() { &buffer[start..start + len] } else { &[] });
+                            refs_buf.push(if start + len <= buffer.len() {
+                                &buffer[start..start + len]
+                            } else {
+                                &[]
+                            });
                         }
                         cached_ctx_idx = c.tx_ctx_idx;
                     }
@@ -596,13 +629,17 @@ impl ScriptCheckQueue {
                 }
             }
             #[cfg(all(feature = "production", feature = "profile"))]
-            crate::script_profile::add_worker_run_check_loop_ns(t_run_check.elapsed().as_nanos() as u64);
+            crate::script_profile::add_worker_run_check_loop_ns(
+                t_run_check.elapsed().as_nanos() as u64
+            );
             if !batch_results.is_empty() {
                 #[cfg(all(feature = "production", feature = "profile"))]
                 let t_results = std::time::Instant::now();
                 session.results.push(batch_results);
                 #[cfg(all(feature = "production", feature = "profile"))]
-                crate::script_profile::add_worker_results_extend_ns(t_results.elapsed().as_nanos() as u64);
+                crate::script_profile::add_worker_results_extend_ns(
+                    t_results.elapsed().as_nanos() as u64
+                );
             }
         }
     }

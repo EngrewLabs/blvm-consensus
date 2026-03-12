@@ -1,4 +1,4 @@
-//! Configuration for bllvm-consensus
+//! Configuration for blvm-consensus
 //!
 //! Provides configurable parameters for consensus validation, network message limits,
 //! and performance optimizations. These settings can be loaded from config files,
@@ -593,29 +593,22 @@ impl ConsensusConfig {
             }
         }
 
-        if let Ok(val) = std::env::var("BLVM_MTP_HEADERS")
-        {
+        if let Ok(val) = std::env::var("BLVM_MTP_HEADERS") {
             if let Ok(count) = val.parse::<usize>() {
                 config.block_validation.median_time_past_headers = count;
             }
         }
-        if let Ok(val) =
-            std::env::var("BLVM_PARALLEL_VALIDATION")
-        {
+        if let Ok(val) = std::env::var("BLVM_PARALLEL_VALIDATION") {
             if let Ok(enabled) = val.parse::<bool>() {
                 config.block_validation.enable_parallel_validation = enabled;
             }
         }
-        if let Ok(val) =
-            std::env::var("BLVM_COINBASE_MATURITY")
-        {
+        if let Ok(val) = std::env::var("BLVM_COINBASE_MATURITY") {
             if let Ok(maturity) = val.parse::<u64>() {
                 config.block_validation.coinbase_maturity_override = maturity;
             }
         }
-        if let Ok(val) =
-            std::env::var("BLVM_MAX_SIGOPS_COST")
-        {
+        if let Ok(val) = std::env::var("BLVM_MAX_SIGOPS_COST") {
             if let Ok(cost) = val.parse::<u64>() {
                 config.block_validation.max_block_sigops_cost_override = cost;
             }
@@ -693,8 +686,7 @@ impl ConsensusConfig {
                 config.utxo_commitment.max_historical_commitments = count;
             }
         }
-        if let Ok(val) = std::env::var("BLVM_UTXO_COMMITMENT_INCREMENTAL")
-        {
+        if let Ok(val) = std::env::var("BLVM_UTXO_COMMITMENT_INCREMENTAL") {
             if let Ok(enabled) = val.parse::<bool>() {
                 config.utxo_commitment.enable_incremental_updates = enabled;
             }
@@ -878,17 +870,23 @@ pub fn get_assume_valid_height() -> u64 {
             return v;
         }
     }
-    get_consensus_config_ref().block_validation.assume_valid_height
+    get_consensus_config_ref()
+        .block_validation
+        .assume_valid_height
 }
 
 /// Assume-valid block hash. When set, block at assume_valid_height must match.
 pub fn get_assume_valid_hash() -> Option<[u8; 32]> {
-    get_consensus_config_ref().block_validation.assume_valid_hash
+    get_consensus_config_ref()
+        .block_validation
+        .assume_valid_hash
 }
 
 /// Minimum chain work. Skip only when best_header_chainwork >= this.
 pub fn get_n_minimum_chain_work() -> u128 {
-    get_consensus_config_ref().block_validation.n_minimum_chain_work
+    get_consensus_config_ref()
+        .block_validation
+        .n_minimum_chain_work
 }
 
 /// Set assume-valid height for benchmarking (overrides config).
@@ -918,6 +916,7 @@ pub fn use_overlay_delta() -> bool {
 /// - When `script_verification_threads` > 0: use that value explicitly.
 /// - When 0: let Rayon use its default (respects RAYON_NUM_THREADS env; typically num_cpus).
 ///   IBD scripts set RAYON_NUM_THREADS=nproc-1 for par-1 workers.
+///
 /// Only takes effect once per process.
 #[cfg(all(feature = "production", feature = "rayon"))]
 pub fn init_rayon_for_script_verification() {
@@ -932,8 +931,7 @@ pub fn init_rayon_for_script_verification() {
                 .build_global()
             {
                 eprintln!(
-                    "Warning: Failed to set Rayon script verification pool to {} threads: {}. Using default.",
-                    n, e
+                    "Warning: Failed to set Rayon script verification pool to {n} threads: {e}. Using default."
                 );
             }
         }

@@ -1,6 +1,6 @@
 # Test Data Sources
 
-This document describes all sources of test data used by consensus-proof tests.
+This document describes all sources of test data used by blvm-consensus tests.
 
 ## Overview
 

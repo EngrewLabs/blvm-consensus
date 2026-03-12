@@ -394,7 +394,10 @@ impl UtxoMerkleTree {
                 }
             }
         }
-        Ok(sparse_merkle_tree::MerkleProof::new(leaves_bitmap, merkle_path))
+        Ok(sparse_merkle_tree::MerkleProof::new(
+            leaves_bitmap,
+            merkle_path,
+        ))
     }
 
     /// Verify a UTXO commitment matches expected supply
@@ -545,10 +548,12 @@ impl UtxoMerkleTree {
         // 6. Verify proof using library's verify method
         let is_valid = proof
             .verify::<UtxoHasher>(&root_h256, leaves)
-            .map_err(|e| UtxoCommitmentError::VerificationFailed(format!(
-                "Proof verification failed: {:?}",
-                e
-            )))?;
+            .map_err(|e| {
+                UtxoCommitmentError::VerificationFailed(format!(
+                    "Proof verification failed: {:?}",
+                    e
+                ))
+            })?;
 
         Ok(is_valid)
     }
@@ -628,7 +633,8 @@ impl UtxoMerkleTree {
             ));
         }
 
-        let script_pubkey = crate::types::SharedByteString::from(&data[offset..offset + script_len]);
+        let script_pubkey =
+            crate::types::SharedByteString::from(&data[offset..offset + script_len]);
 
         Ok(UTXO {
             value,

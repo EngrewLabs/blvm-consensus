@@ -29,7 +29,7 @@ This project follows the [Rust Code of Conduct](https://www.rust-lang.org/polici
 - **Pure Functions**: All functions must remain side-effect-free
 - **Comprehensive Testing**: All mathematical functions must be thoroughly tested
 - **Test Coverage**: >95% for consensus-critical code
-- **Formal Verification**: Consensus-critical changes may require Kani proofs
+- **Formal Verification**: Consensus-critical changes may require spec-lock annotations
 
 ### Development Setup
 

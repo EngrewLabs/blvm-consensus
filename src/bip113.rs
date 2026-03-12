@@ -225,4 +225,3 @@ mod tests {
         assert_eq!(get_median_time_past(&headers), 600);
     }
 }
-

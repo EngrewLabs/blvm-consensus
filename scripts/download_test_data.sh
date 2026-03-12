@@ -1,7 +1,7 @@
 #!/bin/bash
 # Download All Test Data
 #
-# Downloads and organizes all test data needed for consensus-proof testing:
+# Downloads and organizes all test data needed for blvm-consensus testing:
 # - Bitcoin Core test vectors (tx_valid.json, tx_invalid.json)
 # - Mainnet blocks at key consensus-era heights
 # - Historical block checkpoints (if available)

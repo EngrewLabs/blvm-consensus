@@ -1,8 +1,8 @@
 //! Tests for script opcode execution
 
-use blvm_consensus::script::*;
 use blvm_consensus::constants::{MAX_SCRIPT_OPS, MAX_STACK_SIZE};
 use blvm_consensus::opcodes::*;
+use blvm_consensus::script::*;
 use blvm_consensus::*;
 
 #[test]

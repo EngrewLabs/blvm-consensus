@@ -3,7 +3,7 @@
 //! Bitcoin block header wire format specification.
 //! Must match consensus serialization exactly for consensus compatibility.
 
-use super::transaction::{deserialize_transaction, deserialize_transaction_with_witness, serialize_transaction};
+use super::transaction::{deserialize_transaction_with_witness, serialize_transaction};
 use super::varint::{decode_varint, encode_varint};
 use crate::error::{ConsensusError, Result};
 use crate::segwit::Witness;
@@ -208,7 +208,8 @@ pub fn deserialize_block_with_witnesses(data: &[u8]) -> Result<(Block, Vec<Vec<W
     // The deserialize_transaction_with_witness function returns both the tx and its witness stacks
     // (one Witness per input)
     for _ in 0..tx_count {
-        let (tx, input_witnesses, bytes_consumed) = deserialize_transaction_with_witness(&data[offset..])?;
+        let (tx, input_witnesses, bytes_consumed) =
+            deserialize_transaction_with_witness(&data[offset..])?;
         offset += bytes_consumed;
         transactions.push(tx);
         all_witnesses.push(input_witnesses);
@@ -218,7 +219,7 @@ pub fn deserialize_block_with_witnesses(data: &[u8]) -> Result<(Block, Vec<Vec<W
     while all_witnesses.len() < transactions.len() {
         all_witnesses.push(Vec::new());
     }
-    
+
     // Return Vec<Vec<Witness>> - one Vec per transaction, each containing one Witness per input
     // This preserves the per-input witness structure needed for P2WSH-in-P2SH
     Ok((
@@ -347,4 +348,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-

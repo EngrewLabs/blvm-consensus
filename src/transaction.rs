@@ -7,8 +7,8 @@ use crate::constants::*;
 use crate::error::{ConsensusError, Result};
 use crate::types::*;
 use crate::utxo_overlay::UtxoLookup;
-use std::borrow::Cow;
 use blvm_spec_lock::spec_locked;
+use std::borrow::Cow;
 
 // Cold error construction helpers - these paths are rarely taken
 #[cold]
@@ -89,8 +89,7 @@ fn check_transaction_fast_path(tx: &Transaction) -> Option<ValidationResult> {
         let script_sig_len = tx.inputs[0].script_sig.len();
         if !(2..=100).contains(&script_sig_len) {
             return Some(ValidationResult::Invalid(format!(
-                "Coinbase scriptSig length {} must be between 2 and 100 bytes",
-                script_sig_len
+                "Coinbase scriptSig length {script_sig_len} must be between 2 and 100 bytes"
             )));
         }
     }
@@ -192,9 +191,7 @@ pub fn check_transaction(tx: &Transaction) -> Result<ValidationResult> {
                 // Invariant assertion: Total output value must remain non-negative after addition
                 assert!(
                     total_output_value >= 0,
-                    "Total output value {} must be non-negative after output {}",
-                    total_output_value,
-                    i
+                    "Total output value {total_output_value} must be non-negative after output {i}"
                 );
             }
         }
@@ -242,16 +239,14 @@ pub fn check_transaction(tx: &Transaction) -> Result<ValidationResult> {
         // Check for invalid total output value and return error (before assert)
         if total_output_value < 0 || total_u64 > MAX_MONEY_U64 {
             return Ok(ValidationResult::Invalid(format!(
-                "Total output value {total_output_value} is out of valid range [0, {}]",
-                MAX_MONEY
+                "Total output value {total_output_value} is out of valid range [0, {MAX_MONEY}]"
             )));
         }
         // Invariant assertion: Total output value must not exceed MAX_MONEY
         // (This should never fail if the check above is correct)
         assert!(
             total_u64 <= MAX_MONEY_U64,
-            "Total output value {} must not exceed MAX_MONEY",
-            total_output_value
+            "Total output value {total_output_value} must not exceed MAX_MONEY"
         );
     }
 
@@ -449,7 +444,8 @@ pub fn check_tx_inputs_with_utxos<U: UtxoLookup>(
     // OPTIMIZATION: Use pre-collected UTXOs if provided, otherwise collect them
     let input_utxos: Vec<(usize, Option<&UTXO>)> = if let Some(pre_utxos) = pre_collected_utxos {
         // Pre-collected UTXOs provided - use them directly (no redundant lookups)
-        pre_utxos.iter()
+        pre_utxos
+            .iter()
             .enumerate()
             .map(|(i, opt_utxo)| (i, *opt_utxo))
             .collect()
@@ -533,8 +529,16 @@ pub fn check_tx_inputs_with_utxos<U: UtxoLookup>(
         } else {
             #[cfg(debug_assertions)]
             {
-                let hash_str: String = tx.inputs[i].prevout.hash.iter().map(|b| format!("{:02x}", b)).collect();
-                eprintln!("   ❌ UTXO NOT FOUND: Input {} prevout {}:{}", i, hash_str, tx.inputs[i].prevout.index);
+                let hash_str: String = tx.inputs[i]
+                    .prevout
+                    .hash
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect();
+                eprintln!(
+                    "   ❌ UTXO NOT FOUND: Input {} prevout {}:{}",
+                    i, hash_str, tx.inputs[i].prevout.index
+                );
                 eprintln!("      UTXO set size: {}", utxo_set.len());
             }
             return Ok((
@@ -637,8 +641,7 @@ pub fn check_tx_inputs_with_owned_data(
             if *value < 0 || *value > MAX_MONEY {
                 return Ok((
                     ValidationResult::Invalid(format!(
-                        "UTXO value {} out of bounds at input {}",
-                        value, i
+                        "UTXO value {value} out of bounds at input {i}"
                     )),
                     0,
                 ));
@@ -649,8 +652,7 @@ pub fn check_tx_inputs_with_owned_data(
                 if height < required_height {
                     return Ok((
                         ValidationResult::Invalid(format!(
-                            "Premature spend of coinbase output at input {}",
-                            i
+                            "Premature spend of coinbase output at input {i}"
                         )),
                         0,
                     ));
@@ -764,7 +766,6 @@ pub fn calculate_transaction_size(tx: &Transaction) -> usize {
 /// - Coinbase transactions have scriptSig length [2, 100] bytes (rule 5)
 /// - Non-coinbase inputs must not have null prevouts (rule 6, checked in check_tx_inputs)
 
-
 #[cfg(test)]
 #[allow(unused_doc_comments)]
 mod property_tests {
@@ -803,7 +804,10 @@ mod property_tests {
                     inputs: inputs
                         .into_iter()
                         .map(|(hash, index, script_sig, sequence)| TransactionInput {
-                            prevout: OutPoint { hash, index: index as u32 },
+                            prevout: OutPoint {
+                                hash,
+                                index: index as u32,
+                            },
                             script_sig,
                             sequence,
                         })
@@ -976,7 +980,6 @@ mod property_tests {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

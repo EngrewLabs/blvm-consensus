@@ -7,7 +7,7 @@
 
 use blvm_consensus::block::connect_block_ibd;
 use blvm_consensus::segwit::Witness;
-use blvm_consensus::types::{Block, Network, UTXO, UtxoSet};
+use blvm_consensus::types::{Block, Network, UtxoSet, UTXO};
 use blvm_consensus::ValidationResult;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,31 +16,52 @@ use std::time::Instant;
 fn snapshot_dir() -> Option<PathBuf> {
     if let Ok(d) = std::env::var("BLVM_IBD_SNAPSHOT_DIR") {
         let p = PathBuf::from(d);
-        if p.exists() { return Some(p); }
+        if p.exists() {
+            return Some(p);
+        }
     }
-    let default = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../ibd-snapshots-20260307-192410");
-    if default.exists() { Some(default) } else { None }
+    let default =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../ibd-snapshots-20260307-192410");
+    if default.exists() {
+        Some(default)
+    } else {
+        None
+    }
 }
 
 fn load_dump(
     dir: &Path,
 ) -> Result<(Block, Vec<Vec<Witness>>, UtxoSet), Box<dyn std::error::Error + Send + Sync>> {
-    let block: Block =
-        bincode::deserialize_from(std::io::BufReader::new(std::fs::File::open(dir.join("block.bin"))?))?;
-    let witnesses: Vec<Vec<Witness>> =
-        bincode::deserialize_from(std::io::BufReader::new(std::fs::File::open(dir.join("witnesses.bin"))?))?;
-    let raw: std::collections::HashMap<_, UTXO> =
-        bincode::deserialize_from(std::io::BufReader::new(std::fs::File::open(dir.join("utxo_set.bin"))?))?;
+    let block: Block = bincode::deserialize_from(std::io::BufReader::new(std::fs::File::open(
+        dir.join("block.bin"),
+    )?))?;
+    let witnesses: Vec<Vec<Witness>> = bincode::deserialize_from(std::io::BufReader::new(
+        std::fs::File::open(dir.join("witnesses.bin"))?,
+    ))?;
+    let raw: std::collections::HashMap<_, UTXO> = bincode::deserialize_from(
+        std::io::BufReader::new(std::fs::File::open(dir.join("utxo_set.bin"))?),
+    )?;
     let utxo_set: UtxoSet = raw.into_iter().map(|(k, v)| (k, Arc::new(v))).collect();
     Ok((block, witnesses, utxo_set))
 }
 
-fn prepare(dir: &Path) -> Option<(Block, Arc<Block>, Vec<Vec<Witness>>, Arc<Vec<Vec<Witness>>>, UtxoSet)> {
-    if !dir.join("block.bin").exists() { return None; }
+fn prepare(
+    dir: &Path,
+) -> Option<(
+    Block,
+    Arc<Block>,
+    Vec<Vec<Witness>>,
+    Arc<Vec<Vec<Witness>>>,
+    UtxoSet,
+)> {
+    if !dir.join("block.bin").exists() {
+        return None;
+    }
     let (block, mut witnesses, utxo_set) = load_dump(dir).ok()?;
     if witnesses.len() != block.transactions.len() {
-        witnesses = block.transactions.iter()
+        witnesses = block
+            .transactions
+            .iter()
             .map(|tx| (0..tx.inputs.len()).map(|_| Vec::new()).collect())
             .collect();
     }
@@ -59,11 +80,19 @@ fn validate_once(
 ) -> f64 {
     let t = Instant::now();
     let (result, _new_utxo, _txids, _delta) = connect_block_ibd(
-        block, witnesses, utxo_set, height,
+        block,
+        witnesses,
+        utxo_set,
+        height,
         None::<&[blvm_consensus::types::BlockHeader]>,
-        0u64, Network::Mainnet, None, None,
-        Some(Arc::clone(block_arc)), None,
-    ).expect("connect_block_ibd");
+        0u64,
+        Network::Mainnet,
+        None,
+        None,
+        Some(Arc::clone(block_arc)),
+        None,
+    )
+    .expect("connect_block_ibd");
     let elapsed = t.elapsed().as_secs_f64() * 1000.0;
     match result {
         ValidationResult::Valid => {}
@@ -86,11 +115,19 @@ fn validate_call_only(
 ) -> (f64, UtxoSet) {
     let t = Instant::now();
     let (result, new_utxo, _txids, _delta) = connect_block_ibd(
-        block, witnesses, utxo_set, height,
+        block,
+        witnesses,
+        utxo_set,
+        height,
         None::<&[blvm_consensus::types::BlockHeader]>,
-        0u64, Network::Mainnet, None, precomputed_tx_ids,
-        Some(Arc::clone(block_arc)), witnesses_arc,
-    ).expect("connect_block_ibd");
+        0u64,
+        Network::Mainnet,
+        None,
+        precomputed_tx_ids,
+        Some(Arc::clone(block_arc)),
+        witnesses_arc,
+    )
+    .expect("connect_block_ibd");
     let elapsed = t.elapsed().as_secs_f64() * 1000.0;
     match result {
         ValidationResult::Valid => {}
@@ -110,11 +147,19 @@ fn validate_once_timed(
     let t0 = Instant::now();
     let clone_done = Instant::now(); // utxo_set already cloned by caller
     let (result, _new_utxo, _txids, _delta) = connect_block_ibd(
-        block, witnesses, utxo_set, height,
+        block,
+        witnesses,
+        utxo_set,
+        height,
         None::<&[blvm_consensus::types::BlockHeader]>,
-        0u64, Network::Mainnet, None, None,
-        Some(Arc::clone(block_arc)), None,
-    ).expect("connect_block_ibd");
+        0u64,
+        Network::Mainnet,
+        None,
+        None,
+        Some(Arc::clone(block_arc)),
+        None,
+    )
+    .expect("connect_block_ibd");
     let call_done = Instant::now();
     let drop_start = Instant::now();
     drop(_new_utxo);
@@ -128,7 +173,10 @@ fn validate_once_timed(
     let total = t0.elapsed().as_secs_f64() * 1000.0;
     let call_ms = (call_done - clone_done).as_secs_f64() * 1000.0;
     let drop_ms = (drop_done - drop_start).as_secs_f64() * 1000.0;
-    eprintln!("  [TIMING] h={} total={:.2}ms call={:.2}ms drop={:.2}ms", height, total, call_ms, drop_ms);
+    eprintln!(
+        "  [TIMING] h={} total={:.2}ms call={:.2}ms drop={:.2}ms",
+        height, total, call_ms, drop_ms
+    );
     total
 }
 
@@ -143,12 +191,19 @@ fn validate_with_txids(
 ) -> f64 {
     let t = Instant::now();
     let (result, _, _, _) = connect_block_ibd(
-        block, witnesses, utxo_set, height,
+        block,
+        witnesses,
+        utxo_set,
+        height,
         None::<&[blvm_consensus::types::BlockHeader]>,
-        0u64, Network::Mainnet, None,
+        0u64,
+        Network::Mainnet,
+        None,
         Some(tx_ids),
-        Some(Arc::clone(block_arc)), None,
-    ).expect("connect_block_ibd");
+        Some(Arc::clone(block_arc)),
+        None,
+    )
+    .expect("connect_block_ibd");
     let elapsed = t.elapsed().as_secs_f64() * 1000.0;
     match result {
         ValidationResult::Valid => {}
@@ -162,17 +217,28 @@ fn validate_with_txids(
 fn block_ibd_snapshot_tests() {
     let base = match snapshot_dir() {
         Some(d) => d,
-        None => { eprintln!("Skip: no snapshot dir"); return; }
+        None => {
+            eprintln!("Skip: no snapshot dir");
+            return;
+        }
     };
-    let mut heights: Vec<u64> = std::fs::read_dir(&base).unwrap()
+    let mut heights: Vec<u64> = std::fs::read_dir(&base)
+        .unwrap()
         .filter_map(|e| e.ok())
-        .filter_map(|e| e.file_name().to_str()?.strip_prefix("height_")?.parse().ok())
+        .filter_map(|e| {
+            e.file_name()
+                .to_str()?
+                .strip_prefix("height_")?
+                .parse()
+                .ok()
+        })
         .collect();
     heights.sort_unstable();
     for h in heights {
         let dir = base.join(format!("height_{}", h));
         let (block, block_arc, witnesses, _witnesses_arc, utxo_set) = match prepare(&dir) {
-            Some(x) => x, None => continue,
+            Some(x) => x,
+            None => continue,
         };
         validate_once(&block, &witnesses, utxo_set, h, &block_arc);
         eprintln!("  height={}: OK", h);
@@ -184,16 +250,29 @@ fn block_ibd_snapshot_tests() {
 fn bench_ibd_snapshots() {
     let base = match snapshot_dir() {
         Some(d) => d,
-        None => { eprintln!("Skip: no snapshot dir"); return; }
+        None => {
+            eprintln!("Skip: no snapshot dir");
+            return;
+        }
     };
-    let iterations: u32 = std::env::var("BENCH_ITERS").ok()
-        .and_then(|s| s.parse().ok()).unwrap_or(10);
-    let height_filter: Option<u64> = std::env::var("BENCH_HEIGHT").ok()
+    let iterations: u32 = std::env::var("BENCH_ITERS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10);
+    let height_filter: Option<u64> = std::env::var("BENCH_HEIGHT")
+        .ok()
         .and_then(|s| s.parse().ok());
 
-    let mut heights: Vec<u64> = std::fs::read_dir(&base).unwrap()
+    let mut heights: Vec<u64> = std::fs::read_dir(&base)
+        .unwrap()
         .filter_map(|e| e.ok())
-        .filter_map(|e| e.file_name().to_str()?.strip_prefix("height_")?.parse().ok())
+        .filter_map(|e| {
+            e.file_name()
+                .to_str()?
+                .strip_prefix("height_")?
+                .parse()
+                .ok()
+        })
         .collect();
     heights.sort_unstable();
     if let Some(hf) = height_filter {
@@ -208,7 +287,8 @@ fn bench_ibd_snapshots() {
     for &h in &heights {
         let dir = base.join(format!("height_{}", h));
         let (block, block_arc, witnesses, witnesses_arc, utxo_set_template) = match prepare(&dir) {
-            Some(x) => x, None => continue,
+            Some(x) => x,
+            None => continue,
         };
         let n_txs = block.transactions.len();
         let n_inputs: usize = block.transactions.iter().map(|tx| tx.inputs.len()).sum();
@@ -218,12 +298,28 @@ fn bench_ibd_snapshots() {
         let tx_ids = blvm_consensus::block::compute_block_tx_ids(&block);
 
         // warmup
-        let (_warmup_ms, warmup_utxo) = validate_call_only(&block, &witnesses, utxo_set_template.clone(), h, &block_arc, Some(&tx_ids), Some(&witnesses_arc));
+        let (_warmup_ms, warmup_utxo) = validate_call_only(
+            &block,
+            &witnesses,
+            utxo_set_template.clone(),
+            h,
+            &block_arc,
+            Some(&tx_ids),
+            Some(&witnesses_arc),
+        );
         drop(warmup_utxo);
 
         let mut times: Vec<f64> = Vec::with_capacity(iterations as usize);
         for _ in 0..iterations {
-            let (ms, returned_utxo) = validate_call_only(&block, &witnesses, utxo_set_template.clone(), h, &block_arc, Some(&tx_ids), Some(&witnesses_arc));
+            let (ms, returned_utxo) = validate_call_only(
+                &block,
+                &witnesses,
+                utxo_set_template.clone(),
+                h,
+                &block_arc,
+                Some(&tx_ids),
+                Some(&witnesses_arc),
+            );
             times.push(ms);
             drop(returned_utxo);
         }
@@ -236,10 +332,14 @@ fn bench_ibd_snapshots() {
         let max = *times.last().unwrap();
         let bps = 1000.0 / median;
 
-        eprintln!("{},{},{},{:.2},{:.2},{:.2},{:.2},{:.2},{:.0}",
-            h, n_txs, n_inputs, min, median, mean, p95, max, bps);
+        eprintln!(
+            "{},{},{},{:.2},{:.2},{:.2},{:.2},{:.2},{:.0}",
+            h, n_txs, n_inputs, min, median, mean, p95, max, bps
+        );
 
-        if h >= 100_000 { focus_medians.push(median); }
+        if h >= 100_000 {
+            focus_medians.push(median);
+        }
     }
 
     if !focus_medians.is_empty() {
@@ -256,19 +356,34 @@ fn bench_ibd_snapshots() {
 fn bench_ibd_snapshots_no_txid() {
     let base = match snapshot_dir() {
         Some(d) => d,
-        None => { eprintln!("Skip: no snapshot dir"); return; }
+        None => {
+            eprintln!("Skip: no snapshot dir");
+            return;
+        }
     };
-    let iterations: u32 = std::env::var("BENCH_ITERS").ok()
-        .and_then(|s| s.parse().ok()).unwrap_or(10);
+    let iterations: u32 = std::env::var("BENCH_ITERS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10);
 
-    let mut heights: Vec<u64> = std::fs::read_dir(&base).unwrap()
+    let mut heights: Vec<u64> = std::fs::read_dir(&base)
+        .unwrap()
         .filter_map(|e| e.ok())
-        .filter_map(|e| e.file_name().to_str()?.strip_prefix("height_")?.parse().ok())
+        .filter_map(|e| {
+            e.file_name()
+                .to_str()?
+                .strip_prefix("height_")?
+                .parse()
+                .ok()
+        })
         .collect();
     heights.sort_unstable();
     heights.retain(|h| *h >= 100_000);
 
-    eprintln!("=== IBD Validation-Only Benchmark ({} iters, precomputed tx_ids) ===", iterations);
+    eprintln!(
+        "=== IBD Validation-Only Benchmark ({} iters, precomputed tx_ids) ===",
+        iterations
+    );
     eprintln!("height,txs,inputs,min_ms,median_ms,mean_ms,max_ms,bps");
 
     let mut focus_medians: Vec<f64> = Vec::new();
@@ -276,7 +391,8 @@ fn bench_ibd_snapshots_no_txid() {
     for &h in &heights {
         let dir = base.join(format!("height_{}", h));
         let (block, block_arc, witnesses, _witnesses_arc, utxo_set_template) = match prepare(&dir) {
-            Some(x) => x, None => continue,
+            Some(x) => x,
+            None => continue,
         };
         let n_txs = block.transactions.len();
         let n_inputs: usize = block.transactions.iter().map(|tx| tx.inputs.len()).sum();
@@ -284,10 +400,26 @@ fn bench_ibd_snapshots_no_txid() {
         let tx_ids = blvm_consensus::block::compute_block_tx_ids(&block);
         std::thread::sleep(std::time::Duration::from_millis(50));
 
-        let _ = validate_with_txids(&block, &witnesses, utxo_set_template.clone(), h, &block_arc, &tx_ids);
+        let _ = validate_with_txids(
+            &block,
+            &witnesses,
+            utxo_set_template.clone(),
+            h,
+            &block_arc,
+            &tx_ids,
+        );
 
         let mut times: Vec<f64> = (0..iterations)
-            .map(|_| validate_with_txids(&block, &witnesses, utxo_set_template.clone(), h, &block_arc, &tx_ids))
+            .map(|_| {
+                validate_with_txids(
+                    &block,
+                    &witnesses,
+                    utxo_set_template.clone(),
+                    h,
+                    &block_arc,
+                    &tx_ids,
+                )
+            })
             .collect();
         times.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
@@ -297,7 +429,10 @@ fn bench_ibd_snapshots_no_txid() {
         let max = *times.last().unwrap();
         let bps = 1000.0 / median;
 
-        eprintln!("{},{},{},{:.2},{:.2},{:.2},{:.2},{:.0}", h, n_txs, n_inputs, min, median, mean, max, bps);
+        eprintln!(
+            "{},{},{},{:.2},{:.2},{:.2},{:.2},{:.0}",
+            h, n_txs, n_inputs, min, median, mean, max, bps
+        );
         focus_medians.push(median);
     }
 

@@ -1,7 +1,7 @@
 //! blvm-node RPC Integration Tests
 //!
-//! Tests consensus-proof validation via blvm-node's RPC interface.
-//! This provides integration testing of the full stack: RPC → node → consensus-proof.
+//! Tests blvm-consensus validation via blvm-node's RPC interface.
+//! This provides integration testing of the full stack: RPC → node → blvm-consensus.
 //!
 //! Requires: blvm-node running with RPC enabled (or in-process test node)
 
@@ -128,12 +128,12 @@ pub struct MempoolAcceptResult {
     pub reject_reason: Option<String>,
 }
 
-/// Compare transaction validation via RPC with direct consensus-proof validation
+/// Compare transaction validation via RPC with direct blvm-consensus validation
 pub async fn compare_transaction_validation_via_rpc(
     tx: &Transaction,
     config: &NodeRpcConfig,
 ) -> Result<ComparisonResult, Box<dyn std::error::Error>> {
-    // Validate transaction locally (direct consensus-proof)
+    // Validate transaction locally (direct blvm-consensus)
     let local_result = check_transaction(tx)?;
     let local_valid = matches!(local_result, ValidationResult::Valid);
     
