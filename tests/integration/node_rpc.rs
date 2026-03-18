@@ -255,11 +255,6 @@ mod tests {
     }
 }
 
-// TODO: Implementation enhancements:
-// 1. Add more RPC methods (getblock, getblockchaininfo, etc.)
-// 2. Add block validation comparison
-// 3. Add retry logic for RPC connection
-// 4. Add connection pooling for multiple tests
-// 5. Add test fixtures for common scenarios
-// 6. Integrate with blvm-node's test helpers
+// Future enhancements: more RPC methods (getblock, getblockchaininfo), block validation
+// comparison, retry logic, connection pooling, test fixtures, blvm-node integration.
 

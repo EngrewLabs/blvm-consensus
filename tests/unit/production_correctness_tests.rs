@@ -68,14 +68,14 @@ mod tests {
         let height = 0;
         
         let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
-        let (result, _new_utxo_set) = connect_block(&block, &witnesses, utxo_set, height, None::<&[crate::types::BlockHeader]>, 0u64, crate::types::Network::Mainnet).unwrap();
+        let (result, _new_utxo_set) = { let ctx = block::BlockValidationContext::for_network(crate::types::Network::Mainnet); connect_block(&block, &witnesses, utxo_set, height, &ctx) }.unwrap();
         
         // Should produce valid result for valid block
         assert!(matches!(result, ValidationResult::Valid | ValidationResult::Invalid(_)));
         
         // Verify deterministic behavior
         let utxo_set2 = UtxoSet::default();
-        let (result2, _) = connect_block(&block, &witnesses, utxo_set2, height, None::<&[crate::types::BlockHeader]>, 0u64, crate::types::Network::Mainnet).unwrap();
+        let (result2, _) = { let ctx = block::BlockValidationContext::for_network(crate::types::Network::Mainnet); connect_block(&block, &witnesses, utxo_set2, height, &ctx) }.unwrap();
         assert_eq!(format!("{:?}", result), format!("{:?}", result2),
                    "Block validation must be deterministic");
     }

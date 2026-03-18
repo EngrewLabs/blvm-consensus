@@ -33,11 +33,7 @@ mod blvm_optimization_tests;
 #[cfg(feature = "production")]
 mod blvm_memory_profiling_tests;
 
-// UTXO commitments tests (only compiled with utxo-commitments feature)
-#[cfg(feature = "utxo-commitments")]
-mod utxo_commitments_tests;
-#[cfg(feature = "utxo-commitments")]
-mod spam_filter_tests;
+// UTXO commitments and spam filter tests moved to blvm-protocol
 
 
 

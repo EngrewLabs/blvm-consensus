@@ -202,14 +202,19 @@ fn block_ibd_repro() {
     }
     eprintln!("--- Individual verification complete, now running connect_block_ibd ---");
 
+    let ctx = blvm_consensus::block::BlockValidationContext::from_connect_block_ibd_args(
+        None::<&[blvm_consensus::types::BlockHeader]>,
+        0u64,
+        Network::Mainnet,
+        None,
+        None,
+    );
     let (result, _new_utxo_set, _tx_ids, _utxo_delta) = connect_block_ibd(
         &block,
         &witnesses,
         utxo_set,
         h,
-        None::<&[blvm_consensus::types::BlockHeader]>,
-        0u64,
-        Network::Mainnet,
+        &ctx,
         None,
         None,
         Some(std::sync::Arc::new(block.clone())),

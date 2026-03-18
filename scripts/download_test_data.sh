@@ -114,8 +114,8 @@ if [ "$DOWNLOAD_ALL" = true ] || [ "$DOWNLOAD_CHECKPOINTS" = true ]; then
     
     CHECKPOINTS_DIR="$TEST_DATA_DIR/checkpoints"
     
-    # Checkpoint data is typically generated from actual blockchain sync
-    # For now, create a placeholder structure
+    # Checkpoint data is generated from blockchain sync (not downloadable from public API)
+    # Create directory with README documenting format and generation
     if [ ! -f "$CHECKPOINTS_DIR/README.md" ]; then
         cat > "$CHECKPOINTS_DIR/README.md" << 'EOF'
 # UTXO Set Checkpoints

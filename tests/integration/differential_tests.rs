@@ -32,10 +32,17 @@ pub fn compare_block_validation_local(
     block: &Block,
     utxo_set: &UtxoSet,
     height: u64,
-    network: crate::types::Network,
+    network: blvm_consensus::types::Network,
 ) -> Result<(ValidationResult, UtxoSet), Box<dyn std::error::Error>> {
-    let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
-    connect_block(block, &witnesses, utxo_set.clone(), height, None, network)
+    let witnesses: Vec<Vec<segwit::Witness>> = block
+        .transactions
+        .iter()
+        .map(|_| Vec::new())
+        .collect();
+    let ctx = blvm_consensus::block::BlockValidationContext::for_network(network);
+    blvm_consensus::block::connect_block(block, &witnesses, utxo_set.clone(), height, &ctx)
+        .map(|(result, new_utxo_set, _undo_log)| (result, new_utxo_set))
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
 }
 
 #[cfg(test)]
@@ -77,7 +84,7 @@ mod tests {
         };
 
         let utxo_set = UtxoSet::default();
-        let result = compare_block_validation_local(&block, &utxo_set, 0, crate::types::Network::Mainnet);
+        let result = compare_block_validation_local(&block, &utxo_set, 0, blvm_consensus::types::Network::Mainnet);
         
         // Block should validate (basic structure is valid)
         assert!(result.is_ok());

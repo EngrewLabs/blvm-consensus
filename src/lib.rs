@@ -29,11 +29,11 @@
 //!
 //! let transaction = Transaction {
 //!     version: 1,
-//!     inputs: vec![].into(),
+//!     inputs: vec![],
 //!     outputs: vec![TransactionOutput {
 //!         value: 1000,
-//!         script_pubkey: vec![0x51].into(),
-//!     }].into(),
+//!         script_pubkey: vec![0x51],
+//!     }],
 //!     lock_time: 0,
 //! };
 //! let result = check_transaction(&transaction).unwrap();
@@ -47,16 +47,9 @@
     clippy::large_enum_variant,  // NetworkResponse::SendMessage; boxing changes layout
 )]
 
-pub mod config;
-pub mod constants;
-pub mod ibd_tuning;
-pub mod opcodes;
-pub mod orange_paper_constants;
-pub mod orange_paper_property_helpers;
 pub mod script;
 pub mod transaction;
 pub mod transaction_hash;
-pub mod types;
 
 use blvm_spec_lock::spec_locked;
 #[cfg(all(feature = "production", feature = "benchmarking"))]
@@ -70,11 +63,28 @@ pub use script::{
 };
 #[cfg(all(feature = "production", feature = "benchmarking"))]
 pub use transaction_hash::clear_sighash_templates;
-// Re-export core types and constants for convenience
+
+// Re-export from blvm-primitives for backward compatibility
+pub use blvm_primitives::constants;
+pub use blvm_primitives::crypto;
+pub use blvm_primitives::opcodes;
+pub use blvm_primitives::serialization;
+pub use blvm_primitives::{error, types};
+pub use blvm_primitives::{tx_inputs, tx_outputs};
 pub use constants::*;
 pub use error::ConsensusError;
 pub use types::*;
 
+/// Orange Paper Section 4 symbols (C, H, M_MAX, etc.) — re-export from primitives constants.
+pub mod orange_paper_constants {
+    pub use crate::constants::{C, H, L_ELEMENT, L_OPS, L_SCRIPT, L_STACK, M_MAX, R, S_MAX, W_MAX};
+}
+
+pub mod orange_paper_property_helpers;
+
+pub mod config;
+
+pub mod activation;
 pub mod bip113;
 #[cfg(feature = "ctv")]
 pub mod bip119;
@@ -84,12 +94,10 @@ pub mod bip_validation;
 pub mod block;
 #[cfg(all(feature = "production", feature = "rayon"))]
 pub mod checkqueue;
-pub mod crypto;
 pub mod economic;
 pub mod locktime;
 pub mod mempool;
 pub mod mining;
-pub mod network;
 pub mod optimizations;
 pub mod pow;
 pub mod reorganization;
@@ -98,19 +106,14 @@ pub(crate) mod script_exec_cache;
 pub mod secp256k1_backend;
 pub mod segwit;
 pub mod sequence_locks;
-pub mod serialization;
 pub mod sigop;
-pub mod spam_filter;
 pub mod taproot;
-#[cfg(feature = "utxo-commitments")]
-pub mod utxo_commitments;
 pub mod utxo_overlay;
+pub mod version_bits;
 pub mod witness;
 
-#[cfg(any(test, feature = "property-tests"))]
+#[cfg(any(test, feature = "property-tests", feature = "test-utils"))]
 pub mod test_utils;
-
-pub mod error;
 
 #[cfg(feature = "profile")]
 pub mod profile_log;
@@ -165,15 +168,15 @@ impl ConsensusProof {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let (result, new_utxo_set, _undo_log) = block::connect_block(
-            block,
-            &witnesses,
-            utxo_set,
-            height,
+        let context = block::BlockValidationContext::from_connect_block_ibd_args(
             None::<&[types::BlockHeader]>,
             network_time,
             types::Network::Mainnet,
-        )?;
+            None,
+            None,
+        );
+        let (result, new_utxo_set, _undo_log) =
+            block::connect_block(block, &witnesses, utxo_set, height, &context)?;
         Ok((result, new_utxo_set))
     }
 
@@ -188,14 +191,10 @@ impl ConsensusProof {
         time_context: Option<types::TimeContext>,
         network: types::Network,
     ) -> error::Result<(types::ValidationResult, types::UtxoSet)> {
-        let (result, new_utxo_set, _undo_log) = block::connect_block_with_context(
-            block,
-            witnesses,
-            utxo_set,
-            height,
-            time_context,
-            network,
-        )?;
+        let context =
+            block::BlockValidationContext::from_time_context_and_network(time_context, network, None);
+        let (result, new_utxo_set, _undo_log) =
+            block::connect_block(block, witnesses, utxo_set, height, &context)?;
         Ok((result, new_utxo_set))
     }
 
@@ -357,19 +356,8 @@ impl ConsensusProof {
         reorganization::should_reorganize(new_chain, current_chain)
     }
 
-    /// Process incoming network message
-    #[spec_locked("9.2")]
-    pub fn process_network_message(
-        &self,
-        message: &network::NetworkMessage,
-        peer_state: &mut network::PeerState,
-        chain_state: &network::ChainState,
-    ) -> error::Result<network::NetworkResponse> {
-        network::process_network_message(message, peer_state, chain_state)
-    }
-
     /// Calculate transaction weight for SegWit
-    #[spec_locked("11.1")]
+    #[spec_locked("11.1.1")]
     pub fn calculate_transaction_weight(
         &self,
         tx: &types::Transaction,
@@ -379,7 +367,7 @@ impl ConsensusProof {
     }
 
     /// Validate SegWit block
-    #[spec_locked("11.1")]
+    #[spec_locked("11.1.7")]
     pub fn validate_segwit_block(
         &self,
         block: &types::Block,
@@ -390,7 +378,7 @@ impl ConsensusProof {
     }
 
     /// Validate Taproot transaction
-    #[spec_locked("11.2")]
+    #[spec_locked("11.2.5")]
     pub fn validate_taproot_transaction(
         &self,
         tx: &types::Transaction,
@@ -400,7 +388,7 @@ impl ConsensusProof {
     }
 
     /// Check if transaction output is Taproot
-    #[spec_locked("11.2")]
+    #[spec_locked("11.2.1")]
     pub fn is_taproot_output(&self, output: &types::TransactionOutput) -> bool {
         taproot::is_taproot_output(output)
     }
@@ -409,7 +397,6 @@ impl ConsensusProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::network::{ChainState, NetworkAddress, NetworkMessage, PeerState, VersionMessage};
     use crate::transaction::check_transaction;
     use crate::types::Transaction;
 
@@ -417,8 +404,8 @@ mod tests {
     fn test_validate_transaction() {
         let tx = Transaction {
             version: 1,
-            inputs: vec![].into(),
-            outputs: vec![].into(),
+            inputs: vec![],
+            outputs: vec![],
             lock_time: 0,
         };
         let result = check_transaction(&tx);

@@ -1,5 +1,5 @@
 #![no_main]
-use blvm_consensus::block::connect_block_with_context;
+use blvm_consensus::block::{connect_block, BlockValidationContext};
 use blvm_consensus::pow::check_proof_of_work;
 use blvm_consensus::types::{Block, BlockHeader, Hash, Network, TimeContext, Transaction, TransactionInput, TransactionOutput, UtxoSet};
 use blvm_consensus::witness::Witness;
@@ -121,23 +121,27 @@ fuzz_target!(|data: &[u8]| {
             let empty_utxo_set = UtxoSet::default();
             let witnesses = vec![Witness::from(vec![])];
 
-            let _result = connect_block_with_context(
+            let ctx_with_time = BlockValidationContext::from_time_context_and_network(
+                Some(time_context.clone()),
+                network,
+                None,
+            );
+            let _result = connect_block(
                 &block,
                 &witnesses,
                 empty_utxo_set.clone(),
                 height,
-                Some(time_context.clone()),
-                network,
+                &ctx_with_time,
             );
 
             // Test with None time context
-            let _result_no_time = connect_block_with_context(
+            let ctx_no_time = BlockValidationContext::for_network(network);
+            let _result_no_time = connect_block(
                 &block,
                 &witnesses,
                 empty_utxo_set.clone(),
                 height,
-                None,
-                network,
+                &ctx_no_time,
             );
         }
     }
@@ -150,13 +154,13 @@ fuzz_target!(|data: &[u8]| {
         header: header_zero_ts,
         transactions: block.transactions.clone(),
     };
-    let _result_zero_ts = connect_block_with_context(
+    let ctx = BlockValidationContext::for_network(Network::Mainnet);
+    let _result_zero_ts = connect_block(
         &block_zero_ts,
         &witnesses,
         empty_utxo_set.clone(),
         0,
-        None,
-        Network::Mainnet,
+        &ctx,
     );
 
     // Zero bits
@@ -166,13 +170,12 @@ fuzz_target!(|data: &[u8]| {
         header: header_zero_bits,
         transactions: block.transactions.clone(),
     };
-    let _result_zero_bits = connect_block_with_context(
+    let _result_zero_bits = connect_block(
         &block_zero_bits,
         &witnesses,
         empty_utxo_set.clone(),
         0,
-        None,
-        Network::Mainnet,
+        &ctx,
     );
 
     // Zero merkle root
@@ -182,13 +185,12 @@ fuzz_target!(|data: &[u8]| {
         header: header_zero_merkle,
         transactions: block.transactions.clone(),
     };
-    let _result_zero_merkle = connect_block_with_context(
+    let _result_zero_merkle = connect_block(
         &block_zero_merkle,
         &witnesses,
         empty_utxo_set.clone(),
         0,
-        None,
-        Network::Mainnet,
+        &ctx,
     );
 
     // Invalid version
@@ -198,13 +200,12 @@ fuzz_target!(|data: &[u8]| {
         header: header_invalid_version,
         transactions: block.transactions.clone(),
     };
-    let _result_invalid_version = connect_block_with_context(
+    let _result_invalid_version = connect_block(
         &block_invalid_version,
         &witnesses,
         empty_utxo_set.clone(),
         0,
-        None,
-        Network::Mainnet,
+        &ctx,
     );
 });
 

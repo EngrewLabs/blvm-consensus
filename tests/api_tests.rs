@@ -2,7 +2,6 @@
 
 use blvm_consensus::mempool::*;
 use blvm_consensus::mining::*;
-use blvm_consensus::network::*;
 use blvm_consensus::opcodes::*;
 use blvm_consensus::segwit::*;
 use blvm_consensus::*;
@@ -683,43 +682,6 @@ fn test_should_reorganize() {
         .unwrap();
     // Just test it returns a boolean (result is either true or false)
     let _ = result;
-}
-
-#[test]
-fn test_process_network_message() {
-    let consensus = ConsensusProof::new();
-
-    let version_msg = VersionMessage {
-        version: 70016,
-        services: 0,
-        timestamp: 0,
-        addr_recv: NetworkAddress {
-            services: 0,
-            ip: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 0, 0, 1], // 127.0.0.1
-            port: 8333,
-        },
-        addr_from: NetworkAddress {
-            services: 0,
-            ip: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 0, 0, 1], // 127.0.0.1
-            port: 8333,
-        },
-        nonce: 0,
-        user_agent: "/Satoshi:0.21.0/".to_string(),
-        start_height: 0,
-        relay: false,
-    };
-
-    let message = NetworkMessage::Version(version_msg);
-    let mut peer_state = PeerState::new();
-    let chain_state = ChainState::new();
-
-    let response = consensus
-        .process_network_message(&message, &mut peer_state, &chain_state)
-        .unwrap();
-    assert!(matches!(
-        response,
-        NetworkResponse::Ok | NetworkResponse::SendMessage(_) | NetworkResponse::Reject(_)
-    ));
 }
 
 #[test]

@@ -87,7 +87,13 @@ fuzz_target!(|data: &[u8]| {
     };
 
     let utxo_set = UtxoSet::default();
+    let witnesses: Vec<Vec<consensus_proof::Witness>> = block
+        .transactions
+        .iter()
+        .map(|tx| (0..tx.inputs.len()).map(|_| vec![]).collect())
+        .collect();
 
     // Should never panic - test robustness
-    let _result = connect_block(&block, utxo_set, 0);
+    let ctx = block::BlockValidationContext::for_network(consensus_proof::types::Network::Mainnet);
+    let _result = connect_block(&block, &witnesses, utxo_set, 0, &ctx);
 });

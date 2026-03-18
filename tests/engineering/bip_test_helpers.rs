@@ -7,6 +7,11 @@ use blvm_consensus::*;
 use blvm_consensus::script::verify_script_with_context_full;
 use blvm_consensus::bip113::get_median_time_past;
 
+/// Create a block header with specified timestamp. Uses library test_utils when feature is enabled.
+#[cfg(feature = "test-utils")]
+pub use blvm_consensus::test_utils::create_test_header;
+
+#[cfg(not(feature = "test-utils"))]
 /// Create a block header with specified timestamp
 pub fn create_test_header(timestamp: u64, prev_hash: [u8; 32]) -> BlockHeader {
     BlockHeader {

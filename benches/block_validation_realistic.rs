@@ -1,7 +1,7 @@
 //! Realistic Block Validation Benchmark
 //! Uses more realistic test data for fair comparison with consensus's ConnectBlock benchmark
 
-use blvm_consensus::block::connect_block;
+use blvm_consensus::block::{connect_block, BlockValidationContext};
 use blvm_consensus::segwit::Witness;
 use blvm_consensus::types::Network;
 use blvm_consensus::{
@@ -79,6 +79,7 @@ fn benchmark_connect_block_realistic(c: &mut Criterion) {
     let utxo_set = UtxoSet::default();
     let witnesses: Vec<Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
 
+    let ctx = block::BlockValidationContext::for_network(Network::Mainnet);
     c.bench_function("connect_block_realistic_100tx", |b| {
         b.iter(|| {
             let _result = connect_block(
@@ -86,8 +87,7 @@ fn benchmark_connect_block_realistic(c: &mut Criterion) {
                 black_box(&witnesses),
                 black_box(utxo_set.clone()),
                 black_box(0),
-                black_box(None),
-                black_box(Network::Mainnet),
+                &ctx,
             );
             // Note: May fail validation due to invalid UTXOs, but measures actual validation work
         })
@@ -99,6 +99,7 @@ fn benchmark_connect_block_realistic_1000tx(c: &mut Criterion) {
     let utxo_set = UtxoSet::default();
     let witnesses: Vec<Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
 
+    let ctx = block::BlockValidationContext::for_network(Network::Mainnet);
     c.bench_function("connect_block_realistic_1000tx", |b| {
         b.iter(|| {
             let _result = connect_block(
@@ -106,8 +107,7 @@ fn benchmark_connect_block_realistic_1000tx(c: &mut Criterion) {
                 black_box(&witnesses),
                 black_box(utxo_set.clone()),
                 black_box(0),
-                black_box(None),
-                black_box(Network::Mainnet),
+                &ctx,
             );
             // Note: May fail validation due to invalid UTXOs, but measures actual validation work
         })

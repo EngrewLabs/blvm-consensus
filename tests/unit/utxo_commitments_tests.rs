@@ -1,9 +1,9 @@
-//! Unit tests for UTXO commitments module
+//! Unit tests for UTXO commitments module (implementation in blvm-protocol)
 
 #[cfg(feature = "utxo-commitments")]
 mod tests {
     use blvm_consensus::types::{OutPoint, UTXO, Hash, Natural};
-    use blvm_consensus::utxo_commitments::*;
+    use blvm_protocol::utxo_commitments::*;
     use blvm_consensus::economic::total_supply;
 
     #[test]
@@ -24,6 +24,7 @@ mod tests {
             value: 1000,
             script_pubkey: vec![0x51].into(), // OP_1
             height: 0,
+            is_coinbase: false,
         };
         
         let root = tree.insert(outpoint.clone(), utxo.clone()).unwrap();
@@ -45,6 +46,7 @@ mod tests {
             value: 1000,
             script_pubkey: vec![].into(),
             height: 0,
+            is_coinbase: false,
         };
         
         // Insert then remove
@@ -94,6 +96,7 @@ mod tests {
             value: 5000000000, // 50 BTC (genesis subsidy)
             script_pubkey: vec![].into(),
             height: 0,
+            is_coinbase: false,
         };
         
         tree.insert(outpoint, utxo).unwrap();
@@ -197,8 +200,8 @@ mod tests {
     #[test]
     fn test_verifyconsensuscommitment_orange_paper_genesis() {
         use blvm_consensus::constants::{GENESIS_BLOCK_HASH, GENESIS_BLOCK_MERKLE_ROOT, GENESIS_BLOCK_NONCE, GENESIS_BLOCK_TIMESTAMP};
-        use blvm_consensus::orange_paper_property_helpers::expected_verifyconsensuscommitment_from_orange_paper_impl;
         use blvm_consensus::types::BlockHeader;
+        use blvm_protocol::utxo_commitments::verification::{verify_commitment_block_hash, verify_header_chain, verify_supply};
 
         // Genesis block header (valid PoW)
         let genesis_header = BlockHeader {
@@ -219,17 +222,17 @@ mod tests {
             GENESIS_BLOCK_HASH,
         );
 
-        let result = expected_verifyconsensuscommitment_from_orange_paper_impl(
-            &valid_commitment,
-            &[genesis_header.clone()],
-        );
+        let result = (verify_supply(&valid_commitment).is_ok()
+            && verify_header_chain(&[genesis_header.clone()]).is_ok()
+            && verify_commitment_block_hash(&valid_commitment, &genesis_header).is_ok())
+            as i64;
         assert_eq!(result, 1, "Valid genesis commitment should return 1");
     }
 
     #[test]
     fn test_verifyconsensuscommitment_orange_paper_invalid_cases() {
-        use blvm_consensus::orange_paper_property_helpers::expected_verifyconsensuscommitment_from_orange_paper_impl;
         use blvm_consensus::types::BlockHeader;
+        use blvm_protocol::utxo_commitments::verification::{verify_commitment_block_hash, verify_header_chain, verify_supply};
 
         let header = BlockHeader {
             version: 1,
@@ -242,24 +245,16 @@ mod tests {
 
         // Empty headers -> 0
         let commitment = UtxoCommitment::new([0; 32], 5000000000, 1, 0, [0; 32]);
-        assert_eq!(
-            expected_verifyconsensuscommitment_from_orange_paper_impl(&commitment, &[]),
-            0
-        );
+        assert!(verify_header_chain(&[]).is_err());
 
         // Wrong supply -> 0
         let bad_supply = UtxoCommitment::new([0; 32], 999, 1, 0, [0; 32]);
-        assert_eq!(
-            expected_verifyconsensuscommitment_from_orange_paper_impl(&bad_supply, &[header.clone()]),
-            0
-        );
+        assert!(verify_supply(&bad_supply).is_err());
 
-        // Height out of bounds -> 0
+        // Height out of bounds: commitment says height 5 but we only have 1 header (height 0)
         let height_oob = UtxoCommitment::new([0; 32], 5000000000, 1, 5, [0; 32]);
-        assert_eq!(
-            expected_verifyconsensuscommitment_from_orange_paper_impl(&height_oob, &[header]),
-            0
-        );
+        assert!(verify_supply(&height_oob).is_ok()); // supply at h=5 is valid
+        assert!(verify_commitment_block_hash(&height_oob, &header).is_err()); // block_hash [0;32] != hash(header)
     }
 
     #[test]

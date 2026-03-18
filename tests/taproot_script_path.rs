@@ -24,8 +24,8 @@ fn test_taproot_script_path_merkle_proof() {
     // Create merkle proof (empty for single script)
     let merkle_proof: Vec<Hash> = vec![];
 
-    // Compute merkle root for single script (no proof needed)
-    let merkle_root: Hash = [0x42; 32]; // Placeholder
+    // Arbitrary root for single-script case; real validation computes from script tree.
+    let merkle_root: Hash = [0x42; 32];
 
     // Validate script path
     let result = validate_taproot_script_path(&script, &merkle_proof, &merkle_root);

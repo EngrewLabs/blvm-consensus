@@ -9,11 +9,7 @@ mod production_integration_tests;
 #[cfg(feature = "production")]
 mod blvm_integration_tests;
 
-// UTXO commitments integration tests (only compiled with utxo-commitments feature)
-#[cfg(feature = "utxo-commitments")]
-mod utxo_commitments_integration;
-#[cfg(feature = "utxo-commitments")]
-mod utxo_proof_verification_tests;
+// UTXO commitments integration tests moved to blvm-protocol
 
 // Reference test vector integration (read-only, safe)
 mod core_test_vectors;

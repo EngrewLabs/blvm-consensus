@@ -12,8 +12,8 @@
 //! Run with: cargo bench --bench performance_focused --features production
 
 use blvm_consensus::{
-    block::connect_block, segwit::Witness, types::Network, Block, BlockHeader, OutPoint,
-    Transaction, TransactionInput, TransactionOutput, UtxoSet, UTXO,
+    block::{connect_block, BlockValidationContext}, segwit::Witness, types::Network, Block,
+    BlockHeader, OutPoint, Transaction, TransactionInput, TransactionOutput, UtxoSet, UTXO,
 };
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 
@@ -206,6 +206,7 @@ fn bench_block_validation(c: &mut Criterion) {
     let block_10 = create_realistic_block(10);
     let witnesses_10: Vec<Witness> = block_10.transactions.iter().map(|_| Vec::new()).collect();
 
+    let ctx = block::BlockValidationContext::for_network(Network::Mainnet);
     group.bench_function("10_txs", |b| {
         b.iter(|| {
             let utxo_set = UtxoSet::default();
@@ -214,8 +215,7 @@ fn bench_block_validation(c: &mut Criterion) {
                 black_box(&witnesses_10),
                 black_box(utxo_set),
                 black_box(0),
-                black_box(None),
-                black_box(Network::Mainnet),
+                &ctx,
             );
         })
     });
@@ -232,8 +232,7 @@ fn bench_block_validation(c: &mut Criterion) {
                 black_box(&witnesses_100),
                 black_box(utxo_set),
                 black_box(0),
-                black_box(None),
-                black_box(Network::Mainnet),
+                &ctx,
             );
         })
     });

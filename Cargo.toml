@@ -55,6 +55,9 @@ siphasher = { version = "0.3", optional = true }
 # raw_entry API for allocation-free sighash cache lookup (std HashMap raw_entry requires 1.81+)
 hashbrown = { version = "0.14", optional = true }
 
+# Foundational types, serialization, crypto, config (shared with blvm-protocol)
+blvm-primitives = { path = "../blvm-primitives", default-features = false }
+
 # Spec-lock for mathematical verification
 # LOCAL: Uses path (blvm-spec-lock in monorepo)
 # CI: setup-spec-lock.sh clones to ../blvm-spec-lock before build - path works in both contexts
@@ -64,6 +67,8 @@ blvm-spec-lock = { path = "../blvm-spec-lock", default-features = false }
 
 
 [dev-dependencies]
+blvm-muhash = { path = "../blvm-muhash" }
+blvm-protocol = { path = "../blvm-protocol", features = ["utxo-commitments"] }
 # Formal verification tools - EXACT VERSIONS for reproducibility
 proptest = "=1.5.0"
 # Fuzzing framework for better test coverage ergonomics
@@ -92,7 +97,7 @@ local-spec-lock = []
 # Production performance optimizations
 # This feature enables runtime optimizations like caching and context reuse
 # blvm-secp256k1: pure Rust crypto backend (ECDSA, Schnorr, Taproot) — default for profile/production
-production = ["lru", "rayon", "smallvec", "rustc-hash", "hashbrown", "crossbeam-queue", "siphasher", "blvm-secp256k1"]
+production = ["lru", "rayon", "smallvec", "rustc-hash", "hashbrown", "crossbeam-queue", "siphasher", "blvm-secp256k1", "blvm-primitives/production"]
 
 # Enable rayon for parallelization (optional, can be enabled independently)
 rayon = ["dep:rayon"]
@@ -101,9 +106,8 @@ rayon = ["dep:rayon"]
 # Enables cache clearing and state reset functions for reproducible benchmarks
 benchmarking = []
 
-# UTXO commitments module
-# Enables UTXO set commitments and peer consensus sync
-utxo-commitments = ["sparse-merkle-tree", "dep:rand"]
+# UTXO commitments (implementation in blvm-protocol; tests use blvm-protocol)
+utxo-commitments = []
 # Verify UTXO proofs during initial sync (optional, for coin-freeze attack mitigation)
 utxo-proof-verification = []
 # Parallel UTXO proof verification (requires rayon)
@@ -112,6 +116,10 @@ parallel-verification = ["rayon"]
 # Property test strategies (transaction_with_witness_strategy, etc.) for spec-lock generated tests
 # Required for integration tests in tests/spec_property_tests.rs
 property-tests = []
+
+# Shared test fixtures (create_coinbase_tx, create_test_utxo_set_two_outputs).
+# Enable for integration tests that use test_utils: cargo test --features test-utils
+test-utils = []
 
 # Note: spec-lock feature removed - constants and #[spec_locked] attributes are always available
 # Property tests can use constants directly without any feature flag
@@ -207,13 +215,20 @@ codegen-units = 1
 # Note: PGO works with stable Rust 1.70+ (LLVM 15+)
 # Expected performance gain: 1.10-1.15x improvement
 
-# Fast release: opt-level 2 for iteration (~2-3x faster compile)
+# Fast release: opt-level 2 + parallel codegen for iteration (~2-3x faster compile than release)
+# Use when iterating from blvm/ or blvm-consensus: cargo build --profile release-fast
 [profile.release-fast]
 inherits = "release"
 opt-level = 2
+codegen-units = 16  # Override release's codegen-units=1 for faster iteration
 
 [profile.release-fast.package."*"]
 opt-level = 2
+
+# blvm-secp256k1: parallel codegen in release-fast (release uses 1 for max inlining)
+[profile.release-fast.package."blvm-secp256k1"]
+opt-level = 2
+codegen-units = 16
 
 # Benchmark profile (faster iteration during development)
 [profile.bench]

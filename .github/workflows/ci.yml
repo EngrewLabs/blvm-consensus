@@ -70,23 +70,7 @@ jobs:
             cd ../blvm-consensus
           fi
           
-          # Regenerate constants from Orange Paper
-          ../blvm-spec-lock/target/debug/cargo-spec-lock extract-constants \
-            --spec-path ../blvm-spec/THE_ORANGE_PAPER.md \
-            --output src/orange_paper_constants.rs || {
-            echo "⚠️  Failed to regenerate constants (Orange Paper may not be available)"
-            echo "This is expected if blvm-spec is in a separate repository"
-            exit 0  # Non-blocking - constants may already be up to date
-          }
-          
-          # Check if constants file was modified
-          if git diff --quiet src/orange_paper_constants.rs; then
-            echo "✅ Constants are up to date"
-          else
-            echo "⚠️  Constants file was modified - Orange Paper may have changed"
-            echo "Consider committing the updated constants file"
-            git diff src/orange_paper_constants.rs || true
-          fi
+          # Orange Paper constants moved to blvm-primitives; no regeneration here.
       
       - name: Cache
         id: setup-cache
@@ -377,6 +361,9 @@ jobs:
       - name: Setup blvm-spec-lock dependency
         run: bash scripts/setup-spec-lock.sh
       
+      - name: Setup blvm-spec (PROTOCOL.md + ARCHITECTURE.md for verification)
+        run: bash scripts/setup-spec.sh
+      
       - name: Cache
         run: |
           CACHE_ROOT="/tmp/runner-cache"
@@ -402,19 +389,30 @@ jobs:
         with:
           toolchain: 1.88.0
       
-      - name: Build blvm-spec-lock
+      - name: Build blvm-spec-lock (with Z3 for full contract verification)
         run: |
-          if [ ! -f "../blvm-spec-lock/target/release/cargo-spec-lock" ]; then
-            cd ../blvm-spec-lock
-            cargo build --release --bin cargo-spec-lock
-            cd ../blvm-consensus
-          fi
+          cd ../blvm-spec-lock
+          # Build with Z3 so get_block_subsidy and other contracts get full verification
+          # Requires: libz3-dev libclang-dev (apt) or z3 llvm llvm-libs clang (pacman)
+          cargo build --release --features z3 --bin cargo-spec-lock
+          cd ../blvm-consensus
           echo "✅ cargo-spec-lock ready"
       
       - name: Run blvm-spec-lock verify
         run: |
           echo "🔒 Running blvm-spec-lock verification..."
-          ../blvm-spec-lock/target/release/cargo-spec-lock verify --crate-path . 2>&1 | tee spec_lock_output.txt
+          SPEC_ARGS="--crate-path ."
+          if [ -f "../blvm-spec/PROTOCOL.md" ] && [ -f "../blvm-spec/ARCHITECTURE.md" ]; then
+            SPEC_ARGS="$SPEC_ARGS --spec-path ../blvm-spec/PROTOCOL.md ../blvm-spec/ARCHITECTURE.md"
+            echo "Using PROTOCOL.md + ARCHITECTURE.md for spec-derived contracts"
+          elif [ -f "../blvm-spec/THE_ORANGE_PAPER.md" ]; then
+            SPEC_ARGS="$SPEC_ARGS --spec-path ../blvm-spec/THE_ORANGE_PAPER.md"
+            echo "Using THE_ORANGE_PAPER.md for spec-derived contracts (fallback)"
+          else
+            echo "❌ No spec found at ../blvm-spec (PROTOCOL.md, ARCHITECTURE.md, or THE_ORANGE_PAPER.md). setup-spec.sh should have cloned blvm-spec."
+            exit 1
+          fi
+          ../blvm-spec-lock/target/release/cargo-spec-lock verify --strict $SPEC_ARGS 2>&1 | tee spec_lock_output.txt
           EXIT_CODE=${PIPESTATUS[0]}
           if [ $EXIT_CODE -ne 0 ]; then
             echo "❌ blvm-spec-lock verification failed"
@@ -475,6 +473,9 @@ jobs:
     name: Build
     needs: [setup, test, clippy, fmt, docs, security, verify]
     runs-on: [self-hosted, Linux, X64, builds]
+    env:
+      # Use release-fast for PRs, branches — full release only for push to main
+      BLVM_FAST_BUILD: ${{ ((github.event_name != 'push' || github.ref != 'refs/heads/main') && (github.event_name != 'release')) && '1' || '' }}
     if: |
       always() &&
       needs.setup.result == 'success' &&
@@ -527,7 +528,10 @@ jobs:
           toolchain: 1.88.0
       
       - name: Build
-        run: cargo build --release
+        run: |
+          PROFILE_FLAG="--release"
+          [ -n "${BLVM_FAST_BUILD:-}" ] && PROFILE_FLAG="--profile release-fast"
+          cargo build $PROFILE_FLAG
       
       - name: Cache target
         if: always()

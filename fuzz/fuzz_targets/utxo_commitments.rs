@@ -4,11 +4,11 @@ use libfuzzer_sys::fuzz_target;
 fuzz_target!(|data: &[u8]| {
     #[cfg(feature = "utxo-commitments")]
     {
-        use consensus_proof::utxo_commitments::data_structures::UtxoCommitment;
-        use consensus_proof::utxo_commitments::verification::{
+        use blvm_protocol::utxo_commitments::data_structures::UtxoCommitment;
+        use blvm_protocol::utxo_commitments::verification::{
             verify_commitment_block_hash, verify_header_chain, verify_supply,
         };
-        use consensus_proof::{BlockHeader, Hash, Natural};
+        use blvm_consensus::{types::BlockHeader, types::Hash, types::Natural};
 
         // Fuzz UTXO commitment verification: merkle tree construction, commitment verification
 
@@ -92,11 +92,11 @@ fuzz_target!(|data: &[u8]| {
 
         // Test commitment block hash verification
         let commitment = UtxoCommitment {
+            merkle_root: [0u8; 32],
+            total_supply: 50_0000_0000 * 100,
+            utxo_count: 0,
             block_height: 100,
             block_hash: [0u8; 32], // Will likely fail verification, but should handle gracefully
-            total_supply: 50_0000_0000 * 100,
-            merkle_root: [0u8; 32],
-            commitment_hash: [0u8; 32],
         };
 
         let _hash_result = verify_commitment_block_hash(&commitment, &header);

@@ -253,7 +253,7 @@ pub mod simd_vectorization {
     /// Chunk size for cache-friendly processing. Hardware-derived via ibd_tuning.
     #[inline]
     fn chunk_size() -> usize {
-        crate::ibd_tuning::hash_batch_chunk_size()
+        blvm_primitives::ibd_tuning::hash_batch_chunk_size()
     }
 
     /// Batch SHA256: Compute SHA256 for multiple independent inputs

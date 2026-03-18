@@ -13,6 +13,16 @@
 //! - Stack pooling (thread-local pool of pre-allocated Vec<StackElement>)
 //! - Memory allocation optimizations
 
+mod arithmetic;
+mod context;
+mod control_flow;
+mod crypto_ops;
+mod signature;
+mod stack;
+
+pub use signature::{batch_verify_signatures, verify_pre_extracted_ecdsa};
+pub use stack::{cast_to_bool, StackElement, to_stack_element};
+
 use crate::constants::*;
 use crate::crypto::OptimizedSha256;
 use crate::error::{ConsensusError, Result, ScriptErrorCode};
@@ -23,8 +33,8 @@ use crate::types::*;
 use blvm_spec_lock::spec_locked;
 use digest::Digest;
 use ripemd::Ripemd160;
-use secp256k1::{ecdsa::Signature, Context, Message, PublicKey, Secp256k1, Verification};
-use sha1::Sha1;
+#[cfg(any(not(feature = "production"), test))]
+use secp256k1::Secp256k1;
 
 // LLVM-like optimizations
 #[cfg(feature = "production")]
@@ -49,24 +59,6 @@ fn make_stack_overflow_error() -> ConsensusError {
 }
 
 #[cfg(feature = "production")]
-use smallvec::SmallVec;
-
-/// Stack element: inline up to 80 bytes when production (sigs, pubkeys, hashes), else Vec<u8>.
-#[cfg(feature = "production")]
-pub type StackElement = SmallVec<[u8; 80]>;
-#[cfg(not(feature = "production"))]
-pub type StackElement = ByteString;
-
-/// Convert bytes to StackElement (for tests and callers needing explicit conversion).
-#[inline]
-pub fn to_stack_element(data: &[u8]) -> StackElement {
-    #[cfg(feature = "production")]
-    return SmallVec::from_slice(data);
-    #[cfg(not(feature = "production"))]
-    return data.to_vec();
-}
-
-#[cfg(feature = "production")]
 use std::collections::VecDeque;
 #[cfg(feature = "production")]
 use std::sync::{
@@ -75,17 +67,6 @@ use std::sync::{
 };
 #[cfg(feature = "production")]
 use std::thread_local;
-
-/// Thread-local Secp256k1 context for signature verification
-/// Reference: Orange Paper Section 13.1 - Performance Considerations
-///
-/// Secp256k1 context is stateless and thread-safe for verification-only operations.
-/// Reusing a single context avoids the overhead of creating new contexts on every
-/// signature verification (major performance bottleneck identified in analysis).
-#[cfg(feature = "production")]
-thread_local! {
-    static SECP256K1_CONTEXT: Secp256k1<secp256k1::All> = Secp256k1::new();
-}
 
 /// Script verification result cache (production feature only)
 ///
@@ -352,27 +333,6 @@ fn return_pooled_stack(mut stack: Vec<StackElement>) {
     });
 }
 
-/// Hash operation result cache (production feature only)
-///
-/// Thread-local (like SIGHASH_CACHE) to avoid RwLock contention across script-check workers.
-/// Caches hash operation results (OP_HASH160, OP_HASH256) to avoid recomputing identical hashes.
-#[cfg(feature = "production")]
-thread_local! {
-    static HASH_CACHE: std::cell::RefCell<lru::LruCache<[u8; 32], Vec<u8>>> = std::cell::RefCell::new({
-        use lru::LruCache;
-        use std::num::NonZeroUsize;
-        LruCache::new(NonZeroUsize::new(25_000).unwrap())
-    });
-}
-
-#[cfg(feature = "production")]
-fn with_hash_cache<F, R>(f: F) -> R
-where
-    F: FnOnce(&mut lru::LruCache<[u8; 32], Vec<u8>>) -> R,
-{
-    HASH_CACHE.with(|cell| f(&mut cell.borrow_mut()))
-}
-
 /// Flag to disable caching for benchmarking (production feature only)
 ///
 /// When set to true, caches are bypassed entirely, allowing reproducible benchmarks
@@ -428,21 +388,6 @@ fn compute_script_cache_key(
     }
     flags.hash(&mut hasher);
     hasher.finish()
-}
-
-/// Compute cache key for hash operation (input + operation type -> output)
-///
-/// Includes operation type (HASH160 vs HASH256) to distinguish different hash outputs
-/// for the same input.
-#[cfg(feature = "production")]
-fn compute_hash_cache_key(input: &[u8], op_hash160: bool) -> [u8; 32] {
-    // Use SHA256 of input + operation type as cache key
-    let mut data = input.to_vec();
-    data.push(if op_hash160 { OP_HASH160 } else { OP_HASH256 }); // OP_HASH160 or OP_HASH256
-    let hash = OptimizedSha256::new().hash(&data);
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&hash);
-    key
 }
 
 /// Script version for policy/consensus behavior (BIP141/BIP341 SigVersion)
@@ -515,60 +460,10 @@ fn eval_script_impl(
     eval_script_inner(script, stack, flags, sigversion)
 }
 
-/// CastToBool: truthiness check for stack elements (BIP62/consensus).
-/// Returns true if ANY byte is non-zero, except for "negative zero" (0x80 in last byte, rest zeros).
-#[cfg(feature = "production")]
-#[inline(always)]
-fn cast_to_bool(v: &[u8]) -> bool {
-    for i in 0..v.len() {
-        if v[i] != 0 {
-            // Negative zero: all zeros except 0x80 in the last byte
-            if i == v.len() - 1 && v[i] == 0x80 {
-                return false;
-            }
-            return true;
-        }
-    }
-    false
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ControlBlock {
-    If { executing: bool },
-    NotIf { executing: bool },
-}
-
-#[cfg(feature = "production")]
+/// Push opcodes: any opcode <= OP_16 (0x60). Used by both production and non-production paths.
 #[inline(always)]
 fn is_push_opcode(opcode: u8) -> bool {
-    // Push opcodes: any opcode <= OP_16 (0x60) is considered a push opcode.
-    // IsPushOnly / op count logic: opcodes <= OP_16 (0x60) are push, don't count toward limit.
-    // Includes: OP_0 (0x00), direct pushes (0x01-0x4b), OP_PUSHDATA1-4 (0x4c-0x4e),
-    // OP_1NEGATE (0x4f), OP_RESERVED (0x50), OP_1-OP_16 (0x51-0x60).
     opcode <= 0x60
-}
-
-#[cfg(not(feature = "production"))]
-#[inline(always)]
-fn is_push_opcode(opcode: u8) -> bool {
-    // Push opcodes: any opcode <= OP_16 (0x60) is considered a push opcode.
-    // IsPushOnly / op count logic: opcodes <= OP_16 (0x60) are push, don't count toward limit.
-    // Includes: OP_0 (0x00), direct pushes (0x01-0x4b), OP_PUSHDATA1-4 (0x4c-0x4e),
-    // OP_1NEGATE (0x4f), OP_RESERVED (0x50), OP_1-OP_16 (0x51-0x60).
-    opcode <= 0x60
-}
-
-// Minimal IF/NOTIF condition encoding (MINIMALIF)
-fn is_minimal_if_condition(bytes: &[u8]) -> bool {
-    match bytes.len() {
-        0 => true, // empty = minimal false
-        1 => {
-            let b = bytes[0];
-            // minimal false/true encodings: 0, 1..16, or OP_1..OP_16
-            b == 0 || (1..=16).contains(&b) || (OP_1..=OP_16).contains(&b)
-        }
-        _ => false,
-    }
 }
 
 fn eval_script_inner(
@@ -588,34 +483,13 @@ fn eval_script_inner(
     }
 
     let mut op_count = 0;
-    let mut control_stack: Vec<ControlBlock> = Vec::new();
+    let mut control_stack: Vec<control_flow::ControlBlock> = Vec::new();
     let mut altstack: Vec<StackElement> = Vec::new();
 
     for opcode in script {
         let opcode = *opcode;
 
-        // Check if we are in a non-executing branch
-        #[cfg(feature = "production")]
-        let in_false_branch = {
-            let mut in_false = false;
-            for block in &control_stack {
-                if !matches!(
-                    block,
-                    ControlBlock::If { executing: true } | ControlBlock::NotIf { executing: true }
-                ) {
-                    in_false = true;
-                    break; // Early exit
-                }
-            }
-            in_false
-        };
-        #[cfg(not(feature = "production"))]
-        let in_false_branch = control_stack.iter().any(|b| {
-            !matches!(
-                b,
-                ControlBlock::If { executing: true } | ControlBlock::NotIf { executing: true }
-            )
-        });
+        let in_false_branch = control_flow::in_false_branch(&control_stack);
 
         // Count non-push opcodes toward op limit, regardless of branch
         if !is_push_opcode(opcode) {
@@ -639,7 +513,7 @@ fn eval_script_inner(
             // OP_IF
             OP_IF => {
                 if in_false_branch {
-                    control_stack.push(ControlBlock::If { executing: false });
+                    control_stack.push(control_flow::ControlBlock::If { executing: false });
                     continue;
                 }
 
@@ -656,7 +530,7 @@ fn eval_script_inner(
                 const SCRIPT_VERIFY_MINIMALIF: u32 = 0x2000;
                 if (flags & SCRIPT_VERIFY_MINIMALIF) != 0
                     && (sigversion == SigVersion::WitnessV0 || sigversion == SigVersion::Tapscript)
-                    && !is_minimal_if_condition(&condition_bytes)
+                    && !control_flow::is_minimal_if_condition(&condition_bytes)
                 {
                     return Err(ConsensusError::ScriptErrorWithCode {
                         code: ScriptErrorCode::MinimalIf,
@@ -664,14 +538,14 @@ fn eval_script_inner(
                     });
                 }
 
-                control_stack.push(ControlBlock::If {
+                control_stack.push(control_flow::ControlBlock::If {
                     executing: condition,
                 });
             }
             // OP_NOTIF
             OP_NOTIF => {
                 if in_false_branch {
-                    control_stack.push(ControlBlock::NotIf { executing: false });
+                    control_stack.push(control_flow::ControlBlock::NotIf { executing: false });
                     continue;
                 }
 
@@ -687,7 +561,7 @@ fn eval_script_inner(
                 const SCRIPT_VERIFY_MINIMALIF: u32 = 0x2000;
                 if (flags & SCRIPT_VERIFY_MINIMALIF) != 0
                     && (sigversion == SigVersion::WitnessV0 || sigversion == SigVersion::Tapscript)
-                    && !is_minimal_if_condition(&condition_bytes)
+                    && !control_flow::is_minimal_if_condition(&condition_bytes)
                 {
                     return Err(ConsensusError::ScriptErrorWithCode {
                         code: ScriptErrorCode::MinimalIf,
@@ -695,7 +569,7 @@ fn eval_script_inner(
                     });
                 }
 
-                control_stack.push(ControlBlock::NotIf {
+                control_stack.push(control_flow::ControlBlock::NotIf {
                     executing: !condition,
                 });
             }
@@ -703,7 +577,7 @@ fn eval_script_inner(
             OP_ELSE => {
                 if let Some(block) = control_stack.last_mut() {
                     match block {
-                        ControlBlock::If { executing } | ControlBlock::NotIf { executing } => {
+                        control_flow::ControlBlock::If { executing } | control_flow::ControlBlock::NotIf { executing } => {
                             *executing = !*executing;
                         }
                     }
@@ -1037,8 +911,8 @@ pub fn try_verify_p2pk_fast_path(
     };
 
     let height = block_height.unwrap_or(0);
-    let is_valid = SECP256K1_CONTEXT.with(|secp| {
-        verify_signature(
+    let is_valid = signature::with_secp_context(|secp| {
+        signature::verify_signature(
             secp,
             pubkey_bytes,
             signature_bytes,
@@ -1168,13 +1042,13 @@ pub fn try_verify_p2pkh_fast_path(
     let _t_secp = std::time::Instant::now();
     let height = block_height.unwrap_or(0);
     let is_valid: Result<bool> = {
-        let assumevalid_height = get_assumevalid_height();
+        let assumevalid_height = signature::get_assumevalid_height();
         if assumevalid_height > 0 && height < assumevalid_height {
             Ok(true)
         } else {
             let der_sig = &signature_bytes[..signature_bytes.len() - 1];
             if flags & 0x04 != 0
-                && !crate::bip_validation::check_bip66(signature_bytes, height, network)
+                && !crate::bip_validation::check_bip66_network(signature_bytes, height, network)
                     .unwrap_or(false)
             {
                 Ok(false)
@@ -1300,7 +1174,7 @@ pub fn verify_p2pkh_inline(
     let enforce_low_s = flags & 0x08 != 0;
 
     if strict_der
-        && !crate::bip_validation::check_bip66(signature_bytes, height, network).unwrap_or(false)
+        && !crate::bip_validation::check_bip66_network(signature_bytes, height, network).unwrap_or(false)
     {
         return Ok(false);
     }
@@ -1377,7 +1251,7 @@ pub fn verify_p2pk_inline(
     let enforce_low_s = flags & 0x08 != 0;
 
     if strict_der
-        && !crate::bip_validation::check_bip66(signature_bytes, height, network).unwrap_or(false)
+        && !crate::bip_validation::check_bip66_network(signature_bytes, height, network).unwrap_or(false)
     {
         return Ok(false);
     }
@@ -1497,8 +1371,8 @@ fn try_verify_p2sh_multisig_fast_path(
         };
 
         #[cfg(feature = "production")]
-        let is_valid = SECP256K1_CONTEXT.with(|secp| {
-            verify_signature(
+        let is_valid = signature::with_secp_context(|secp| {
+            signature::verify_signature(
                 secp,
                 pubkey_bytes,
                 signature_bytes,
@@ -1513,7 +1387,7 @@ fn try_verify_p2sh_multisig_fast_path(
         #[cfg(not(feature = "production"))]
         let is_valid = {
             let secp = Secp256k1::new();
-            verify_signature(
+            signature::verify_signature(
                 &secp,
                 pubkey_bytes,
                 signature_bytes,
@@ -1630,8 +1504,8 @@ fn try_verify_bare_multisig_fast_path(
         };
 
         #[cfg(feature = "production")]
-        let is_valid = SECP256K1_CONTEXT.with(|secp| {
-            verify_signature(
+        let is_valid = signature::with_secp_context(|secp| {
+            signature::verify_signature(
                 secp,
                 pubkey_bytes,
                 signature_bytes,
@@ -1646,7 +1520,7 @@ fn try_verify_bare_multisig_fast_path(
         #[cfg(not(feature = "production"))]
         let is_valid = {
             let secp = Secp256k1::new();
-            verify_signature(
+            signature::verify_signature(
                 &secp,
                 pubkey_bytes,
                 signature_bytes,
@@ -1814,8 +1688,8 @@ fn try_verify_p2sh_fast_path(
                     }
                 };
                 let height = block_height.unwrap_or(0);
-                let is_valid = SECP256K1_CONTEXT.with(|secp| {
-                    verify_signature(
+                let is_valid = signature::with_secp_context(|secp| {
+                    signature::verify_signature(
                         secp,
                         pubkey_bytes,
                         signature_bytes,
@@ -1867,8 +1741,8 @@ fn try_verify_p2sh_fast_path(
                 ) {
                     Ok(sighash) => {
                         let height = block_height.unwrap_or(0);
-                        let is_valid = SECP256K1_CONTEXT.with(|secp| {
-                            verify_signature(
+                        let is_valid = signature::with_secp_context(|secp| {
+                            signature::verify_signature(
                                 secp,
                                 pubkey_bytes,
                                 signature_bytes,
@@ -2008,8 +1882,8 @@ fn try_verify_p2wpkh_fast_path(
     };
 
     let height = block_height.unwrap_or(0);
-    let is_valid = SECP256K1_CONTEXT.with(|secp| {
-        verify_signature(
+    let is_valid = signature::with_secp_context(|secp| {
+        signature::verify_signature(
             secp,
             pubkey_bytes,
             signature_bytes,
@@ -2096,8 +1970,8 @@ fn try_verify_p2wpkh_in_p2sh_fast_path(
     };
 
     let height = block_height.unwrap_or(0);
-    let is_valid = SECP256K1_CONTEXT.with(|secp| {
-        verify_signature(
+    let is_valid = signature::with_secp_context(|secp| {
+        signature::verify_signature(
             secp,
             pubkey_bytes,
             signature_bytes,
@@ -2194,8 +2068,8 @@ fn try_verify_p2wsh_fast_path(
                 ) {
                     Ok(sighash) => {
                         let height = block_height.unwrap_or(0);
-                        let is_valid = SECP256K1_CONTEXT.with(|secp| {
-                            verify_signature(
+                        let is_valid = signature::with_secp_context(|secp| {
+                            signature::verify_signature(
                                 secp,
                                 pubkey_bytes,
                                 signature_bytes,
@@ -2237,8 +2111,8 @@ fn try_verify_p2wsh_fast_path(
             ) {
                 Ok(sighash) => {
                     let height = block_height.unwrap_or(0);
-                    let is_valid = SECP256K1_CONTEXT.with(|secp| {
-                        verify_signature(
+                    let is_valid = signature::with_secp_context(|secp| {
+                        signature::verify_signature(
                             secp,
                             pubkey_bytes,
                             signature_bytes,
@@ -2312,8 +2186,8 @@ fn try_verify_p2wsh_fast_path(
                     precomputed_bip143,
                 ) {
                     Ok(sighash) => {
-                        let is_valid = SECP256K1_CONTEXT.with(|secp| {
-                            verify_signature(
+                        let is_valid = signature::with_secp_context(|secp| {
+                            signature::verify_signature(
                                 secp,
                                 pubkey_bytes,
                                 signature_bytes,
@@ -2499,6 +2373,7 @@ fn try_verify_p2tr_keypath_fast_path(
     Some(result)
 }
 
+#[spec_locked("5.2")]
 pub fn verify_script_with_context_full(
     script_sig: &ByteString,
     script_pubkey: &[u8],
@@ -3381,9 +3256,9 @@ fn eval_script_with_context_full_inner(
 
     // Pre-allocate control_stack and altstack to avoid realloc in hot path
     #[cfg(feature = "production")]
-    let mut control_stack: Vec<ControlBlock> = Vec::with_capacity(4);
+    let mut control_stack: Vec<control_flow::ControlBlock> = Vec::with_capacity(4);
     #[cfg(not(feature = "production"))]
-    let mut control_stack: Vec<ControlBlock> = Vec::new();
+    let mut control_stack: Vec<control_flow::ControlBlock> = Vec::new();
     // Invariant assertion: Control stack must start empty
     assert!(control_stack.is_empty(), "Control stack must start empty");
 
@@ -3418,42 +3293,8 @@ fn eval_script_with_context_full_inner(
             }
         };
 
-        // OPTIMIZATION: Cache in_false_branch state - only recompute when control stack changes
-        // Early exit optimization for empty control stack
-        #[cfg(feature = "production")]
-        let in_false_branch = {
-            // Early exit: if control_stack is empty, we're always executing
-            if control_stack.is_empty() {
-                false
-            } else {
-                let mut in_false = false;
-                for block in &control_stack {
-                    if !matches!(
-                        block,
-                        ControlBlock::If { executing: true }
-                            | ControlBlock::NotIf { executing: true }
-                    ) {
-                        in_false = true;
-                        break; // Early exit
-                    }
-                }
-                in_false
-            }
-        };
-        #[cfg(not(feature = "production"))]
-        let in_false_branch = {
-            if control_stack.is_empty() {
-                false
-            } else {
-                control_stack.iter().any(|b| {
-                    !matches!(
-                        b,
-                        ControlBlock::If { executing: true }
-                            | ControlBlock::NotIf { executing: true }
-                    )
-                })
-            }
-        };
+        // Cache in_false_branch state - only recompute when control stack changes
+        let in_false_branch = control_flow::in_false_branch(&control_stack);
 
         // Count non-push opcodes toward op limit
         if !is_push_opcode(opcode) {
@@ -3504,6 +3345,7 @@ fn eval_script_with_context_full_inner(
                 (&script[i + 3..i + 3 + len], 3 + len)
             } else {
                 // OP_PUSHDATA4: next 4 bytes (little-endian) are length
+                // Use saturating arithmetic to avoid overflow on 32-bit platforms
                 if i + 4 >= script.len() {
                     return Ok(false);
                 }
@@ -3513,10 +3355,13 @@ fn eval_script_with_context_full_inner(
                     script[i + 3],
                     script[i + 4],
                 ]) as usize;
-                if i + 5 + len > script.len() {
-                    return Ok(false);
+                let data_start = i.saturating_add(5);
+                let data_end = data_start.saturating_add(len);
+                let advance = 5usize.saturating_add(len);
+                if advance < 5 || data_end > script.len() || data_end < data_start {
+                    return Ok(false); // Overflow or out-of-bounds
                 }
-                (&script[i + 5..i + 5 + len], 5 + len)
+                (&script[data_start..data_end], advance)
             };
 
             // Only push data if not in a non-executing branch
@@ -3584,46 +3429,8 @@ fn eval_script_with_context_full_inner(
 
         // OP_HASH160 - RIPEMD160(SHA256(x)) (VERY HOT - every P2PKH script)
         if opcode == OP_HASH160 {
-            if !in_false_branch {
-                if let Some(item) = stack.pop() {
-                    #[cfg(feature = "production")]
-                    {
-                        // Fast path: pubkeys (33 or 65 bytes) never repeat in a block — skip cache to
-                        // avoid alloc (compute_hash_cache_key), read lock, and write lock contention
-                        if item.len() == 33 || item.len() == 65 {
-                            let sha256_hash = OptimizedSha256::new().hash(&item);
-                            let ripemd160_hash = Ripemd160::digest(sha256_hash);
-                            stack.push(to_stack_element(&ripemd160_hash));
-                        } else if !is_caching_disabled() {
-                            let cache_key = compute_hash_cache_key(&item, true);
-                            if let Some(cached_result) =
-                                with_hash_cache(|c| c.peek(&cache_key).cloned())
-                            {
-                                stack.push(to_stack_element(&cached_result));
-                                i += 1;
-                                continue;
-                            }
-                            let sha256_hash = OptimizedSha256::new().hash(&item);
-                            let ripemd160_hash = Ripemd160::digest(sha256_hash);
-                            let mut hash_vec = Vec::with_capacity(20);
-                            hash_vec.extend_from_slice(&ripemd160_hash);
-                            with_hash_cache(|c| c.put(cache_key, hash_vec.clone()));
-                            stack.push(to_stack_element(&hash_vec));
-                        } else {
-                            let sha256_hash = OptimizedSha256::new().hash(&item);
-                            let ripemd160_hash = Ripemd160::digest(sha256_hash);
-                            stack.push(to_stack_element(&ripemd160_hash));
-                        }
-                    }
-                    #[cfg(not(feature = "production"))]
-                    {
-                        let sha256_hash = OptimizedSha256::new().hash(&item);
-                        let ripemd160_hash = Ripemd160::digest(sha256_hash);
-                        stack.push(to_stack_element(&ripemd160_hash));
-                    }
-                } else {
-                    return Ok(false);
-                }
+            if !in_false_branch && !crypto_ops::op_hash160(stack)? {
+                return Ok(false);
             }
             i += 1;
             continue;
@@ -3674,10 +3481,7 @@ fn eval_script_with_context_full_inner(
                 } else {
                     (None, None)
                 };
-                if !execute_opcode_with_context_full(
-                    opcode,
-                    stack,
-                    flags,
+                let ctx = context::ScriptContext {
                     tx,
                     input_index,
                     prevout_values,
@@ -3686,16 +3490,23 @@ fn eval_script_with_context_full_inner(
                     median_time_past,
                     network,
                     sigversion,
-                    effective_script_code,
+                    redeem_script_for_sighash,
                     script_sig_for_sighash,
-                    tapscript,
-                    codesep,
+                    tapscript_for_sighash: tapscript,
+                    tapscript_codesep_pos: codesep,
                     #[cfg(feature = "production")]
                     schnorr_collector,
                     #[cfg(feature = "production")]
                     precomputed_bip143,
                     #[cfg(feature = "production")]
                     sighash_cache,
+                };
+                if !execute_opcode_with_context_full(
+                    opcode,
+                    stack,
+                    flags,
+                    &ctx,
+                    effective_script_code,
                 )? {
                     return Ok(false);
                 }
@@ -3748,7 +3559,7 @@ fn eval_script_with_context_full_inner(
             OP_IF => {
                 // OP_IF
                 if in_false_branch {
-                    control_stack.push(ControlBlock::If { executing: false });
+                    control_stack.push(control_flow::ControlBlock::If { executing: false });
                     i += 1;
                     continue;
                 }
@@ -3765,7 +3576,7 @@ fn eval_script_with_context_full_inner(
                 const SCRIPT_VERIFY_MINIMALIF: u32 = 0x2000;
                 if (flags & SCRIPT_VERIFY_MINIMALIF) != 0
                     && (sigversion == SigVersion::WitnessV0 || sigversion == SigVersion::Tapscript)
-                    && !is_minimal_if_condition(&condition_bytes)
+                    && !control_flow::is_minimal_if_condition(&condition_bytes)
                 {
                     return Err(ConsensusError::ScriptErrorWithCode {
                         code: ScriptErrorCode::MinimalIf,
@@ -3773,14 +3584,14 @@ fn eval_script_with_context_full_inner(
                     });
                 }
 
-                control_stack.push(ControlBlock::If {
+                control_stack.push(control_flow::ControlBlock::If {
                     executing: condition,
                 });
             }
             OP_NOTIF => {
                 // OP_NOTIF
                 if in_false_branch {
-                    control_stack.push(ControlBlock::NotIf { executing: false });
+                    control_stack.push(control_flow::ControlBlock::NotIf { executing: false });
                     i += 1;
                     continue;
                 }
@@ -3797,7 +3608,7 @@ fn eval_script_with_context_full_inner(
                 const SCRIPT_VERIFY_MINIMALIF: u32 = 0x2000;
                 if (flags & SCRIPT_VERIFY_MINIMALIF) != 0
                     && (sigversion == SigVersion::WitnessV0 || sigversion == SigVersion::Tapscript)
-                    && !is_minimal_if_condition(&condition_bytes)
+                    && !control_flow::is_minimal_if_condition(&condition_bytes)
                 {
                     return Err(ConsensusError::ScriptErrorWithCode {
                         code: ScriptErrorCode::MinimalIf,
@@ -3805,7 +3616,7 @@ fn eval_script_with_context_full_inner(
                     });
                 }
 
-                control_stack.push(ControlBlock::NotIf {
+                control_stack.push(control_flow::ControlBlock::NotIf {
                     executing: !condition,
                 });
             }
@@ -3813,7 +3624,7 @@ fn eval_script_with_context_full_inner(
                 // OP_ELSE
                 if let Some(block) = control_stack.last_mut() {
                     match block {
-                        ControlBlock::If { executing } | ControlBlock::NotIf { executing } => {
+                        control_flow::ControlBlock::If { executing } | control_flow::ControlBlock::NotIf { executing } => {
                             *executing = !*executing;
                         }
                     }
@@ -3902,10 +3713,7 @@ fn eval_script_with_context_full_inner(
                 } else {
                     (None, None)
                 };
-                if !execute_opcode_with_context_full(
-                    opcode,
-                    stack,
-                    flags,
+                let ctx = context::ScriptContext {
                     tx,
                     input_index,
                     prevout_values,
@@ -3914,16 +3722,23 @@ fn eval_script_with_context_full_inner(
                     median_time_past,
                     network,
                     sigversion,
-                    effective_script_code,
+                    redeem_script_for_sighash,
                     script_sig_for_sighash,
-                    tapscript,
-                    codesep,
+                    tapscript_for_sighash: tapscript,
+                    tapscript_codesep_pos: codesep,
                     #[cfg(feature = "production")]
                     schnorr_collector,
                     #[cfg(feature = "production")]
                     precomputed_bip143,
                     #[cfg(feature = "production")]
                     sighash_cache,
+                };
+                if !execute_opcode_with_context_full(
+                    opcode,
+                    stack,
+                    flags,
+                    &ctx,
+                    effective_script_code,
                 )? {
                     return Ok(false);
                 }
@@ -4151,153 +3966,19 @@ fn execute_opcode(
         }
 
         // OP_RIPEMD160 - RIPEMD160(x)
-        OP_RIPEMD160 => {
-            if let Some(item) = stack.pop() {
-                let hash = Ripemd160::digest(&item);
-                #[cfg(feature = "production")]
-                {
-                    // Pre-allocate Vec with known capacity (RIPEMD160 is 20 bytes)
-                    let mut hash_vec = Vec::with_capacity(20);
-                    hash_vec.extend_from_slice(&hash);
-                    stack.push(to_stack_element(&hash_vec));
-                }
-                #[cfg(not(feature = "production"))]
-                {
-                    stack.push(to_stack_element(&hash));
-                }
-                Ok(true)
-            } else {
-                Ok(false)
-            }
-        }
+        OP_RIPEMD160 => crypto_ops::op_ripemd160(stack),
 
         // OP_SHA1 - SHA1(x)
-        OP_SHA1 => {
-            if let Some(item) = stack.pop() {
-                let hash = Sha1::digest(&item);
-                #[cfg(feature = "production")]
-                {
-                    // Pre-allocate Vec with known capacity (SHA1 is 20 bytes)
-                    let mut hash_vec = Vec::with_capacity(20);
-                    hash_vec.extend_from_slice(&hash);
-                    stack.push(to_stack_element(&hash_vec));
-                }
-                #[cfg(not(feature = "production"))]
-                {
-                    stack.push(to_stack_element(&hash));
-                }
-                Ok(true)
-            } else {
-                Ok(false)
-            }
-        }
+        OP_SHA1 => crypto_ops::op_sha1(stack),
 
         // OP_SHA256 - SHA256(x)
-        OP_SHA256 => {
-            if let Some(item) = stack.pop() {
-                let hash = OptimizedSha256::new().hash(&item);
-                #[cfg(feature = "production")]
-                {
-                    // Pre-allocate Vec with known capacity (SHA256 is 32 bytes)
-                    let mut hash_vec = Vec::with_capacity(32);
-                    hash_vec.extend_from_slice(&hash);
-                    stack.push(to_stack_element(&hash_vec));
-                }
-                #[cfg(not(feature = "production"))]
-                {
-                    stack.push(to_stack_element(&hash));
-                }
-                Ok(true)
-            } else {
-                Ok(false)
-            }
-        }
+        OP_SHA256 => crypto_ops::op_sha256(stack),
 
         // OP_HASH160 - RIPEMD160(SHA256(x))
-        OP_HASH160 => {
-            if let Some(item) = stack.pop() {
-                #[cfg(feature = "production")]
-                {
-                    // Check hash cache first (unless disabled)
-                    if !is_caching_disabled() {
-                        let cache_key = compute_hash_cache_key(&item, true);
-                        if let Some(cached_result) =
-                            with_hash_cache(|c| c.peek(&cache_key).cloned())
-                        {
-                            if cached_result.len() == 20 {
-                                stack.push(to_stack_element(&cached_result));
-                                return Ok(true);
-                            }
-                        }
-                    }
-
-                    // Compute hash (cache miss or caching disabled)
-                    let sha256_hash = OptimizedSha256::new().hash(&item);
-                    let ripemd160_hash = Ripemd160::digest(sha256_hash);
-                    let result = ripemd160_hash.to_vec();
-
-                    if !is_caching_disabled() {
-                        let cache_key = compute_hash_cache_key(&item, true);
-                        with_hash_cache(|c| c.put(cache_key, result.clone()));
-                    }
-
-                    stack.push(to_stack_element(&result));
-                    Ok(true)
-                }
-
-                #[cfg(not(feature = "production"))]
-                {
-                    let sha256_hash = OptimizedSha256::new().hash(&item);
-                    let ripemd160_hash = Ripemd160::digest(sha256_hash);
-                    stack.push(to_stack_element(&ripemd160_hash));
-                    Ok(true)
-                }
-            } else {
-                Ok(false)
-            }
-        }
+        OP_HASH160 => crypto_ops::op_hash160(stack),
 
         // OP_HASH256 - SHA256(SHA256(x))
-        OP_HASH256 => {
-            if let Some(item) = stack.pop() {
-                #[cfg(feature = "production")]
-                {
-                    // Check hash cache first (unless disabled)
-                    if !is_caching_disabled() {
-                        let cache_key = compute_hash_cache_key(&item, false);
-                        if let Some(cached_result) =
-                            with_hash_cache(|c| c.peek(&cache_key).cloned())
-                        {
-                            if cached_result.len() == 32 {
-                                stack.push(to_stack_element(&cached_result));
-                                return Ok(true);
-                            }
-                        }
-                    }
-
-                    // Compute hash (cache miss or caching disabled) — OP_HASH256 = double SHA256
-                    let hasher = OptimizedSha256::new();
-                    let result = hasher.hash256(&item).to_vec();
-
-                    if !is_caching_disabled() {
-                        let cache_key = compute_hash_cache_key(&item, false);
-                        with_hash_cache(|c| c.put(cache_key, result.clone()));
-                    }
-
-                    stack.push(to_stack_element(&result));
-                    Ok(true)
-                }
-
-                #[cfg(not(feature = "production"))]
-                {
-                    let result = OptimizedSha256::new().hash256(&item);
-                    stack.push(to_stack_element(&result));
-                    Ok(true)
-                }
-            } else {
-                Ok(false)
-            }
-        }
+        OP_HASH256 => crypto_ops::op_hash256(stack),
 
         // OP_EQUAL - check if top two stack items are equal
         OP_EQUAL => {
@@ -4339,120 +4020,11 @@ fn execute_opcode(
             }
         }
 
-        // OP_CHECKSIG - verify ECDSA signature
-        OP_CHECKSIG => {
-            if stack.len() < 2 {
-                return Err(ConsensusError::ScriptErrorWithCode {
-                    code: ScriptErrorCode::InvalidStackOperation,
-                    message: "OP_CHECKSIG: insufficient stack items".into(),
-                });
-            }
-            let pubkey_bytes = stack.pop().unwrap();
-            let signature_bytes = stack.pop().unwrap();
+        // OP_CHECKSIG - verify ECDSA signature (simple path, no tx context)
+        OP_CHECKSIG => crypto_ops::op_checksig_simple(stack, flags),
 
-            // Verify signature using secp256k1 (dummy hash for legacy compatibility)
-            // Note: Without transaction context, we use height 0 and Regtest network
-            // This is only used in basic execute_opcode without transaction context
-            let dummy_hash = [0u8; 32];
-            #[cfg(feature = "production")]
-            let result = SECP256K1_CONTEXT.with(|secp| {
-                verify_signature(
-                    secp,
-                    &pubkey_bytes,
-                    &signature_bytes,
-                    &dummy_hash,
-                    flags,
-                    0,
-                    crate::types::Network::Regtest,
-                    SigVersion::Base,
-                )
-            });
-
-            #[cfg(not(feature = "production"))]
-            let result = {
-                let secp = Secp256k1::new();
-                verify_signature(
-                    &secp,
-                    &pubkey_bytes,
-                    &signature_bytes,
-                    &dummy_hash,
-                    flags,
-                    0,
-                    crate::types::Network::Regtest,
-                    SigVersion::Base,
-                )
-            };
-
-            let ok = result.unwrap_or(false);
-
-            // NULLFAIL (policy): if enabled and signature is non-empty, failing must be NULLFAIL
-            const SCRIPT_VERIFY_NULLFAIL: u32 = 0x4000;
-            if !ok && (flags & SCRIPT_VERIFY_NULLFAIL) != 0 && !signature_bytes.is_empty() {
-                return Err(ConsensusError::ScriptErrorWithCode {
-                    code: ScriptErrorCode::SigNullFail,
-                    message: "OP_CHECKSIG: non-null signature must not fail under NULLFAIL".into(),
-                });
-            }
-
-            stack.push(to_stack_element(&[if ok { 1 } else { 0 }]));
-            Ok(true)
-        }
-
-        // OP_CHECKSIGVERIFY - verify ECDSA signature and fail if invalid
-        OP_CHECKSIGVERIFY => {
-            if stack.len() < 2 {
-                return Ok(false);
-            }
-            let pubkey_bytes = stack.pop().unwrap();
-            let signature_bytes = stack.pop().unwrap();
-
-            // Verify signature using secp256k1 (dummy hash for legacy compatibility)
-            // Note: Without transaction context, we use height 0 and Regtest network
-            // This is only used in basic execute_opcode without transaction context
-            let dummy_hash = [0u8; 32];
-            #[cfg(feature = "production")]
-            let result = SECP256K1_CONTEXT.with(|secp| {
-                verify_signature(
-                    secp,
-                    &pubkey_bytes,
-                    &signature_bytes,
-                    &dummy_hash,
-                    flags,
-                    0,
-                    crate::types::Network::Regtest,
-                    SigVersion::Base,
-                )
-            });
-
-            #[cfg(not(feature = "production"))]
-            let result = {
-                let secp = Secp256k1::new();
-                verify_signature(
-                    &secp,
-                    &pubkey_bytes,
-                    &signature_bytes,
-                    &dummy_hash,
-                    flags,
-                    0,
-                    crate::types::Network::Regtest,
-                    SigVersion::Base,
-                )
-            };
-
-            let ok = result.unwrap_or(false);
-
-            // NULLFAIL (policy): if enabled and signature is non-empty, failing must be NULLFAIL
-            const SCRIPT_VERIFY_NULLFAIL: u32 = 0x4000;
-            if !ok && (flags & SCRIPT_VERIFY_NULLFAIL) != 0 && !signature_bytes.is_empty() {
-                return Err(ConsensusError::ScriptErrorWithCode {
-                    code: ScriptErrorCode::SigNullFail,
-                    message: "OP_CHECKSIGVERIFY: non-null signature must not fail under NULLFAIL"
-                        .into(),
-                });
-            }
-
-            Ok(ok)
-        }
+        // OP_CHECKSIGVERIFY - verify ECDSA signature and fail if invalid (simple path)
+        OP_CHECKSIGVERIFY => crypto_ops::op_checksigverify_simple(stack, flags),
 
         // OP_RETURN - always fail (unspendable output)
         OP_RETURN => Ok(false),
@@ -4817,209 +4389,25 @@ fn execute_opcode(
                 Ok(false)
             }
         }
-        // OP_ADD - pop a, pop b, push b+a
-        OP_ADD => {
-            if stack.len() < 2 {
-                return Ok(false);
-            }
-            let a = script_num_decode(&stack.pop().unwrap(), 4)?;
-            let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(b + a)));
-            Ok(true)
-        }
-        // OP_SUB - pop a, pop b, push b-a
-        OP_SUB => {
-            if stack.len() < 2 {
-                return Ok(false);
-            }
-            let a = script_num_decode(&stack.pop().unwrap(), 4)?;
-            let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(b - a)));
-            Ok(true)
-        }
-        // OP_MUL - DISABLED
-        OP_MUL => Err(ConsensusError::ScriptErrorWithCode {
-            code: ScriptErrorCode::DisabledOpcode,
-            message: "OP_MUL is disabled".into(),
-        }),
-        // OP_DIV - DISABLED
-        OP_DIV => Err(ConsensusError::ScriptErrorWithCode {
-            code: ScriptErrorCode::DisabledOpcode,
-            message: "OP_DIV is disabled".into(),
-        }),
-        // OP_MOD - DISABLED
-        OP_MOD => Err(ConsensusError::ScriptErrorWithCode {
-            code: ScriptErrorCode::DisabledOpcode,
-            message: "OP_MOD is disabled".into(),
-        }),
-        // OP_LSHIFT - DISABLED
-        OP_LSHIFT => Err(ConsensusError::ScriptErrorWithCode {
-            code: ScriptErrorCode::DisabledOpcode,
-            message: "OP_LSHIFT is disabled".into(),
-        }),
-        // OP_RSHIFT - DISABLED
-        OP_RSHIFT => Err(ConsensusError::ScriptErrorWithCode {
-            code: ScriptErrorCode::DisabledOpcode,
-            message: "OP_RSHIFT is disabled".into(),
-        }),
-        // OP_BOOLAND - pop a, pop b, push (a != 0 && b != 0)
-        OP_BOOLAND => {
-            if stack.len() < 2 {
-                return Ok(false);
-            }
-            let a = script_num_decode(&stack.pop().unwrap(), 4)?;
-            let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(if a != 0 && b != 0 {
-                1
-            } else {
-                0
-            })));
-            Ok(true)
-        }
-        // OP_BOOLOR - pop a, pop b, push (a != 0 || b != 0)
-        OP_BOOLOR => {
-            if stack.len() < 2 {
-                return Ok(false);
-            }
-            let a = script_num_decode(&stack.pop().unwrap(), 4)?;
-            let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(if a != 0 || b != 0 {
-                1
-            } else {
-                0
-            })));
-            Ok(true)
-        }
-        // OP_NUMEQUAL - pop a, pop b, push (a == b)
-        OP_NUMEQUAL => {
-            if stack.len() < 2 {
-                return Ok(false);
-            }
-            let a = script_num_decode(&stack.pop().unwrap(), 4)?;
-            let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(if a == b {
-                1
-            } else {
-                0
-            })));
-            Ok(true)
-        }
-        // OP_NUMEQUALVERIFY - NUMEQUAL + VERIFY
-        OP_NUMEQUALVERIFY => {
-            if stack.len() < 2 {
-                return Ok(false);
-            }
-            let a = script_num_decode(&stack.pop().unwrap(), 4)?;
-            let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            if a == b {
-                Ok(true)
-            } else {
-                Ok(false)
-            }
-        }
-        // OP_NUMNOTEQUAL - pop a, pop b, push (a != b)
-        OP_NUMNOTEQUAL => {
-            if stack.len() < 2 {
-                return Ok(false);
-            }
-            let a = script_num_decode(&stack.pop().unwrap(), 4)?;
-            let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(if a != b {
-                1
-            } else {
-                0
-            })));
-            Ok(true)
-        }
-        // OP_LESSTHAN - pop a (top), pop b, push (b < a)
-        OP_LESSTHAN => {
-            if stack.len() < 2 {
-                return Ok(false);
-            }
-            let a = script_num_decode(&stack.pop().unwrap(), 4)?;
-            let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(if b < a {
-                1
-            } else {
-                0
-            })));
-            Ok(true)
-        }
-        // OP_GREATERTHAN - pop a (top), pop b, push (b > a)
-        OP_GREATERTHAN => {
-            if stack.len() < 2 {
-                return Ok(false);
-            }
-            let a = script_num_decode(&stack.pop().unwrap(), 4)?;
-            let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(if b > a {
-                1
-            } else {
-                0
-            })));
-            Ok(true)
-        }
-        // OP_LESSTHANOREQUAL - pop a (top), pop b, push (b <= a)
-        OP_LESSTHANOREQUAL => {
-            if stack.len() < 2 {
-                return Ok(false);
-            }
-            let a = script_num_decode(&stack.pop().unwrap(), 4)?;
-            let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(if b <= a {
-                1
-            } else {
-                0
-            })));
-            Ok(true)
-        }
-        // OP_GREATERTHANOREQUAL - pop a (top), pop b, push (b >= a)
-        OP_GREATERTHANOREQUAL => {
-            if stack.len() < 2 {
-                return Ok(false);
-            }
-            let a = script_num_decode(&stack.pop().unwrap(), 4)?;
-            let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(if b >= a {
-                1
-            } else {
-                0
-            })));
-            Ok(true)
-        }
-        // OP_MIN - pop a, pop b, push min(b, a)
-        OP_MIN => {
-            if stack.len() < 2 {
-                return Ok(false);
-            }
-            let a = script_num_decode(&stack.pop().unwrap(), 4)?;
-            let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(std::cmp::min(b, a))));
-            Ok(true)
-        }
-        // OP_MAX - pop a, pop b, push max(b, a)
-        OP_MAX => {
-            if stack.len() < 2 {
-                return Ok(false);
-            }
-            let a = script_num_decode(&stack.pop().unwrap(), 4)?;
-            let b = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(std::cmp::max(b, a))));
-            Ok(true)
-        }
-        // OP_WITHIN - pop max, pop min, pop x, push (min <= x < max)
-        OP_WITHIN => {
-            if stack.len() < 3 {
-                return Ok(false);
-            }
-            let max_val = script_num_decode(&stack.pop().unwrap(), 4)?;
-            let min_val = script_num_decode(&stack.pop().unwrap(), 4)?;
-            let x = script_num_decode(&stack.pop().unwrap(), 4)?;
-            stack.push(to_stack_element(&script_num_encode(
-                if x >= min_val && x < max_val { 1 } else { 0 },
-            )));
-            Ok(true)
-        }
+        OP_ADD => arithmetic::op_add(stack),
+        OP_SUB => arithmetic::op_sub(stack),
+        OP_MUL => arithmetic::op_mul_disabled(),
+        OP_DIV => arithmetic::op_div_disabled(),
+        OP_MOD => arithmetic::op_mod_disabled(),
+        OP_LSHIFT => arithmetic::op_lshift_disabled(),
+        OP_RSHIFT => arithmetic::op_rshift_disabled(),
+        OP_BOOLAND => arithmetic::op_booland(stack),
+        OP_BOOLOR => arithmetic::op_boolor(stack),
+        OP_NUMEQUAL => arithmetic::op_numequal(stack),
+        OP_NUMEQUALVERIFY => arithmetic::op_numequalverify(stack),
+        OP_NUMNOTEQUAL => arithmetic::op_numnotequal(stack),
+        OP_LESSTHAN => arithmetic::op_lessthan(stack),
+        OP_GREATERTHAN => arithmetic::op_greaterthan(stack),
+        OP_LESSTHANOREQUAL => arithmetic::op_lessthanorequal(stack),
+        OP_GREATERTHANOREQUAL => arithmetic::op_greaterthanorequal(stack),
+        OP_MIN => arithmetic::op_min(stack),
+        OP_MAX => arithmetic::op_max(stack),
+        OP_WITHIN => arithmetic::op_within(stack),
 
         // OP_CODESEPARATOR - marks position for sighash (no-op in execute_opcode)
         OP_CODESEPARATOR => Ok(true),
@@ -5075,29 +4463,27 @@ fn execute_opcode_with_context(
     let prevout_values: Vec<i64> = prevouts.iter().map(|p| p.value).collect();
     let prevout_script_pubkeys: Vec<&[u8]> =
         prevouts.iter().map(|p| p.script_pubkey.as_ref()).collect();
-    execute_opcode_with_context_full(
-        opcode,
-        stack,
-        flags,
+    let ctx = context::ScriptContext {
         tx,
         input_index,
-        &prevout_values,
-        &prevout_script_pubkeys,
-        None, // block_height
-        None, // median_time_past
+        prevout_values: &prevout_values,
+        prevout_script_pubkeys: &prevout_script_pubkeys,
+        block_height: None,
+        median_time_past: None,
         network,
-        SigVersion::Base,
-        None, // redeem_script_for_sighash (not available in this context)
-        None, // script_sig_for_sighash
-        None, // tapscript_for_sighash
-        None, // tapscript_codesep_pos
+        sigversion: SigVersion::Base,
+        redeem_script_for_sighash: None,
+        script_sig_for_sighash: None,
+        tapscript_for_sighash: None,
+        tapscript_codesep_pos: None,
         #[cfg(feature = "production")]
-        None, // schnorr_collector - No collector in this context
+        schnorr_collector: None,
         #[cfg(feature = "production")]
-        None, // precomputed_bip143
+        precomputed_bip143: None,
         #[cfg(feature = "production")]
-        None, // sighash_cache - No cache in this context
-    )
+        sighash_cache: None,
+    };
+    execute_opcode_with_context_full(opcode, stack, flags, &ctx, None)
 }
 
 /// Parse P2SH-P2PKH scriptSig for batch sighash precompute. Zero-allocation.
@@ -5214,6 +4600,13 @@ fn parse_one_data_push(script: &[u8], i: usize) -> Option<(usize, usize, usize)>
         return None;
     };
     Some((advance, data_start, data_end))
+}
+
+/// P2SH Push-Only Validation (Orange Paper 5.2.1).
+/// Returns true if script_sig contains only push opcodes (valid), false otherwise (invalid).
+#[spec_locked("5.2.1")]
+pub fn p2sh_push_only_check(script_sig: &[u8]) -> bool {
+    parse_script_sig_push_only(script_sig).is_some()
 }
 
 /// Parse script_sig as push-only and return pushed items in order.
@@ -5458,6 +4851,7 @@ pub(crate) fn find_and_delete<'a>(script: &'a [u8], pattern: &[u8]) -> std::borr
 }
 
 #[cfg(not(feature = "production"))]
+#[spec_locked("5.1.1")]
 #[inline]
 pub(crate) fn find_and_delete<'a>(script: &'a [u8], pattern: &[u8]) -> std::borrow::Cow<'a, [u8]> {
     if pattern.is_empty() || script.len() < pattern.len() {
@@ -5534,34 +4928,33 @@ fn opcode_position_at_byte(script: &[u8], byte_index: usize) -> u32 {
 }
 
 /// Execute a single opcode with full context including block height, median time-past, and network
-#[allow(clippy::too_many_arguments)]
 #[cfg_attr(feature = "production", inline(always))]
 fn execute_opcode_with_context_full(
     opcode: u8,
     stack: &mut Vec<StackElement>,
     flags: u32,
-    tx: &Transaction,
-    input_index: usize,
-    prevout_values: &[i64],
-    prevout_script_pubkeys: &[&[u8]],
-    block_height: Option<u64>,
-    _median_time_past: Option<u64>,
-    network: crate::types::Network,
-    sigversion: SigVersion,
-    redeem_script_for_sighash: Option<&[u8]>,
-    script_sig_for_sighash: Option<&ByteString>,
-    tapscript_for_sighash: Option<&[u8]>,
-    tapscript_codesep_pos: Option<u32>,
-    #[cfg(feature = "production")] schnorr_collector: Option<
-        &crate::bip348::SchnorrSignatureCollector,
-    >,
-    #[cfg(feature = "production")] precomputed_bip143: Option<
-        &crate::transaction_hash::Bip143PrecomputedHashes,
-    >,
-    #[cfg(feature = "production")] sighash_cache: Option<
-        &crate::transaction_hash::SighashMidstateCache,
-    >,
+    ctx: &context::ScriptContext<'_>,
+    effective_script_code: Option<&[u8]>,
 ) -> Result<bool> {
+    let tx = ctx.tx;
+    let input_index = ctx.input_index;
+    let prevout_values = ctx.prevout_values;
+    let prevout_script_pubkeys = ctx.prevout_script_pubkeys;
+    let block_height = ctx.block_height;
+    let median_time_past = ctx.median_time_past;
+    let network = ctx.network;
+    let sigversion = ctx.sigversion;
+    let script_sig_for_sighash = ctx.script_sig_for_sighash;
+    let tapscript_for_sighash = ctx.tapscript_for_sighash;
+    let tapscript_codesep_pos = ctx.tapscript_codesep_pos;
+    let redeem_script_for_sighash = effective_script_code;
+    #[cfg(feature = "production")]
+    let schnorr_collector = ctx.schnorr_collector;
+    #[cfg(feature = "production")]
+    let precomputed_bip143 = ctx.precomputed_bip143;
+    #[cfg(feature = "production")]
+    let sighash_cache = ctx.sighash_cache;
+
     // match ordered by frequency (hot opcodes first for better branch prediction)
     match opcode {
         // OP_CHECKSIG - verify ECDSA signature
@@ -5715,8 +5108,8 @@ fn execute_opcode_with_context_full(
                 // IsValidSignatureEncoding expects signature WITH sighash byte
                 let height = block_height.unwrap_or(0);
                 #[cfg(feature = "production")]
-                let is_valid = SECP256K1_CONTEXT.with(|secp| {
-                    verify_signature(
+                let is_valid = signature::with_secp_context(|secp| {
+                    signature::verify_signature(
                         secp,
                         &pubkey_bytes,
                         &signature_bytes, // Pass full signature WITH sighash byte
@@ -5731,7 +5124,7 @@ fn execute_opcode_with_context_full(
                 #[cfg(not(feature = "production"))]
                 let is_valid = {
                     let secp = Secp256k1::new();
-                    verify_signature(
+                    signature::verify_signature(
                         &secp,
                         &pubkey_bytes,
                         &signature_bytes, // Pass full signature WITH sighash byte
@@ -5832,8 +5225,8 @@ fn execute_opcode_with_context_full(
                 // IsValidSignatureEncoding expects signature WITH sighash byte
                 let height = block_height.unwrap_or(0);
                 #[cfg(feature = "production")]
-                let is_valid = SECP256K1_CONTEXT.with(|secp| {
-                    verify_signature(
+                let is_valid = signature::with_secp_context(|secp| {
+                    signature::verify_signature(
                         secp,
                         &pubkey_bytes,
                         &signature_bytes, // Pass full signature WITH sighash byte
@@ -5848,7 +5241,7 @@ fn execute_opcode_with_context_full(
                 #[cfg(not(feature = "production"))]
                 let is_valid = {
                     let secp = Secp256k1::new();
-                    verify_signature(
+                    signature::verify_signature(
                         &secp,
                         &pubkey_bytes,
                         &signature_bytes, // Pass full signature WITH sighash byte
@@ -6239,8 +5632,8 @@ fn execute_opcode_with_context_full(
                     )?;
 
                     #[cfg(feature = "production")]
-                    let is_valid = SECP256K1_CONTEXT.with(|secp| {
-                        verify_signature(
+                    let is_valid = signature::with_secp_context(|secp| {
+                        signature::verify_signature(
                             secp,
                             pubkey_bytes,
                             signature_bytes,
@@ -6255,7 +5648,7 @@ fn execute_opcode_with_context_full(
                     #[cfg(not(feature = "production"))]
                     let is_valid = {
                         let secp = Secp256k1::new();
-                        verify_signature(
+                        signature::verify_signature(
                             &secp,
                             pubkey_bytes,
                             signature_bytes,
@@ -6313,7 +5706,7 @@ fn execute_opcode_with_context_full(
                         sighash_cache,
                     )?;
                     let secp = Secp256k1::new();
-                    let is_valid = verify_signature(
+                    let is_valid = signature::verify_signature(
                         &secp,
                         pubkey_bytes,
                         signature_bytes,
@@ -6351,16 +5744,13 @@ fn execute_opcode_with_context_full(
         // OP_CHECKMULTISIGVERIFY - CHECKMULTISIG + VERIFY (hot path)
         OP_CHECKMULTISIGVERIFY => {
             // Execute CHECKMULTISIG first
-            let result = execute_opcode_with_context_full(
-                OP_CHECKMULTISIG,
-                stack,
-                flags,
+            let ctx_checkmultisig = context::ScriptContext {
                 tx,
                 input_index,
                 prevout_values,
                 prevout_script_pubkeys,
                 block_height,
-                _median_time_past,
+                median_time_past,
                 network,
                 sigversion,
                 redeem_script_for_sighash,
@@ -6368,11 +5758,18 @@ fn execute_opcode_with_context_full(
                 tapscript_for_sighash,
                 tapscript_codesep_pos,
                 #[cfg(feature = "production")]
-                None, // schnorr_collector
+                schnorr_collector: None,
                 #[cfg(feature = "production")]
                 precomputed_bip143,
                 #[cfg(feature = "production")]
                 sighash_cache,
+            };
+            let result = execute_opcode_with_context_full(
+                OP_CHECKMULTISIG,
+                stack,
+                flags,
+                &ctx_checkmultisig,
+                redeem_script_for_sighash,
             )?;
             if !result {
                 return Ok(false);
@@ -6399,7 +5796,7 @@ fn execute_opcode_with_context_full(
                 return Ok(true);
             }
 
-            use crate::locktime::{decode_locktime_value, locktime_types_match};
+            use crate::locktime::{check_bip65, decode_locktime_value};
 
             if stack.is_empty() {
                 return Err(ConsensusError::ScriptErrorWithCode {
@@ -6422,18 +5819,12 @@ fn execute_opcode_with_context_full(
 
             let tx_locktime = tx.lock_time as u32;
 
-            // CheckLockTime order (BIP65):
-            // 1. Types must match (both block height or both timestamp)
-            if !locktime_types_match(tx_locktime, locktime_value) {
+            // CheckLockTime order (BIP65): locktime check via check_bip65
+            if !check_bip65(tx_locktime, locktime_value) {
                 return Ok(false);
             }
 
-            // 2. Transaction locktime must be >= required locktime from script
-            if tx_locktime < locktime_value {
-                return Ok(false);
-            }
-
-            // 3. Input sequence must NOT be SEQUENCE_FINAL (0xffffffff)
+            // Input sequence must NOT be SEQUENCE_FINAL (0xffffffff)
             let input_seq = if input_index < tx.inputs.len() {
                 tx.inputs[input_index].sequence
             } else {
@@ -6557,14 +5948,14 @@ fn execute_opcode_with_context_full(
                             message: "OP_CHECKTEMPLATEVERIFY not yet activated".into(),
                         });
                     }
-                    Ok(true) // NOP4
+                    return Ok(true); // NOP4
                 }
 
                 // Check if CTV flag is enabled
                 const SCRIPT_VERIFY_DEFAULT_CHECK_TEMPLATE_VERIFY_HASH: u32 = 0x80000000;
                 if (flags & SCRIPT_VERIFY_DEFAULT_CHECK_TEMPLATE_VERIFY_HASH) == 0 {
                     // Flag not set, treat as NOP4
-                    Ok(true)
+                    return Ok(true);
                 }
 
                 use crate::bip119::calculate_template_hash;
@@ -6591,7 +5982,7 @@ fn execute_opcode_with_context_full(
                                 .into(),
                         });
                     }
-                    Ok(true) // NOP
+                    return Ok(true); // NOP
                 }
 
                 // Calculate actual template hash for this transaction
@@ -6734,8 +6125,7 @@ fn execute_opcode_with_context_full(
 
                 // BIP-348: Count against sigops budget (BIP 342)
                 // Note: Sigops counting is handled at transaction level in get_transaction_sigop_cost()
-                // For Tapscript, sigops are counted differently (BIP 342)
-                // TODO: Verify Tapscript sigops counting implementation
+                // For Tapscript, sigops are counted via count_tapscript_sigops (BIP 342)
 
                 // BIP-348: Push 0x01 (single byte) if valid
                 stack.push(to_stack_element(&[0x01])); // Single byte 0x01, not 1
@@ -6752,447 +6142,6 @@ fn execute_opcode_with_context_full(
 #[cold]
 fn execute_opcode_cold(opcode: u8, stack: &mut Vec<StackElement>, flags: u32) -> Result<bool> {
     execute_opcode(opcode, stack, flags, SigVersion::Base)
-}
-
-/// Normalize a non-canonical DER signature for pre-BIP66 compatibility.
-/// Uses stack buffers to avoid 3 Vec allocations per call.
-fn normalize_der_signature(sig: &[u8], out: &mut [u8; 72]) -> Option<usize> {
-    if sig.len() < 8 {
-        return None;
-    }
-    if sig[0] != 0x30 {
-        return None;
-    }
-    let total_len = sig[1] as usize;
-    if sig.len() < 2 + total_len {
-        return None;
-    }
-    if sig[2] != 0x02 {
-        return None;
-    }
-    let r_len = sig[3] as usize;
-    if sig.len() < 4 + r_len {
-        return None;
-    }
-    let r_start = 4;
-    let r_end = r_start + r_len;
-    let r_bytes = &sig[r_start..r_end];
-    if sig.len() < r_end + 2 {
-        return None;
-    }
-    if sig[r_end] != 0x02 {
-        return None;
-    }
-    let s_len = sig[r_end + 1] as usize;
-    if sig.len() < r_end + 2 + s_len {
-        return None;
-    }
-    let s_start = r_end + 2;
-    let s_end = s_start + s_len;
-    let s_bytes = &sig[s_start..s_end];
-
-    let mut r_buf = [0u8; 36];
-    let r_n = normalize_integer(r_bytes, &mut r_buf);
-    let mut s_buf = [0u8; 36];
-    let s_n = normalize_integer(s_bytes, &mut s_buf);
-
-    let new_total_len = 2 + r_n + 2 + s_n;
-    if new_total_len + 2 > 72 {
-        return None;
-    }
-    out[0] = 0x30;
-    out[1] = new_total_len as u8;
-    out[2] = 0x02;
-    out[3] = r_n as u8;
-    out[4..4 + r_n].copy_from_slice(&r_buf[..r_n]);
-    out[4 + r_n] = 0x02;
-    out[5 + r_n] = s_n as u8;
-    out[6 + r_n..6 + r_n + s_n].copy_from_slice(&s_buf[..s_n]);
-    Some(2 + new_total_len)
-}
-
-/// Normalize a DER integer by removing extra leading zeros. Writes to out, returns length.
-fn normalize_integer(bytes: &[u8], out: &mut [u8; 36]) -> usize {
-    if bytes.is_empty() {
-        out[0] = 0;
-        return 1;
-    }
-    let mut start = 0;
-    while start < bytes.len() - 1 && bytes[start] == 0 {
-        start += 1;
-    }
-    if bytes[start] & 0x80 != 0 {
-        if start > 0 {
-            start -= 1;
-        } else {
-            out[0] = 0;
-            out[1..1 + bytes.len()].copy_from_slice(bytes);
-            return 1 + bytes.len();
-        }
-    }
-    let n = bytes.len() - start;
-    out[..n].copy_from_slice(&bytes[start..]);
-    n
-}
-
-/// Fast-path validation for signature verification.
-///
-/// Performs quick checks before expensive crypto operations.
-/// Returns Some(bool) if fast-path can determine validity, None if full verification needed.
-fn verify_signature_fast_path(
-    pubkey_bytes: &[u8],
-    signature_bytes: &[u8],
-    sighash: &[u8; 32],
-) -> Option<bool> {
-    // Quick reject: wrong sizes (invalid format)
-    if pubkey_bytes.len() != 33 && pubkey_bytes.len() != 65 {
-        return Some(false); // Invalid public key size
-    }
-    if signature_bytes.len() < 64 {
-        return Some(false); // DER signature must be at least 64 bytes (minimal encoding)
-    }
-    if sighash.len() != 32 {
-        return Some(false); // Invalid sighash size
-    }
-
-    // Fast-path can't verify validity, only reject obvious invalid formats
-    None // Needs full verification
-}
-
-/// Verify ECDSA signature using secp256k1
-///
-/// Uses fast-path checks before expensive crypto.
-///
-/// BIP66: Enforces strict DER encoding for signatures after activation height.
-///
-/// NOTE: `signature_bytes` should be the DER signature WITHOUT the sighash byte.
-/// For BIP66 check, we need to reconstruct the full signature (with sighash byte)
-/// IsValidSignatureEncoding — BIP66 strict DER (BIP62).
-/// Get assumevalid height (uses cached config; no per-call env lookup).
-fn get_assumevalid_height() -> u64 {
-    crate::config::get_assume_valid_height()
-}
-
-#[allow(clippy::too_many_arguments)]
-fn verify_signature<C: Context + Verification>(
-    secp: &Secp256k1<C>,
-    pubkey_bytes: &[u8],
-    signature_bytes: &[u8], // DER signature WITHOUT sighash byte
-    sighash: &[u8; 32],     // Real transaction hash
-    flags: u32,
-    height: Natural,
-    network: crate::types::Network,
-    sigversion: SigVersion,
-) -> Result<bool> {
-    // ASSUMEVALID OPTIMIZATION: Skip expensive signature verification for blocks
-    // below the assumevalid height. This is safe because these blocks have been
-    // validated by the entire network already. This speeds up IBD from days to hours.
-    // Set BLVM_ASSUME_VALID_HEIGHT env var to enable (e.g., BLVM_ASSUME_VALID_HEIGHT=850000)
-    let assumevalid_height = get_assumevalid_height();
-    if assumevalid_height > 0 && height < assumevalid_height {
-        // Skip signature verification for historical blocks
-        // Still perform basic structural checks below (empty sig, encoding)
-        // but skip the expensive secp256k1 verification
-        if signature_bytes.is_empty() {
-            return Ok(false);
-        }
-        // Return true - assume signature is valid for historical blocks
-        return Ok(true);
-    }
-
-    // Extract sighash byte and der_sig for BIP66 check and signature parsing
-    if signature_bytes.is_empty() {
-        return Ok(false);
-    }
-    // OPTIMIZATION: Cache length to avoid repeated computation
-    let sig_len = signature_bytes.len();
-    let sighash_byte = signature_bytes[sig_len - 1];
-    let der_sig = &signature_bytes[..sig_len - 1];
-
-    // BIP66: Check strict DER encoding if flag is set (SCRIPT_VERIFY_DERSIG = 0x04)
-    // CRITICAL FIX: Pass full signature (WITH sighash byte) to check_bip66
-    // because IsValidSignatureEncoding expects signature WITH sighash byte
-    if flags & 0x04 != 0 && !crate::bip_validation::check_bip66(signature_bytes, height, network)? {
-        return Ok(false);
-    }
-
-    // SCRIPT_VERIFY_STRICTENC (0x02): Check that sighash type is defined
-    // IsDefinedHashtypeSignature: checks if sighash byte (masking out ANYONECANPAY)
-    // is between SIGHASH_ALL (0x01) and SIGHASH_SINGLE (0x03)
-    if flags & 0x02 != 0 {
-        // Mask out ANYONECANPAY bit (0x80) to get base sighash type
-        let base_sighash = sighash_byte & !0x80;
-        // Valid base types: 0x01 (SIGHASH_ALL), 0x02 (SIGHASH_NONE), 0x03 (SIGHASH_SINGLE)
-        // Note: 0x00 is also valid (legacy SIGHASH_ALL) but STRICTENC rejects it
-        if !(0x01..=0x03).contains(&base_sighash) {
-            return Ok(false);
-        }
-    }
-
-    // Parse signature (DER format) - needed for both LOW_S check and verification
-    // CRITICAL FIX: Use der_sig (without sighash byte) for parsing, not full signature_bytes
-    // CRITICAL FIX: After BIP66 activation, do NOT normalize - use strict DER only
-    // Pre-BIP66 signatures may have extra leading zeros, but post-BIP66 must be strict
-    let signature = if flags & 0x04 != 0 {
-        // BIP66 active: Use strict DER only, no normalization
-        match Signature::from_der(der_sig) {
-            Ok(sig) => sig,
-            Err(_) => return Ok(false),
-        }
-    } else {
-        // Pre-BIP66: Use lax DER parser to handle non-standard encodings
-        // (negative integers, excessive padding, garbage suffixes, multi-byte lengths).
-        // This matches Bitcoin Core's ecdsa_signature_parse_der_lax.
-        match Signature::from_der_lax(der_sig) {
-            Ok(sig) => sig,
-            Err(_) => return Ok(false),
-        }
-    };
-
-    // SCRIPT_VERIFY_LOW_S (0x08): Reject high-S signatures (BIP62 malleability fix).
-    // secp256k1 0.28: normalize_s() mutates in place; compare before/after to detect high S.
-    if flags & 0x08 != 0 {
-        let before = signature.serialize_compact();
-        let mut normalized = signature;
-        normalized.normalize_s();
-        if before != normalized.serialize_compact() {
-            return Ok(false);
-        }
-    }
-
-    // SCRIPT_VERIFY_STRICTENC (0x02): Check that public key is compressed or uncompressed
-    // IsCompressedOrUncompressedPubKey: checks if pubkey is valid format
-    if flags & 0x02 != 0 {
-        // Must be at least 33 bytes (compressed size)
-        if pubkey_bytes.len() < 33 {
-            return Ok(false);
-        }
-        if pubkey_bytes[0] == 0x04 {
-            // Uncompressed: must be exactly 65 bytes
-            if pubkey_bytes.len() != 65 {
-                return Ok(false);
-            }
-        } else if pubkey_bytes[0] == 0x02 || pubkey_bytes[0] == 0x03 {
-            // Compressed: must be exactly 33 bytes
-            if pubkey_bytes.len() != 33 {
-                return Ok(false);
-            }
-        } else {
-            // Invalid pubkey format
-            return Ok(false);
-        }
-    }
-
-    const SCRIPT_VERIFY_WITNESS_PUBKEYTYPE: u32 = 0x8000;
-    if (flags & SCRIPT_VERIFY_WITNESS_PUBKEYTYPE) != 0
-        && sigversion == SigVersion::WitnessV0
-        && !(pubkey_bytes.len() == 33 && (pubkey_bytes[0] == 0x02 || pubkey_bytes[0] == 0x03))
-    {
-        return Ok(false);
-    }
-
-    // Parse public key
-    let pubkey = match PublicKey::from_slice(pubkey_bytes) {
-        Ok(pk) => pk,
-        Err(_) => return Ok(false),
-    };
-
-    // secp256k1 requires low-S. If LOW_S flag was checked (0x08), sig is already low-S.
-    // Otherwise normalize once here. Core does the same: always normalize before verify.
-    let normalized_signature = if flags & 0x08 != 0 {
-        signature
-    } else {
-        let mut s = signature;
-        s.normalize_s();
-        s
-    };
-
-    let sig_compact = normalized_signature.serialize_compact();
-    let pk_compressed = pubkey.serialize();
-    crate::secp256k1_backend::verify_ecdsa(sighash, &sig_compact, &pk_compressed)
-}
-
-/// Verify pre-extracted ECDSA (P2PKH/P2PK) inline without re-parsing script_sig.
-/// Used when (Some(pre), None) in checkqueue: we have pubkey/sig/sighash from producer.
-#[cfg(feature = "production")]
-pub fn verify_pre_extracted_ecdsa(
-    pubkey_bytes: &[u8],
-    signature_bytes: &[u8],
-    sighash: &[u8; 32],
-    flags: u32,
-    height: Natural,
-    network: crate::types::Network,
-) -> Result<bool> {
-    SECP256K1_CONTEXT.with(|secp| {
-        verify_signature(
-            secp,
-            pubkey_bytes,
-            signature_bytes,
-            sighash,
-            flags,
-            height,
-            network,
-            SigVersion::Base,
-        )
-    })
-}
-
-/// Parse and validate one task for batch verification.
-/// Returns Ok(None) if invalid (encoding, BIP66, etc), Ok(Some(...)) if valid and ready for batch.
-#[cfg(feature = "production")]
-fn parse_task_for_batch(
-    pubkey_bytes: &[u8],
-    signature_bytes: &[u8],
-    sighash: &[u8; 32],
-    flags: u32,
-    height: Natural,
-    network: crate::types::Network,
-) -> Result<Option<(PublicKey, secp256k1::ecdsa::Signature, Message)>> {
-    use secp256k1::ecdsa::Signature;
-
-    if signature_bytes.is_empty() {
-        return Ok(None);
-    }
-    let sig_len = signature_bytes.len();
-    let sighash_byte = signature_bytes[sig_len - 1];
-    let der_sig = &signature_bytes[..sig_len - 1];
-
-    if flags & 0x04 != 0 && !crate::bip_validation::check_bip66(signature_bytes, height, network)? {
-        return Ok(None);
-    }
-    if flags & 0x02 != 0 {
-        let base_sighash = sighash_byte & !0x80;
-        if !(0x01..=0x03).contains(&base_sighash) {
-            return Ok(None);
-        }
-    }
-
-    let signature = if flags & 0x04 != 0 {
-        match Signature::from_der(der_sig) {
-            Ok(sig) => sig,
-            Err(_) => return Ok(None),
-        }
-    } else {
-        match Signature::from_der_lax(der_sig) {
-            Ok(sig) => sig,
-            Err(_) => return Ok(None),
-        }
-    };
-
-    // Compute once, reuse for LOW_S check (avoid redundant serialize_compact)
-    let original_compact = signature.serialize_compact();
-    let mut normalized_signature = signature;
-    normalized_signature.normalize_s();
-    let norm_compact = normalized_signature.serialize_compact();
-    if flags & 0x08 != 0 && original_compact != norm_compact {
-        return Ok(None);
-    }
-
-    if flags & 0x02 != 0 {
-        if pubkey_bytes.len() < 33 {
-            return Ok(None);
-        }
-        if pubkey_bytes[0] == 0x04 {
-            if pubkey_bytes.len() != 65 {
-                return Ok(None);
-            }
-        } else if pubkey_bytes[0] == 0x02 || pubkey_bytes[0] == 0x03 {
-            if pubkey_bytes.len() != 33 {
-                return Ok(None);
-            }
-        } else {
-            return Ok(None);
-        }
-    }
-
-    let pubkey = match PublicKey::from_slice(pubkey_bytes) {
-        Ok(pk) => pk,
-        Err(_) => return Ok(None),
-    };
-    let message = match Message::from_digest_slice(sighash) {
-        Ok(m) => m,
-        Err(_) => return Ok(None),
-    };
-
-    Ok(Some((pubkey, normalized_signature, message)))
-}
-
-/// Per-sig ECDSA verification for multisig (CHECKMULTISIG).
-///
-/// Verifies multiple signatures sequentially or in parallel (rayon). No ECDSA batch
-/// — each signature is verified individually via verify_signature.
-///
-/// # Arguments
-/// * `verification_tasks` - Vector of (pubkey_bytes, signature_bytes, sighash) tuples
-/// * `flags` - Script verification flags
-/// * `height` - Block height for BIP66 validation
-/// * `network` - Network type for BIP66 validation
-///
-/// # Returns
-/// Vector of boolean results, one per signature (in same order)
-#[cfg(feature = "production")]
-#[spec_locked("5.2")]
-pub fn batch_verify_signatures(
-    verification_tasks: &[(&[u8], &[u8], [u8; 32])],
-    flags: u32,
-    height: Natural,
-    network: crate::types::Network,
-) -> Result<Vec<bool>> {
-    #[cfg(feature = "profile")]
-    let _t0 = std::time::Instant::now();
-
-    if verification_tasks.is_empty() {
-        #[cfg(feature = "profile")]
-        crate::script_profile::add_multisig_ns(_t0.elapsed().as_nanos() as u64);
-        return Ok(Vec::new());
-    }
-
-    #[cfg(feature = "rayon")]
-    {
-        use rayon::prelude::*;
-        let r: Result<Vec<bool>> = verification_tasks
-            .par_iter()
-            .map(|(pubkey_bytes, signature_bytes, sighash)| {
-                SECP256K1_CONTEXT.with(|secp| {
-                    verify_signature(
-                        secp,
-                        pubkey_bytes,
-                        signature_bytes,
-                        sighash,
-                        flags,
-                        height,
-                        network,
-                        SigVersion::Base,
-                    )
-                })
-            })
-            .collect();
-        #[cfg(feature = "profile")]
-        crate::script_profile::add_multisig_ns(_t0.elapsed().as_nanos() as u64);
-        r
-    }
-
-    #[cfg(not(feature = "rayon"))]
-    {
-        let mut results = Vec::with_capacity(verification_tasks.len());
-        for (pubkey_bytes, signature_bytes, sighash) in verification_tasks {
-            let secp = Secp256k1::new();
-            let result = verify_signature(
-                &secp,
-                pubkey_bytes,
-                signature_bytes,
-                sighash,
-                flags,
-                height,
-                network,
-                SigVersion::Base,
-            )?;
-            results.push(result);
-        }
-        #[cfg(feature = "profile")]
-        crate::script_profile::add_multisig_ns(_t0.elapsed().as_nanos() as u64);
-        Ok(results)
-    }
 }
 
 // ============================================================================
@@ -7252,7 +6201,7 @@ pub fn clear_script_cache() {
 /// ```
 #[cfg(all(feature = "production", feature = "benchmarking"))]
 pub fn clear_hash_cache() {
-    HASH_CACHE.with(|cell| cell.borrow_mut().clear());
+    crypto_ops::clear_hash_cache();
 }
 
 /// Clear all caches
@@ -8042,7 +6991,7 @@ mod tests {
         let invalid_pubkey = vec![0x00]; // Invalid pubkey
         let signature = vec![0x30, 0x06, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00]; // Valid DER signature
         let dummy_hash = [0u8; 32];
-        let result = verify_signature(
+        let result = signature::verify_signature(
             &secp,
             &invalid_pubkey,
             &signature,
@@ -8065,7 +7014,7 @@ mod tests {
         ]; // Valid pubkey
         let invalid_signature = vec![0x00]; // Invalid signature
         let dummy_hash = [0u8; 32];
-        let result = verify_signature(
+        let result = signature::verify_signature(
             &secp,
             &pubkey,
             &invalid_signature,
@@ -8149,11 +7098,9 @@ mod tests {
             SigVersion::Base,
             #[cfg(feature = "production")]
             None,
-            #[cfg(feature = "production")]
-            None,
-            #[cfg(feature = "production")]
-            None,
             None, // precomputed_bip143
+            #[cfg(feature = "production")]
+            None,
             #[cfg(feature = "production")]
             None,
             #[cfg(feature = "production")]
@@ -8192,11 +7139,9 @@ mod tests {
             SigVersion::Base,
             #[cfg(feature = "production")]
             None,
-            #[cfg(feature = "production")]
-            None,
-            #[cfg(feature = "production")]
-            None,
             None, // precomputed_bip143
+            #[cfg(feature = "production")]
+            None,
             #[cfg(feature = "production")]
             None,
             #[cfg(feature = "production")]
@@ -8230,11 +7175,9 @@ mod tests {
             SigVersion::Base,
             #[cfg(feature = "production")]
             None,
-            #[cfg(feature = "production")]
-            None,
-            #[cfg(feature = "production")]
-            None,
             None, // precomputed_bip143
+            #[cfg(feature = "production")]
+            None,
             #[cfg(feature = "production")]
             None,
             #[cfg(feature = "production")]
@@ -8269,11 +7212,9 @@ mod tests {
             SigVersion::Base,
             #[cfg(feature = "production")]
             None,
-            #[cfg(feature = "production")]
-            None,
-            #[cfg(feature = "production")]
-            None,
             None, // precomputed_bip143
+            #[cfg(feature = "production")]
+            None,
             #[cfg(feature = "production")]
             None,
             #[cfg(feature = "production")]
@@ -8327,9 +7268,9 @@ mod tests {
             SigVersion::Base,
             #[cfg(feature = "production")]
             None,
+            None, // precomputed_bip143
             #[cfg(feature = "production")]
             None,
-            None, // precomputed_bip143
             #[cfg(feature = "production")]
             None,
             #[cfg(feature = "production")]

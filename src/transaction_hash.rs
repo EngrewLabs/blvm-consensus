@@ -8,7 +8,6 @@
 
 use crate::crypto::OptimizedSha256;
 use crate::error::Result;
-use crate::opcodes::*;
 use crate::types::*;
 use blvm_spec_lock::spec_locked;
 
@@ -268,6 +267,7 @@ fn sighash_with_cache(preimage: &[u8]) -> Hash {
 /// Uses incremental SHA256 - feeds data directly to the hasher, avoiding
 /// the preimage buffer allocation and double memory pass.
 #[cfg(feature = "production")]
+#[spec_locked("5.1.1")]
 #[inline]
 pub fn compute_legacy_sighash_nocache(
     tx: &Transaction,
@@ -386,6 +386,7 @@ fn push_varint(buf: &mut Vec<u8>, value: u64) {
 /// Compute legacy sighash by pre-serializing the full preimage into a thread-local buffer,
 /// then hashing in one pass. Reduces function call overhead vs streaming h.update() calls.
 #[cfg(feature = "production")]
+#[spec_locked("5.1.1")]
 #[inline]
 pub fn compute_legacy_sighash_buffered(
     tx: &Transaction,
@@ -479,6 +480,7 @@ pub fn compute_legacy_sighash_buffered(
 ///
 /// Falls back to per-input compute for ANYONECANPAY/SINGLE/NONE hash types.
 #[cfg(feature = "production")]
+#[spec_locked("5.1.1")]
 pub fn compute_sighashes_batch(
     tx: &Transaction,
     script_codes: &[&[u8]],
@@ -647,13 +649,16 @@ pub fn calculate_transaction_sighash_single_input(
     {
         let mut prevout_values = vec![0i64; tx.inputs.len()];
         prevout_values[input_index] = prevout_value;
+        let prevout_script_pubkeys: Vec<&[u8]> = (0..tx.inputs.len())
+            .map(|i| if i == input_index { script_for_signing } else { &[] })
+            .collect();
         calculate_transaction_sighash_with_script_code(
             tx,
             input_index,
             &prevout_values,
             &prevout_script_pubkeys,
             sighash_type,
-            None,
+            Some(script_for_signing),
         )
     }
 }
@@ -1320,6 +1325,7 @@ fn build_legacy_sighash_preimage_into(
 /// Each spec is (input_index, sighash_byte, script_code). Returns hashes in spec order.
 /// Uses thread-local reusable buffers; no per-spec Vec allocs.
 #[cfg(feature = "production")]
+#[spec_locked("5.1.1")]
 pub fn batch_compute_legacy_sighashes(
     tx: &Transaction,
     prevout_values: &[i64],

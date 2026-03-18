@@ -1,6 +1,6 @@
 //! Chain reorganization functions from Orange Paper Section 10.3
 
-use crate::block::connect_block;
+use crate::block::{connect_block, BlockValidationContext};
 use crate::error::Result;
 use crate::segwit::Witness;
 use crate::types::*;
@@ -268,15 +268,15 @@ pub fn reorganize_chain_with_witnesses(
         // Network time should be provided by node layer, use block timestamp as fallback for reorganization
         // In production, the node layer should provide adjusted network time
         let network_time = block.header.timestamp;
-        let (validation_result, new_utxo_set, undo_log) = connect_block(
-            block,
-            &witnesses,
-            utxo_set,
-            new_height,
+        let context = BlockValidationContext::from_connect_block_ibd_args(
             recent_headers,
             network_time,
             network,
-        )?;
+            None,
+            None,
+        );
+        let (validation_result, new_utxo_set, undo_log) =
+            connect_block(block, &witnesses, utxo_set, new_height, &context)?;
 
         if !matches!(validation_result, ValidationResult::Valid) {
             return Err(crate::error::ConsensusError::ConsensusRuleViolation(
@@ -470,6 +470,8 @@ struct CommonAncestorResult {
 /// Algorithm: Start from the tips of both chains and work backwards,
 /// comparing blocks at the same distance from tip until we find a match.
 /// This is the common ancestor where the chains diverged.
+/// Orange Paper 11.3: Chain reorganization finds common ancestor before disconnect/connect.
+#[spec_locked("11.3")]
 fn find_common_ancestor(
     new_chain: &[Block],
     current_chain: &[Block],
@@ -526,6 +528,7 @@ fn find_common_ancestor(
 ///
 /// Uses the undo log to perfectly restore the UTXO set to its state before the block was connected.
 /// This is the inverse operation of `connect_block`.
+/// Orange Paper 11.3.1: DisconnectBlock applies undo log to reverse ConnectBlock.
 ///
 /// # Arguments
 ///
@@ -533,6 +536,7 @@ fn find_common_ancestor(
 /// * `undo_log` - The undo log created when this block was connected
 /// * `utxo_set` - Current UTXO set (will be modified)
 /// * `_height` - Block height (for potential future use)
+#[spec_locked("11.3.1")]
 fn disconnect_block(
     _block: &Block,
     undo_log: &BlockUndoLog,
@@ -623,11 +627,13 @@ pub fn should_reorganize(new_chain: &[Block], current_chain: &[Block]) -> Result
 }
 
 /// Calculate total work for a chain
+/// Orange Paper 11.3: BestChain = argmax Σ Work(block)
 ///
 /// Mathematical invariants:
 /// - Work is always non-negative
 /// - Work increases monotonically with chain length
 /// - Work calculation is deterministic
+#[spec_locked("11.3")]
 fn calculate_chain_work(chain: &[Block]) -> Result<u128> {
     let mut total_work = 0u128;
 
@@ -1140,16 +1146,9 @@ mod tests {
             .iter()
             .map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect())
             .collect();
-        let (result, new_utxo_set, undo_log) = connect_block(
-            &block,
-            &witnesses,
-            utxo_set.clone(),
-            1,
-            None::<&[crate::types::BlockHeader]>,
-            0u64,
-            crate::types::Network::Regtest,
-        )
-        .unwrap();
+        let ctx = BlockValidationContext::for_network(crate::types::Network::Regtest);
+        let (result, new_utxo_set, undo_log) =
+            connect_block(&block, &witnesses, utxo_set.clone(), 1, &ctx).unwrap();
 
         assert!(matches!(result, crate::types::ValidationResult::Valid));
 
@@ -1201,16 +1200,9 @@ mod tests {
             .map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect())
             .collect();
 
-        let (result, connected_utxo_set, undo_log) = connect_block(
-            &block,
-            &witnesses,
-            utxo_set.clone(),
-            1,
-            None::<&[crate::types::BlockHeader]>,
-            0u64,
-            crate::types::Network::Regtest,
-        )
-        .unwrap();
+        let ctx = BlockValidationContext::for_network(crate::types::Network::Regtest);
+        let (result, connected_utxo_set, undo_log) =
+            connect_block(&block, &witnesses, utxo_set.clone(), 1, &ctx).unwrap();
 
         if !matches!(result, crate::types::ValidationResult::Valid) {
             eprintln!("Block validation failed: {:?}", result);

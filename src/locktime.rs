@@ -29,6 +29,16 @@ pub fn get_locktime_type(locktime: u32) -> LocktimeType {
     }
 }
 
+/// BIP65 CLTV core check: validates that transaction locktime satisfies the script requirement.
+/// Returns true if valid: tx_locktime != 0, types match, and tx_locktime >= stack_locktime.
+#[inline]
+#[spec_locked("5.4.7")]
+pub fn check_bip65(tx_locktime: u32, stack_locktime: u32) -> bool {
+    tx_locktime != 0
+        && locktime_types_match(tx_locktime, stack_locktime)
+        && tx_locktime >= stack_locktime
+}
+
 /// Check if two locktime values have matching types
 ///
 /// Used by both BIP65 (CLTV) and BIP112 (CSV) to ensure type consistency.

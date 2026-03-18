@@ -12,31 +12,10 @@
 use blvm_consensus::block::connect_block;
 use blvm_consensus::constants::*;
 use blvm_consensus::economic::get_block_subsidy;
+use blvm_consensus::test_utils::create_coinbase_tx;
 use blvm_consensus::transaction::is_coinbase;
 use blvm_consensus::types::*;
 use std::collections::HashMap;
-
-/// Create a valid coinbase transaction
-fn create_coinbase_tx(_height: u64, output_value: i64) -> Transaction {
-    Transaction {
-        version: 1,
-        inputs: vec![TransactionInput {
-            prevout: OutPoint {
-                hash: [0; 32].into(),
-                index: 0xffffffff, // Coinbase marker
-            },
-            script_sig: vec![0x03, 0x01, 0x00, 0x00], // 4 bytes (valid: 2-100)
-            sequence: 0xffffffff,
-        }]
-        .into(),
-        outputs: vec![TransactionOutput {
-            value: output_value,
-            script_pubkey: vec![0x51].into(),
-        }]
-        .into(),
-        lock_time: 0,
-    }
-}
 
 /// Test coinbase scriptSig length: minimum (2 bytes)
 ///
@@ -183,7 +162,7 @@ fn test_coinbase_output_exact_subsidy() {
     let height = 100;
     let subsidy = get_block_subsidy(height);
 
-    let coinbase = create_coinbase_tx(height, subsidy);
+    let coinbase = create_coinbase_tx(subsidy);
 
     // This should be valid (output equals subsidy, no fees)
     assert!(is_coinbase(&coinbase), "Should be coinbase");
@@ -202,7 +181,7 @@ fn test_coinbase_output_exceeds_subsidy() {
     let subsidy = get_block_subsidy(height);
 
     // Create coinbase with output > subsidy (no fees to cover it)
-    let coinbase = create_coinbase_tx(height, subsidy + 1);
+    let coinbase = create_coinbase_tx(subsidy + 1);
 
     // This should be invalid when validated in block context
     // (We can't fully test without block context, but verify the coinbase structure)
@@ -238,7 +217,7 @@ fn test_coinbase_output_with_fees() {
 /// Consensus rejects: coinbase_output > MAX_MONEY
 #[test]
 fn test_coinbase_output_exceeds_max_money() {
-    let coinbase = create_coinbase_tx(100, MAX_MONEY + 1);
+    let coinbase = create_coinbase_tx(MAX_MONEY + 1);
 
     use blvm_consensus::transaction::check_transaction;
     let result = check_transaction(&coinbase);

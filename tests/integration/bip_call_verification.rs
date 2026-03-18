@@ -10,12 +10,11 @@ use blvm_consensus::block::connect_block;
 /// Test that verifies BIP30 check is called by creating a known-violating block
 ///
 /// This test will FAIL if BIP30 check is removed from connect_block.
+/// See bip_enforcement_tests.rs for the actual implementation.
 #[test]
 #[should_panic(expected = "CRITICAL BUG")]
 fn verify_bip30_check_called() {
-    // This test is designed to panic if BIP30 check is NOT called
-    // See bip_enforcement_tests.rs for the actual implementation
-    // This is a placeholder that documents the requirement
+    // Empty: would construct BIP30-violating block and assert connect_block panics
 }
 
 /// Test that verifies BIP34 check is called by creating a known-violating block

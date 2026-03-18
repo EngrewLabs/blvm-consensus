@@ -114,7 +114,7 @@ pub async fn replay_historical_blocks(
                 // Validate block
                 // connect_block expects &[Witness] where each Witness is Vec<ByteString> (one per transaction)
                 use blvm_consensus::block::connect_block;
-                match connect_block(&block, &witnesses, utxo_set.clone(), current_height, None::<&[crate::types::BlockHeader]>, 0u64, crate::types::Network::Mainnet) {
+                match { let ctx = block::BlockValidationContext::for_network(crate::types::Network::Mainnet); connect_block(&block, &witnesses, utxo_set.clone(), current_height, &ctx) } {
                     Ok((validation_result, new_utxo_set)) => {
                         match validation_result {
                             blvm_consensus::ValidationResult::Valid => {
@@ -165,50 +165,33 @@ pub async fn replay_historical_blocks(
     })
 }
 
-/// Calculate UTXO set hash for checkpoint verification
-///
-/// Produces a deterministic hash of the entire UTXO set for comparison
-/// with known checkpoints. The hash is computed by:
-/// 1. Sorting all UTXOs by outpoint (hash, then index)
-/// 2. Hashing each UTXO's data (outpoint, value, script_pubkey, height)
-/// 3. Final SHA256 hash of all UTXO data
-///
-/// This provides a consistent snapshot of the UTXO set at any given height.
+/// Calculate MuHash3072 of UTXO set for checkpoint verification (Core-compatible).
 pub fn calculate_utxo_set_hash(utxo_set: &UtxoSet) -> [u8; 32] {
-    use sha2::{Sha256, Digest};
-    let mut hasher = Sha256::new();
-    
-    // Sort UTXOs for deterministic hashing
-    // Sort by outpoint hash first, then index
+    use blvm_muhash::{serialize_coin_for_muhash, MuHash3072};
+
     let mut entries: Vec<_> = utxo_set.iter().collect();
-    entries.sort_by(|(a, _), (b, _)| {
-        // Compare hash first (byte array comparison)
-        match a.hash.cmp(&b.hash) {
-            std::cmp::Ordering::Equal => a.index.cmp(&b.index),
-            other => other,
-        }
+    entries.sort_by(|(a, _), (b, _)| match a.hash.cmp(&b.hash) {
+        std::cmp::Ordering::Equal => a.index.cmp(&b.index),
+        other => other,
     });
-    
-    // Hash each UTXO entry
+
+    let mut muhash = MuHash3072::new();
     for (outpoint, utxo) in entries {
-        // Hash outpoint (32-byte hash + 4-byte index)
-        hasher.update(&outpoint.hash);
-        hasher.update(&outpoint.index.to_le_bytes());
-        
-        // Hash UTXO data (8-byte value + script_pubkey + 8-byte height)
-        hasher.update(&utxo.value.to_le_bytes());
-        hasher.update(&utxo.script_pubkey);
-        hasher.update(&utxo.height.to_le_bytes());
+        let height_u32 = utxo.height.min(u32::MAX as u64) as u32;
+        let serialized = serialize_coin_for_muhash(
+            &outpoint.hash,
+            outpoint.index,
+            height_u32,
+            utxo.is_coinbase,
+            utxo.value,
+            utxo.script_pubkey.as_ref(),
+        );
+        muhash = muhash.insert(&serialized);
     }
-    
-    // Final hash
-    let hash = hasher.finalize();
-    let mut result = [0u8; 32];
-    result.copy_from_slice(&hash);
-    result
+    muhash.finalize()
 }
 
-/// Verify UTXO set against known checkpoint hash
+/// Verify UTXO set against known checkpoint hash (muhash format)
 pub fn verify_checkpoint(
     utxo_set: &UtxoSet,
     expected_hash: &[u8; 32],
@@ -219,24 +202,16 @@ pub fn verify_checkpoint(
 
 /// Download a block from Bitcoin network (future implementation)
 ///
-/// This function will support downloading blocks from:
-/// - consensus RPC (getblock command)
-/// - Block explorer APIs (blockstream.info, blockchair.com)
-/// - Public block archives
+/// Download block from network. Not implemented.
 ///
-/// For now, this is a placeholder. Blocks should be pre-downloaded
-/// and stored in block_data_dir for replay.
+/// Pre-download blocks to block_data_dir (e.g. via scripts/download_mainnet_blocks.sh)
+/// or use block_data_dir with pre-downloaded blocks. Network download is optional
+/// (future enhancement).
 pub async fn download_block_from_network(
     _height: u64,
     _config: &ReplayConfig,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    // TODO: Implement block downloading
-    // Options:
-    // 1. consensus RPC: call getblock RPC with verbosity=0 to get raw block
-    // 2. Block explorer API: GET /block/{hash}/raw
-    // 3. Block archive: Download from pre-indexed archives
-    
-    Err("Block downloading not yet implemented. Use block_data_dir with pre-downloaded blocks.".into())
+    Err("Block downloading not implemented. Use block_data_dir with pre-downloaded blocks.".into())
 }
 
 /// Load a single block from disk

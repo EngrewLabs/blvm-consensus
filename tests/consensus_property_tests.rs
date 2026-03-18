@@ -936,7 +936,8 @@ proptest! {
         // Connect block1
         let utxo_set = UtxoSet::default();
         let witnesses1: Vec<Vec<Witness>> = block1.transactions.iter().map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect()).collect();
-        let result1 = block::connect_block(&block1, &witnesses1, utxo_set, height1 as u64, None::<&[BlockHeader]>, 0u64, Network::Mainnet);
+        let ctx = block::BlockValidationContext::for_network(Network::Mainnet);
+        let result1 = block::connect_block(&block1, &witnesses1, utxo_set, height1 as u64, &ctx);
 
         if let Ok((ValidationResult::Valid, utxo_set1, _undo_log1)) = result1 {
             // Calculate supply after block1
@@ -948,7 +949,7 @@ proptest! {
 
             // Connect block2
             let witnesses2: Vec<Vec<Witness>> = block2.transactions.iter().map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect()).collect();
-            let result2 = block::connect_block(&block2, &witnesses2, utxo_set1, height2 as u64, None::<&[BlockHeader]>, 0u64, Network::Mainnet);
+            let result2 = block::connect_block(&block2, &witnesses2, utxo_set1, height2 as u64, &ctx);
 
             if let Ok((ValidationResult::Valid, utxo_set2, _undo_log2)) = result2 {
                 // Calculate supply after block2
@@ -1177,7 +1178,8 @@ proptest! {
         // Connect block1
         let utxo_set = UtxoSet::default();
         let witnesses1: Vec<Vec<Witness>> = block1.transactions.iter().map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect()).collect();
-        let result1 = block::connect_block(&block1, &witnesses1, utxo_set, height1 as u64, None::<&[BlockHeader]>, 0u64, Network::Mainnet);
+        let ctx = block::BlockValidationContext::for_network(Network::Mainnet);
+        let result1 = block::connect_block(&block1, &witnesses1, utxo_set, height1 as u64, &ctx);
 
         if let Ok((ValidationResult::Valid, utxo_set1, _undo_log1)) = result1 {
             // Verify invariants after block1
@@ -1192,7 +1194,7 @@ proptest! {
 
             // Connect block2
             let witnesses2: Vec<Vec<Witness>> = block2.transactions.iter().map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect()).collect();
-            let result2 = block::connect_block(&block2, &witnesses2, utxo_set1, height2 as u64, None::<&[BlockHeader]>, 0u64, Network::Mainnet);
+            let result2 = block::connect_block(&block2, &witnesses2, utxo_set1, height2 as u64, &ctx);
 
             if let Ok((ValidationResult::Valid, utxo_set2, _undo_log2)) = result2 {
                 // Verify invariants after block2 (composition)
@@ -1253,7 +1255,8 @@ proptest! {
         // Connect block
         let utxo_set_before = UtxoSet::default();
         let witnesses: Vec<Vec<Witness>> = block.transactions.iter().map(|tx| tx.inputs.iter().map(|_| Vec::new()).collect()).collect();
-        let result = block::connect_block(&block, &witnesses, utxo_set_before.clone(), height as u64, None::<&[BlockHeader]>, 0u64, Network::Mainnet);
+        let ctx = block::BlockValidationContext::for_network(Network::Mainnet);
+        let result = block::connect_block(&block, &witnesses, utxo_set_before.clone(), height as u64, &ctx);
 
         if let Ok((ValidationResult::Valid, utxo_set_after_connect, _undo_log)) = result {
             // Simulate disconnect via reorganization (disconnect and reconnect same block)

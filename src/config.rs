@@ -6,97 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Network message size limits configuration
-///
-/// These limits protect against DoS attacks by bounding the size of network messages.
-/// All limits match Bitcoin protocol defaults.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NetworkMessageLimits {
-    /// Maximum addresses in an addr message (protocol default: 1000)
-    #[serde(default = "default_max_addr_addresses")]
-    pub max_addr_addresses: usize,
-
-    /// Maximum inventory items in inv/getdata messages (protocol default: 50000)
-    #[serde(default = "default_max_inv_items")]
-    pub max_inv_items: usize,
-
-    /// Maximum headers in a headers message (protocol default: 2000)
-    #[serde(default = "default_max_headers")]
-    pub max_headers: usize,
-
-    /// Maximum user agent length in version message (protocol default: 256 bytes)
-    #[serde(default = "default_max_user_agent_length")]
-    pub max_user_agent_length: usize,
-}
-
-fn default_max_addr_addresses() -> usize {
-    1000
-}
-
-fn default_max_inv_items() -> usize {
-    50000
-}
-
-fn default_max_headers() -> usize {
-    2000
-}
-
-fn default_max_user_agent_length() -> usize {
-    256
-}
-
-impl Default for NetworkMessageLimits {
-    fn default() -> Self {
-        Self {
-            max_addr_addresses: 1000,
-            max_inv_items: 50000,
-            max_headers: 2000,
-            max_user_agent_length: 256,
-        }
-    }
-}
-
-/// Block validation configuration
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BlockValidationConfig {
-    /// Assume-valid height: blocks before this height skip signature verification
-    /// (-assumevalid equivalent)
-    /// Default: 0 (validate all blocks - safest option)
-    #[serde(default)]
-    pub assume_valid_height: u64,
-
-    /// Assume-valid block hash: when set, verify block at assume_valid_height matches.
-    /// Skip applies to blocks before this height. Hash used for ancestry verification.
-    #[serde(default)]
-    pub assume_valid_hash: Option<[u8; 32]>,
-
-    /// Minimum chain work (task 1.6): skip only when best_header_chainwork >= this.
-    /// Core uses u256; we use u128 for simplicity (sufficient for current chain).
-    /// Default: 0 (no chainwork check).
-    #[serde(default)]
-    pub n_minimum_chain_work: u128,
-
-    /// Number of recent headers required for median time-past calculation (BIP113)
-    /// Default: 11 (BIP113 standard)
-    #[serde(default = "default_median_time_past_headers")]
-    pub median_time_past_headers: usize,
-
-    /// Enable parallel transaction validation (requires production feature)
-    #[serde(default = "default_true")]
-    pub enable_parallel_validation: bool,
-
-    /// Coinbase maturity requirement override (for testing only)
-    /// Default: 0 (use consensus constant: 100 blocks)
-    /// WARNING: Changing this may cause consensus divergence
-    #[serde(default)]
-    pub coinbase_maturity_override: u64,
-
-    /// Maximum block sigop cost override (for testing only)
-    /// Default: 0 (use consensus constant: 80,000)
-    /// WARNING: Changing this may cause consensus divergence
-    #[serde(default)]
-    pub max_block_sigops_cost_override: u64,
-}
+// Re-export foundational config types from blvm-primitives
+pub use blvm_primitives::config::{BlockValidationConfig, NetworkMessageLimits};
 
 /// Mempool configuration
 ///
@@ -168,8 +79,9 @@ pub struct MempoolConfig {
     pub reject_spam_in_mempool: bool,
 
     /// Spam filter configuration (if reject_spam_in_mempool is enabled)
+    /// Note: Spam filter moved to blvm-protocol; this field is deprecated, use protocol config.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub spam_filter_config: Option<crate::spam_filter::SpamFilterConfigSerializable>,
+    pub spam_filter_config: Option<serde_json::Value>,
 
     /// Minimum fee rate for large transactions (satoshis per vbyte)
     /// Transactions larger than large_tx_threshold_bytes must pay at least this fee rate
@@ -515,26 +427,8 @@ impl Default for AdvancedConfig {
     }
 }
 
-fn default_median_time_past_headers() -> usize {
-    11
-}
-
 fn default_true() -> bool {
     true
-}
-
-impl Default for BlockValidationConfig {
-    fn default() -> Self {
-        Self {
-            assume_valid_height: 0,
-            assume_valid_hash: None,
-            n_minimum_chain_work: 0,
-            median_time_past_headers: 11,
-            enable_parallel_validation: true,
-            coinbase_maturity_override: 0,
-            max_block_sigops_cost_override: 0,
-        }
-    }
 }
 
 /// Complete consensus configuration
@@ -572,11 +466,6 @@ pub struct ConsensusConfig {
     #[serde(default)]
     pub advanced: AdvancedConfig,
 
-    /// UTXO commitments module configuration (if feature enabled)
-    /// This includes peer consensus, spam filtering, and sync mode
-    #[cfg(feature = "utxo-commitments")]
-    #[serde(default)]
-    pub utxo_commitments: Option<crate::utxo_commitments::UtxoCommitmentsConfig>,
 }
 
 impl ConsensusConfig {

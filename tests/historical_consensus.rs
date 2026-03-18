@@ -11,7 +11,7 @@
 //! Also tests historical consensus bugs:
 //! - CVE-2012-2459: Merkle tree duplicate hash vulnerability
 
-use blvm_consensus::block::connect_block;
+use blvm_consensus::block::{connect_block, BlockValidationContext};
 use blvm_consensus::types::Network;
 use blvm_consensus::{
     Block, BlockHeader, OutPoint, Transaction, TransactionInput, TransactionOutput, UtxoSet,
@@ -203,7 +203,7 @@ fn test_cve_2012_2459_merkle_duplicate_hash() {
 /// The fix: Consensus validates that all transactions in a block spend unique UTXOs.
 #[test]
 fn test_cve_2018_17144_double_spend_in_block() {
-    use blvm_consensus::block::connect_block;
+    use blvm_consensus::block::{connect_block, BlockValidationContext};
 
     // Create a UTXO that will be spent twice
     let mut utxo_set = UtxoSet::default();
@@ -293,15 +293,8 @@ fn test_cve_2018_17144_double_spend_in_block() {
 
     // Block should be rejected due to double-spend
     let witnesses = vec![vec![], vec![], vec![]]; // Empty witnesses
-    let result = connect_block(
-        &block,
-        &witnesses,
-        utxo_set,
-        1,
-        None::<&[BlockHeader]>,
-        0u64,
-        Network::Mainnet,
-    );
+    let ctx = BlockValidationContext::for_network(Network::Mainnet);
+    let result = connect_block(&block, &witnesses, utxo_set, 1, &ctx);
 
     // Block should be invalid due to double-spend
     if let Ok((validation_result, _, _undo_log)) = result {
@@ -339,18 +332,10 @@ fn test_pre_segwit_block_validation() {
 
     let utxo_set = UtxoSet::default();
 
-    // Block should validate at pre-SegWit height
-    // (Note: This is a placeholder - actual validation would check witness data)
+    // Block should validate at pre-SegWit height (empty witnesses; witness rules apply post-SegWit)
     let witnesses = vec![];
-    let result = connect_block(
-        &block,
-        &witnesses,
-        utxo_set,
-        pre_segwit_height,
-        None::<&[BlockHeader]>,
-        0u64,
-        Network::Mainnet,
-    );
+    let ctx = BlockValidationContext::for_network(Network::Mainnet);
+    let result = connect_block(&block, &witnesses, utxo_set, pre_segwit_height, &ctx);
 
     // Result may be invalid due to missing transactions, but structure should be valid
     assert!(result.is_ok() || result.is_err());
@@ -382,15 +367,8 @@ fn test_post_segwit_block_validation() {
 
     // Block should validate at post-SegWit height
     let witnesses = vec![];
-    let result = connect_block(
-        &block,
-        &witnesses,
-        utxo_set,
-        post_segwit_height,
-        None::<&[BlockHeader]>,
-        0u64,
-        Network::Mainnet,
-    );
+    let ctx = BlockValidationContext::for_network(Network::Mainnet);
+    let result = connect_block(&block, &witnesses, utxo_set, post_segwit_height, &ctx);
 
     // Result may be invalid due to missing transactions, but structure should be valid
     assert!(result.is_ok() || result.is_err());
@@ -422,15 +400,8 @@ fn test_post_taproot_block_validation() {
 
     // Block should validate at post-Taproot height
     let witnesses = vec![];
-    let result = connect_block(
-        &block,
-        &witnesses,
-        utxo_set,
-        post_taproot_height,
-        None::<&[BlockHeader]>,
-        0u64,
-        Network::Mainnet,
-    );
+    let ctx = BlockValidationContext::for_network(Network::Mainnet);
+    let result = connect_block(&block, &witnesses, utxo_set, post_taproot_height, &ctx);
 
     // Result may be invalid due to missing transactions, but structure should be valid
     assert!(result.is_ok() || result.is_err());

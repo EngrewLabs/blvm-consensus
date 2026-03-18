@@ -15,7 +15,7 @@ pub use crate::witness::Witness;
 
 /// Calculate transaction weight for SegWit
 /// Weight(tx) = 4 × |Serialize(tx ∖ witness)| + |Serialize(tx)|
-#[spec_locked("11.1")]
+#[spec_locked("11.1.1")]
 pub fn calculate_transaction_weight(
     tx: &Transaction,
     witness: Option<&Witness>,
@@ -33,7 +33,7 @@ pub fn calculate_transaction_weight(
 }
 
 /// Calculate base size (transaction without witness data)
-#[spec_locked("11.1")]
+#[spec_locked("11.1.1")]
 fn calculate_base_size(tx: &Transaction) -> Natural {
     // Simplified calculation - in reality this would be the actual serialized size
     (4 + // version
@@ -43,7 +43,7 @@ fn calculate_base_size(tx: &Transaction) -> Natural {
 }
 
 /// Calculate total size (transaction with witness data)
-#[spec_locked("11.1")]
+#[spec_locked("11.1.1")]
 fn calculate_total_size(tx: &Transaction, witness: Option<&Witness>) -> Natural {
     let base_size = calculate_base_size(tx);
 
@@ -57,7 +57,7 @@ fn calculate_total_size(tx: &Transaction, witness: Option<&Witness>) -> Natural 
 
 /// Compute witness merkle root for block
 /// WitnessRoot = ComputeMerkleRoot({Hash(tx.witness) : tx ∈ block.transactions})
-#[spec_locked("11.1")]
+#[spec_locked("11.1.4")]
 pub fn compute_witness_merkle_root(block: &Block, witnesses: &[Witness]) -> Result<Hash> {
     if block.transactions.is_empty() {
         return Err(crate::error::ConsensusError::ConsensusRuleViolation(
@@ -82,6 +82,8 @@ pub fn compute_witness_merkle_root(block: &Block, witnesses: &[Witness]) -> Resu
 }
 
 /// Hash witness data
+/// Orange Paper 11.1: Hash(tx.witness) for witness merkle commitment
+#[spec_locked("11.1")]
 fn hash_witness(witness: &Witness) -> Hash {
     let mut hasher = sha256d::Hash::engine();
     for element in witness {
@@ -95,6 +97,8 @@ fn hash_witness(witness: &Witness) -> Hash {
 
 /// Hash witness from nested structure (Vec<Witness> per tx) without allocating.
 /// Each tx's witness is the concatenation of its input stacks for merkle commitment.
+/// Orange Paper 11.1.4: Hash(tx.witness) for witness merkle commitment
+#[spec_locked("11.1.4")]
 fn hash_witness_from_nested(tx_witnesses: &[Witness]) -> Hash {
     let mut hasher = sha256d::Hash::engine();
     for witness_stack in tx_witnesses {
@@ -111,6 +115,8 @@ fn hash_witness_from_nested(tx_witnesses: &[Witness]) -> Hash {
 /// Compute witness merkle root from nested witnesses without flattening.
 /// Accepts `&[Vec<Witness>]` where each `Vec<Witness>` is one tx's input stacks.
 /// Avoids allocating flattened structure in block validation hot path.
+/// Orange Paper 11.1.4: WitnessRoot = ComputeMerkleRoot({Hash(tx.witness) : tx ∈ block.transactions})
+#[spec_locked("11.1.4")]
 pub fn compute_witness_merkle_root_from_nested(
     block: &Block,
     witnesses: &[Vec<Witness>],
@@ -138,7 +144,7 @@ fn compute_merkle_root(hashes: &[Hash]) -> Result<Hash> {
 }
 
 /// Validate witness commitment in coinbase transaction
-#[spec_locked("11.1")]
+#[spec_locked("11.1.5")]
 pub fn validate_witness_commitment(
     coinbase_tx: &Transaction,
     witness_merkle_root: &Hash,
@@ -155,6 +161,8 @@ pub fn validate_witness_commitment(
 }
 
 /// Extract witness commitment from script
+/// Orange Paper 11.1.5: Witness commitment in coinbase OP_RETURN output
+#[spec_locked("11.1.5")]
 pub(crate) fn extract_witness_commitment(script: &ByteString) -> Option<Hash> {
     // Look for OP_RETURN followed by witness commitment
     if script.len() >= 38 && script[0] == OP_RETURN {
@@ -171,7 +179,7 @@ pub(crate) fn extract_witness_commitment(script: &ByteString) -> Option<Hash> {
 }
 
 /// Check if transaction is SegWit (v0) or Taproot (v1) based on outputs
-#[spec_locked("11.1")]
+#[spec_locked("11.1.6")]
 pub fn is_segwit_transaction(tx: &Transaction) -> bool {
     use crate::witness::{
         extract_witness_program, extract_witness_version, validate_witness_program_length,
@@ -189,7 +197,7 @@ pub fn is_segwit_transaction(tx: &Transaction) -> bool {
 }
 
 /// Calculate block weight for SegWit blocks
-#[spec_locked("11.1")]
+#[spec_locked("11.1.1")]
 pub fn calculate_block_weight(block: &Block, witnesses: &[Witness]) -> Result<Natural> {
     let mut total_weight = 0;
 
@@ -209,6 +217,8 @@ pub fn calculate_block_weight(block: &Block, witnesses: &[Witness]) -> Result<Na
 /// Calculate block weight from nested witnesses without flattening.
 /// Accepts `&[Vec<Witness>]` where each `Vec<Witness>` is one tx's input witness stacks.
 /// Avoids allocating the flattened structure in the hot block validation path.
+/// Orange Paper 11.1.1: Weight(tx) = 4 × BaseSize + TotalSize
+#[spec_locked("11.1.1")]
 #[inline]
 pub fn calculate_block_weight_from_nested(
     block: &Block,
@@ -234,7 +244,7 @@ pub fn calculate_block_weight_from_nested(
 }
 
 /// Validate SegWit block
-#[spec_locked("11.1")]
+#[spec_locked("11.1.7")]
 pub fn validate_segwit_block(
     block: &Block,
     witnesses: &[Witness],
@@ -267,6 +277,7 @@ pub fn validate_segwit_block(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::create_test_header;
 
     #[test]
     fn test_calculate_transaction_weight() {
@@ -300,7 +311,7 @@ mod tests {
     #[test]
     fn test_compute_witness_merkle_root_empty_block() {
         let block = Block {
-            header: create_test_header(),
+            header: create_test_header(1231006505, [0u8; 32]),
             transactions: vec![].into_boxed_slice(),
         };
         let witnesses = vec![];
@@ -547,23 +558,12 @@ mod tests {
 
     fn create_test_block() -> Block {
         Block {
-            header: create_test_header(),
+            header: create_test_header(1231006505, [0u8; 32]),
             transactions: vec![
                 create_test_transaction(), // Coinbase
                 create_test_transaction(), // Regular tx
             ]
             .into_boxed_slice(),
-        }
-    }
-
-    fn create_test_header() -> BlockHeader {
-        BlockHeader {
-            version: 1,
-            prev_block_hash: [0; 32],
-            merkle_root: [0; 32],
-            timestamp: 1231006505,
-            bits: 0x1d00ffff,
-            nonce: 0,
         }
     }
 

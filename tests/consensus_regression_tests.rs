@@ -10,7 +10,7 @@
 //! All fixes were validated through full-chain differential testing (912,723 blocks)
 //! with 0 divergences found.
 
-use blvm_consensus::bip_validation::check_bip30;
+use blvm_consensus::bip_validation::check_bip30_network;
 use blvm_consensus::constants::*;
 use blvm_consensus::script::{verify_script, verify_script_with_context_full, SigVersion};
 use blvm_consensus::transaction_hash::{
@@ -96,8 +96,7 @@ fn test_p2sh_scriptsig_push_only_validation() {
         None,
         Network::Mainnet,
         SigVersion::Base,
-        None,
-        None,
+        #[cfg(feature = "production")]
         None,
         None, // precomputed_bip143
         #[cfg(feature = "production")]
@@ -193,8 +192,7 @@ fn test_taproot_empty_scriptsig_requirement() {
         None,
         Network::Mainnet,
         SigVersion::Base,
-        None,
-        None,
+        #[cfg(feature = "production")]
         None,
         None, // precomputed_bip143
         #[cfg(feature = "production")]
@@ -400,12 +398,12 @@ fn test_bip30_deactivation() {
 
     // Before deactivation (block 91,721): BIP30 should be active
     let height_before = BIP30_DEACTIVATION_MAINNET - 1;
-    let _result_before = check_bip30(&block, &utxo_set, None, height_before, network, None);
+    let _result_before = check_bip30_network(&block, &utxo_set, None, height_before, network, None);
     // Should check BIP30 (may pass or fail depending on UTXO set state)
 
     // After deactivation (block 91,723): BIP30 should be skipped
     let height_after = BIP30_DEACTIVATION_MAINNET + 1;
-    let result_after = check_bip30(&block, &utxo_set, None, height_after, network, None);
+    let result_after = check_bip30_network(&block, &utxo_set, None, height_after, network, None);
 
     // CRITICAL: After deactivation, BIP30 check should always pass
     assert!(
@@ -574,8 +572,7 @@ fn test_script_flags_per_transaction() {
         None,
         Network::Mainnet,
         SigVersion::Base,
-        None,
-        None,
+        #[cfg(feature = "production")]
         None,
         None, // precomputed_bip143
         #[cfg(feature = "production")]

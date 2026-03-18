@@ -1,7 +1,10 @@
 #![no_main]
-// Note: Compact block functions are in blvm-node, so this is a placeholder
-// for when blvm-node fuzzing infrastructure is set up
-// For now, fuzz the consensus operations that compact blocks depend on
+//! Fuzz block validation and UTXO operations used by compact block reconstruction.
+//!
+//! Compact block (BIP152) reconstruction logic lives in blvm-node; this target
+//! exercises the consensus-layer block connection and UTXO handling that compact
+//! blocks depend on. For full BIP152 fuzzing (shortids, prefilled txs, etc.),
+//! see blvm-node/fuzz/ when available.
 
 use consensus_proof::block::connect_block;
 use consensus_proof::{Block, BlockHeader, Hash, Transaction, TransactionOutput, UtxoSet};
@@ -77,8 +80,14 @@ fuzz_target!(|data: &[u8]| {
     };
 
     let utxo_set = UtxoSet::default();
+    let witnesses: Vec<Vec<consensus_proof::Witness>> = block
+        .transactions
+        .iter()
+        .map(|tx| (0..tx.inputs.len()).map(|_| vec![]).collect())
+        .collect();
 
     // Test block connection - should never panic
     // This exercises the same code paths that compact blocks use
-    let _result = connect_block(&block, utxo_set, 0);
+    let ctx = block::BlockValidationContext::for_network(consensus_proof::types::Network::Mainnet);
+    let _result = connect_block(&block, &witnesses, utxo_set, 0, &ctx);
 });

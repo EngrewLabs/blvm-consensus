@@ -556,6 +556,20 @@ impl U256 {
     fn is_zero(&self) -> bool {
         self.0.iter().all(|&x| x == 0)
     }
+
+    /// Convert U256 to f64 for difficulty display.
+    /// Precision loss for very large values; sufficient for RPC difficulty (4-8 significant digits).
+    fn to_f64(&self) -> f64 {
+        if self.is_zero() {
+            return 0.0;
+        }
+        let mut result = 0.0_f64;
+        result += self.0[0] as f64;
+        result += (self.0[1] as f64) * 2.0_f64.powi(64);
+        result += (self.0[2] as f64) * 2.0_f64.powi(128);
+        result += (self.0[3] as f64) * 2.0_f64.powi(192);
+        result
+    }
 }
 
 impl PartialOrd for U256 {
@@ -574,6 +588,29 @@ impl Ord for U256 {
         }
         std::cmp::Ordering::Equal
     }
+}
+
+/// Convert compact target bits to human-readable difficulty (MAX_TARGET / target).
+///
+/// Used by getblockchaininfo, getmininginfo RPC for display. Formula: difficulty = MAX_TARGET / target
+/// where MAX_TARGET = 0x00000000FFFF0000000000000000000000000000000000000000000000000000 (genesis).
+#[spec_locked("7.1")]
+pub fn difficulty_from_bits(bits: Natural) -> Result<f64> {
+    let target = expand_target(bits)?;
+    if target.is_zero() {
+        return Ok(1.0);
+    }
+    // MAX_TARGET = 0x00000000FFFF0000... (genesis target, compact 0x1d00ffff)
+    let max_target = U256::from_bytes(&[
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x00, 0xFF,
+        0xFF, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    let max_f64 = max_target.to_f64();
+    let target_f64 = target.to_f64();
+    if target_f64 == 0.0 {
+        return Ok(1.0);
+    }
+    Ok((max_f64 / target_f64).max(1.0))
 }
 
 /// Expand target from compact representation
@@ -928,6 +965,16 @@ mod tests {
 
         // Should return same difficulty (adjustment = 1.0)
         assert_eq!(result, 0x1d00ffff);
+    }
+
+    #[test]
+    fn test_difficulty_from_bits() {
+        // Genesis bits 0x1d00ffff → difficulty 1.0
+        let d = difficulty_from_bits(0x1d00ffff).unwrap();
+        assert!((d - 1.0).abs() < 0.01, "Genesis difficulty should be ~1.0, got {d}");
+        // Harder target (smaller mantissa) → higher difficulty
+        let d_harder = difficulty_from_bits(0x1d000800).unwrap();
+        assert!(d_harder > d, "Harder target should have higher difficulty");
     }
 
     #[test]

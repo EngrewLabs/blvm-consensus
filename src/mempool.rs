@@ -2,7 +2,6 @@
 
 use crate::constants::*;
 use crate::economic::calculate_fee;
-use crate::opcodes::*;
 use crate::error::{ConsensusError, Result};
 use crate::script::verify_script;
 use crate::segwit::Witness;
@@ -232,7 +231,7 @@ fn calculate_script_flags(tx: &Transaction, witnesses: Option<&[Witness]>) -> u3
     // Check if witness data is present (optimization: just check bool, no witness needed)
     let has_witness = witnesses.map(|w| !w.is_empty()).unwrap_or(false);
     const MEMPOOL_POLICY_HEIGHT: u64 = 1_000_000; // All soft forks active at this height
-    crate::block::calculate_script_flags_for_block(
+    crate::block::calculate_script_flags_for_block_network(
         tx,
         has_witness,
         MEMPOOL_POLICY_HEIGHT,

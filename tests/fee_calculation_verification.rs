@@ -6,50 +6,17 @@
 //! Consensus-critical: Fee differences = different transaction acceptance
 
 use blvm_consensus::constants::*;
+use blvm_consensus::test_utils::create_test_utxo_set_two_outputs;
 use blvm_consensus::transaction::check_tx_inputs;
 use blvm_consensus::types::ValidationResult;
 use blvm_consensus::types::*;
-
-/// Create a test UTXO set
-fn create_test_utxo_set() -> UtxoSet {
-    let mut utxo_set = UtxoSet::default();
-
-    // Add some test UTXOs
-    utxo_set.insert(
-        OutPoint {
-            hash: [1; 32].into(),
-            index: 0,
-        },
-        std::sync::Arc::new(UTXO {
-            value: 100_000_000, // 1 BTC
-            script_pubkey: vec![0x51].into(),
-            height: 100,
-            is_coinbase: false,
-        }),
-    );
-
-    utxo_set.insert(
-        OutPoint {
-            hash: [2; 32].into(),
-            index: 0,
-        },
-        std::sync::Arc::new(UTXO {
-            value: 50_000_000, // 0.5 BTC
-            script_pubkey: vec![0x52].into(),
-            height: 101,
-            is_coinbase: false,
-        }),
-    );
-
-    utxo_set
-}
 
 /// Test zero fee transaction
 ///
 /// Consensus allows zero fee transactions (they're valid but may not be relayed)
 #[test]
 fn test_zero_fee_transaction() {
-    let utxo_set = create_test_utxo_set();
+    let utxo_set = create_test_utxo_set_two_outputs();
 
     let tx = Transaction {
         version: 1,
@@ -86,7 +53,7 @@ fn test_zero_fee_transaction() {
 /// Fee = input_sum - output_sum fee = input_sum - output_sum
 #[test]
 fn test_positive_fee_transaction() {
-    let utxo_set = create_test_utxo_set();
+    let utxo_set = create_test_utxo_set_two_outputs();
 
     let tx = Transaction {
         version: 1,
@@ -126,7 +93,7 @@ fn test_positive_fee_transaction() {
 /// Consensus rejects transactions where output_sum > input_sum
 #[test]
 fn test_negative_fee_transaction() {
-    let utxo_set = create_test_utxo_set();
+    let utxo_set = create_test_utxo_set_two_outputs();
 
     let tx = Transaction {
         version: 1,
@@ -162,7 +129,7 @@ fn test_negative_fee_transaction() {
 /// Fee calculation: sum all inputs, then subtracts all outputs
 #[test]
 fn test_fee_multiple_inputs() {
-    let utxo_set = create_test_utxo_set();
+    let utxo_set = create_test_utxo_set_two_outputs();
 
     let tx = Transaction {
         version: 1,
@@ -212,7 +179,7 @@ fn test_fee_multiple_inputs() {
 /// Fee calculation: sum all outputs, then subtracts from input sum
 #[test]
 fn test_fee_multiple_outputs() {
-    let utxo_set = create_test_utxo_set();
+    let utxo_set = create_test_utxo_set_two_outputs();
 
     let tx = Transaction {
         version: 1,

@@ -5,7 +5,7 @@
 //!
 //! Consensus-critical: Spending coinbase too early causes consensus violation.
 
-use blvm_consensus::block::connect_block;
+use blvm_consensus::block::{connect_block, BlockValidationContext};
 use blvm_consensus::types::{
     Block, BlockHeader, Network, OutPoint, Transaction, TransactionInput, TransactionOutput,
     UtxoSet,
@@ -232,15 +232,8 @@ fn test_coinbase_maturity_block_validation() {
     // (This depends on actual validation implementation)
     // Provide empty witnesses for each transaction (non-SegWit)
     let witnesses: Vec<Vec<Witness>> = vec![Vec::new(), Vec::new()];
-    let result = connect_block(
-        &block,
-        &witnesses,
-        utxo_set,
-        height,
-        None::<&[BlockHeader]>,
-        0u64,
-        Network::Mainnet,
-    );
+    let ctx = BlockValidationContext::for_network(Network::Mainnet);
+    let result = connect_block(&block, &witnesses, utxo_set, height, &ctx);
 
     // Result may be invalid due to immature coinbase
     assert!(result.is_ok() || result.is_err());

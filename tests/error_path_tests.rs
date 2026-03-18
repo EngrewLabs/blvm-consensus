@@ -1,6 +1,5 @@
 //! Tests for error paths and edge cases
 
-use blvm_consensus::network::*;
 use blvm_consensus::opcodes::*;
 use blvm_consensus::*;
 
@@ -147,40 +146,6 @@ fn test_reorganization_errors() {
         blvm_consensus::types::Network::Regtest,
     );
     assert!(result.is_err());
-}
-
-#[test]
-fn test_network_message_errors() {
-    let consensus = ConsensusProof::new();
-
-    // Test invalid version message
-    let invalid_version = VersionMessage {
-        version: 0, // Too old
-        services: 0,
-        timestamp: 0,
-        addr_recv: NetworkAddress {
-            services: 0,
-            ip: [0; 16],
-            port: 0,
-        },
-        addr_from: NetworkAddress {
-            services: 0,
-            ip: [0; 16],
-            port: 0,
-        },
-        nonce: 0,
-        user_agent: "".to_string(),
-        start_height: 0,
-        relay: false,
-    };
-
-    let message = NetworkMessage::Version(invalid_version);
-    let mut peer_state = PeerState::new();
-    let chain_state = ChainState::new();
-
-    let response = consensus.process_network_message(&message, &mut peer_state, &chain_state);
-    assert!(response.is_ok());
-    // Should reject due to old version
 }
 
 #[test]

@@ -5,6 +5,7 @@
 //!
 //! Mathematical specifications from Orange Paper Section 5.4.
 
+use crate::activation::IsForkActive;
 use crate::block::calculate_tx_id;
 use crate::error::{ConsensusError, Result};
 use crate::transaction::is_coinbase;
@@ -56,22 +57,10 @@ pub fn check_bip30(
     utxo_set: &UtxoSet,
     bip30_index: Option<&Bip30Index>,
     height: Natural,
-    network: crate::types::Network,
+    activation: &impl IsForkActive,
     coinbase_txid: Option<&Hash>,
 ) -> Result<bool> {
-    use crate::constants::{
-        BIP30_DEACTIVATION_MAINNET, BIP30_DEACTIVATION_REGTEST, BIP30_DEACTIVATION_TESTNET,
-    };
-
-    // Check if BIP30 is still active at this height
-    let deactivation_height = match network {
-        crate::types::Network::Mainnet => BIP30_DEACTIVATION_MAINNET,
-        crate::types::Network::Testnet => BIP30_DEACTIVATION_TESTNET,
-        crate::types::Network::Regtest => BIP30_DEACTIVATION_REGTEST,
-    };
-
-    // BIP30 is disabled after deactivation height
-    if height > deactivation_height {
+    if !activation.is_fork_active(ForkId::Bip30, height) {
         return Ok(true);
     }
     // Find coinbase transaction
@@ -119,15 +108,12 @@ pub fn check_bip30(
 /// - Testnet: Block 211,111
 /// - Regtest: Block 0 (always active)
 #[spec_locked("5.4.2")]
-pub fn check_bip34(block: &Block, height: Natural, network: crate::types::Network) -> Result<bool> {
-    let activation_height = match network {
-        crate::types::Network::Mainnet => crate::constants::BIP34_ACTIVATION_MAINNET,
-        crate::types::Network::Testnet => crate::constants::BIP34_ACTIVATION_TESTNET,
-        crate::types::Network::Regtest => crate::constants::BIP34_ACTIVATION_REGTEST,
-    };
-
-    // BIP34 only applies after activation height
-    if height < activation_height {
+pub fn check_bip34(
+    block: &Block,
+    height: Natural,
+    activation: &impl IsForkActive,
+) -> Result<bool> {
+    if !activation.is_fork_active(ForkId::Bip34, height) {
         return Ok(true);
     }
 
@@ -166,6 +152,58 @@ pub fn check_bip34(block: &Block, height: Natural, network: crate::types::Networ
     }
 
     Ok(true)
+}
+
+/// BIP54: Consensus Cleanup activation (with optional override).
+///
+/// When `activation_override` is `Some(h)`, returns true iff `height >= h` (caller-derived
+/// activation, e.g. from BIP9 version bits). When `None`, uses per-network constants
+/// (`BIP54_ACTIVATION_*`). This allows the node to run BIP54 when miners are signalling
+/// without configuring a fixed activation height.
+#[spec_locked("5.4.9")]
+pub fn is_bip54_active_at(
+    height: Natural,
+    network: crate::types::Network,
+    activation_override: Option<u64>,
+) -> bool {
+    let activation = match activation_override {
+        Some(h) => h,
+        None => match network {
+            crate::types::Network::Mainnet => crate::constants::BIP54_ACTIVATION_MAINNET,
+            crate::types::Network::Testnet => crate::constants::BIP54_ACTIVATION_TESTNET,
+            crate::types::Network::Regtest => crate::constants::BIP54_ACTIVATION_REGTEST,
+        },
+    };
+    height >= activation
+}
+
+/// BIP54: Consensus Cleanup activation (constant-only).
+///
+/// Returns true if block at `height` on `network` is at or past the configured
+/// BIP54 activation height. For activation derived from miner signalling (version bits),
+/// use `connect_block_ibd` with `bip54_activation_override` set from
+/// `blvm_consensus::version_bits::activation_height_from_headers` (e.g. with `version_bits::bip54_deployment_mainnet()`).
+#[spec_locked("5.4.9")]
+pub fn is_bip54_active(height: Natural, network: crate::types::Network) -> bool {
+    is_bip54_active_at(height, network, None)
+}
+
+/// BIP54: Coinbase nLockTime and nSequence (Consensus Cleanup).
+///
+/// After BIP54 activation, coinbase must have lock_time == height - 13 and sequence != 0xffff_ffff.
+#[spec_locked("5.4.9")]
+pub fn check_bip54_coinbase(coinbase: &Transaction, height: Natural) -> bool {
+    let required_lock_time = height.saturating_sub(13);
+    if (coinbase.lock_time as u64) != required_lock_time {
+        return false;
+    }
+    if coinbase.inputs.is_empty() {
+        return false;
+    }
+    if coinbase.inputs[0].sequence == 0xffff_ffff {
+        return false;
+    }
+    true
 }
 
 /// Extract block height from coinbase scriptSig (CScriptNum encoding)
@@ -290,16 +328,9 @@ fn extract_height_from_script_sig(script_sig: &[u8]) -> Result<Natural> {
 pub fn check_bip66(
     signature: &[u8],
     height: Natural,
-    network: crate::types::Network,
+    activation: &impl IsForkActive,
 ) -> Result<bool> {
-    let activation_height = match network {
-        crate::types::Network::Mainnet => crate::constants::BIP66_ACTIVATION_MAINNET,
-        crate::types::Network::Testnet => crate::constants::BIP66_ACTIVATION_TESTNET,
-        crate::types::Network::Regtest => crate::constants::BIP66_ACTIVATION_REGTEST,
-    };
-
-    // BIP66 only applies after activation height
-    if height < activation_height {
+    if !activation.is_fork_active(ForkId::Bip66, height) {
         return Ok(true);
     }
 
@@ -426,41 +457,84 @@ fn is_strict_der(signature: &[u8]) -> Result<bool> {
 pub fn check_bip90(
     block_version: i64,
     height: Natural,
-    network: crate::types::Network,
+    activation: &impl IsForkActive,
 ) -> Result<bool> {
-    let (bip34_height, bip66_height, bip65_height) = match network {
-        crate::types::Network::Mainnet => (
-            crate::constants::BIP34_ACTIVATION_MAINNET,
-            crate::constants::BIP66_ACTIVATION_MAINNET,
-            crate::constants::BIP65_ACTIVATION_MAINNET,
-        ),
-        crate::types::Network::Testnet => (
-            crate::constants::BIP34_ACTIVATION_TESTNET,
-            crate::constants::BIP66_ACTIVATION_TESTNET,
-            crate::constants::BIP65_ACTIVATION_MAINNET, // BIP65 same for testnet
-        ),
-        crate::types::Network::Regtest => (
-            crate::constants::BIP34_ACTIVATION_REGTEST,
-            crate::constants::BIP66_ACTIVATION_REGTEST,
-            0, // BIP65 regtest (always active)
-        ),
-    };
-
-    // Check minimum version requirements
-    if height >= bip34_height && block_version < 2 {
+    if activation.is_fork_active(ForkId::Bip34, height) && block_version < 2 {
         return Ok(false);
     }
-    if height >= bip66_height && block_version < 3 {
+    if activation.is_fork_active(ForkId::Bip66, height) && block_version < 3 {
         return Ok(false);
     }
-    if height >= bip65_height && block_version < 4 {
+    if activation.is_fork_active(ForkId::Bip65, height) && block_version < 4 {
         return Ok(false);
     }
 
     Ok(true)
 }
 
-// Network type is now in crate::types::Network
+/// Convenience: BIP30 check using network (builds activation table).
+pub fn check_bip30_network(
+    block: &Block,
+    utxo_set: &UtxoSet,
+    bip30_index: Option<&Bip30Index>,
+    height: Natural,
+    network: crate::types::Network,
+    coinbase_txid: Option<&Hash>,
+) -> Result<bool> {
+    let table = crate::activation::ForkActivationTable::from_network(network);
+    check_bip30(block, utxo_set, bip30_index, height, &table, coinbase_txid)
+}
+
+/// Convenience: BIP34 check using network.
+pub fn check_bip34_network(
+    block: &Block,
+    height: Natural,
+    network: crate::types::Network,
+) -> Result<bool> {
+    let table = crate::activation::ForkActivationTable::from_network(network);
+    check_bip34(block, height, &table)
+}
+
+/// Convenience: BIP66 check using network (for script/signature callers).
+pub fn check_bip66_network(
+    signature: &[u8],
+    height: Natural,
+    network: crate::types::Network,
+) -> Result<bool> {
+    let table = crate::activation::ForkActivationTable::from_network(network);
+    check_bip66(signature, height, &table)
+}
+
+/// Convenience: BIP90 check using network.
+pub fn check_bip90_network(
+    block_version: i64,
+    height: Natural,
+    network: crate::types::Network,
+) -> Result<bool> {
+    let table = crate::activation::ForkActivationTable::from_network(network);
+    check_bip90(block_version, height, &table)
+}
+
+/// Convenience: BIP147 check using network (Bip147Network for backward compatibility).
+pub fn check_bip147_network(
+    script_sig: &[u8],
+    script_pubkey: &[u8],
+    height: Natural,
+    network: Bip147Network,
+) -> Result<bool> {
+    let table = match network {
+        Bip147Network::Mainnet => {
+            crate::activation::ForkActivationTable::from_network(crate::types::Network::Mainnet)
+        }
+        Bip147Network::Testnet => {
+            crate::activation::ForkActivationTable::from_network(crate::types::Network::Testnet)
+        }
+        Bip147Network::Regtest => {
+            crate::activation::ForkActivationTable::from_network(crate::types::Network::Regtest)
+        }
+    };
+    check_bip147(script_sig, script_pubkey, height, &table)
+}
 
 /// BIP147: NULLDUMMY Enforcement
 ///
@@ -478,16 +552,9 @@ pub fn check_bip147(
     script_sig: &[u8],
     script_pubkey: &[u8],
     height: Natural,
-    network: Bip147Network,
+    activation: &impl IsForkActive,
 ) -> Result<bool> {
-    let activation_height = match network {
-        Bip147Network::Mainnet => crate::constants::BIP147_ACTIVATION_MAINNET,
-        Bip147Network::Testnet => crate::constants::BIP147_ACTIVATION_TESTNET,
-        Bip147Network::Regtest => 0, // Always active on regtest
-    };
-
-    // BIP147 only applies after activation height
-    if height < activation_height {
+    if !activation.is_fork_active(ForkId::Bip147, height) {
         return Ok(true);
     }
 
@@ -589,7 +656,7 @@ mod tests {
         };
 
         let utxo_set = UtxoSet::default();
-        let result = check_bip30(
+        let result = check_bip30_network(
             &block,
             &utxo_set,
             None,
@@ -634,7 +701,7 @@ mod tests {
         };
 
         // Before activation, BIP34 should pass
-        let result = check_bip34(&block, 100_000, crate::types::Network::Mainnet).unwrap();
+        let result = check_bip34_network(&block, 100_000, crate::types::Network::Mainnet).unwrap();
         assert!(result, "BIP34 should pass before activation");
     }
 
@@ -677,30 +744,30 @@ mod tests {
             transactions: transactions.into_boxed_slice(),
         };
 
-        let result = check_bip34(&block, height, crate::types::Network::Mainnet).unwrap();
+        let result = check_bip34_network(&block, height, crate::types::Network::Mainnet).unwrap();
         assert!(result, "BIP34 should pass with correct height encoding");
     }
 
     #[test]
     fn test_bip90_version_enforcement() {
         // Test version 1 before BIP34 activation
-        let result = check_bip90(1, 100_000, crate::types::Network::Mainnet).unwrap();
+        let result = check_bip90_network(1, 100_000, crate::types::Network::Mainnet).unwrap();
         assert!(result, "Version 1 should be valid before BIP34");
 
         // Test version 1 after BIP34 activation (should fail)
-        let result = check_bip90(1, 227_836, crate::types::Network::Mainnet).unwrap();
+        let result = check_bip90_network(1, 227_836, crate::types::Network::Mainnet).unwrap();
         assert!(
             !result,
             "Version 1 should be invalid after BIP34 activation"
         );
 
         // Test version 2 after BIP34 activation (should pass)
-        let result = check_bip90(2, 227_836, crate::types::Network::Mainnet).unwrap();
+        let result = check_bip90_network(2, 227_836, crate::types::Network::Mainnet).unwrap();
         assert!(result, "Version 2 should be valid after BIP34 activation");
 
         // Test version 2 after BIP66 activation (should fail)
         // BIP66 activates at block 363,725, so we test at that height
-        let result = check_bip90(2, 363_725, crate::types::Network::Mainnet).unwrap();
+        let result = check_bip90_network(2, 363_725, crate::types::Network::Mainnet).unwrap();
         assert!(
             !result,
             "Version 2 should be invalid after BIP66 activation"
@@ -708,7 +775,7 @@ mod tests {
 
         // Test version 3 after BIP66 activation (should pass)
         // BIP66 activates at block 363,725, so we test at that height
-        let result = check_bip90(3, 363_725, crate::types::Network::Mainnet).unwrap();
+        let result = check_bip90_network(3, 363_725, crate::types::Network::Mainnet).unwrap();
         assert!(result, "Version 3 should be valid after BIP66 activation");
     }
 
@@ -768,7 +835,7 @@ mod tests {
         };
 
         // BIP30 should fail for duplicate coinbase
-        let result = check_bip30(
+        let result = check_bip30_network(
             &block,
             &utxo_set,
             None,
@@ -815,7 +882,7 @@ mod tests {
         };
 
         // BIP34 should fail with wrong height
-        let result = check_bip34(&block, height, crate::types::Network::Mainnet).unwrap();
+        let result = check_bip34_network(&block, height, crate::types::Network::Mainnet).unwrap();
         assert!(!result, "BIP34 should fail with incorrect height encoding");
     }
 
@@ -823,7 +890,7 @@ mod tests {
     fn test_bip66_strict_der() {
         // Valid DER signature (minimal example)
         let valid_der = vec![0x30, 0x06, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00];
-        let result = check_bip66(&valid_der, 363_724, crate::types::Network::Mainnet).unwrap();
+        let result = check_bip66_network(&valid_der, 363_724, crate::types::Network::Mainnet).unwrap();
         // Note: This may fail if signature is not actually valid DER, but the check should not panic
         assert!(
             result || !result,
@@ -831,7 +898,7 @@ mod tests {
         );
 
         // Before activation, should always pass
-        let result = check_bip66(&valid_der, 100_000, crate::types::Network::Mainnet).unwrap();
+        let result = check_bip66_network(&valid_der, 100_000, crate::types::Network::Mainnet).unwrap();
         assert!(result, "BIP66 should pass before activation");
     }
 
@@ -842,7 +909,7 @@ mod tests {
 
         // ScriptSig with NULLDUMMY (ends with OP_0)
         let script_sig_valid = vec![0x00]; // OP_0 (NULLDUMMY)
-        let result = check_bip147(
+        let result = check_bip147_network(
             &script_sig_valid,
             &script_pubkey,
             481_824,
@@ -853,7 +920,7 @@ mod tests {
 
         // ScriptSig without NULLDUMMY (non-empty dummy)
         let script_sig_invalid = vec![0x01, 0x01]; // Non-empty dummy
-        let result = check_bip147(
+        let result = check_bip147_network(
             &script_sig_invalid,
             &script_pubkey,
             481_824,
@@ -863,7 +930,7 @@ mod tests {
         assert!(!result, "BIP147 should fail without NULLDUMMY");
 
         // Before activation, should always pass
-        let result = check_bip147(
+        let result = check_bip147_network(
             &script_sig_invalid,
             &script_pubkey,
             100_000,

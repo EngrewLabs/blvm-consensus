@@ -1,14 +1,13 @@
-//! Property test strategies for spec-lock generated tests.
+//! Property test strategies and shared test fixtures.
 //!
 //! Enables integration tests to use strategies that satisfy Orange Paper constraints
-//! (e.g. |w| = |tx.inputs| for SegWit round-trip).
+//! (e.g. |w| = |tx.inputs| for SegWit round-trip) and shared UTXO-set helpers.
 
 #[cfg(any(test, feature = "property-tests"))]
 use proptest::prelude::*;
 
 use crate::segwit::Witness;
-use crate::types::Transaction;
-use crate::types::{OutPoint, TransactionInput, TransactionOutput};
+use crate::types::{BlockHeader, OutPoint, Transaction, TransactionInput, TransactionOutput, UtxoSet, UTXO};
 
 #[cfg(any(test, feature = "property-tests"))]
 /// Strategy yielding (Transaction, Vec<Witness>) with |w| = |tx.inputs|.
@@ -80,6 +79,73 @@ pub fn transaction_strategy() -> impl Strategy<Value = Transaction> {
             lock_time: 0,
         }
     })
+}
+
+/// Create a block header with the given timestamp and previous block hash.
+/// Shared by integration tests so fixture behavior stays consistent.
+pub fn create_test_header(timestamp: u64, prev_hash: [u8; 32]) -> BlockHeader {
+    BlockHeader {
+        version: 1,
+        prev_block_hash: prev_hash,
+        merkle_root: [0; 32],
+        timestamp,
+        bits: 0x1d00ffff,
+        nonce: 0,
+    }
+}
+
+/// Create a valid coinbase transaction (scriptSig 2–100 bytes per consensus).
+/// Shared by integration tests so fixture behavior stays consistent.
+pub fn create_coinbase_tx(value: i64) -> Transaction {
+    Transaction {
+        version: 1,
+        inputs: vec![TransactionInput {
+            prevout: OutPoint {
+                hash: [0; 32].into(),
+                index: 0xffffffff,
+            },
+            script_sig: vec![0x03, 0x01, 0x00, 0x00], // 4 bytes (valid: 2–100)
+            sequence: 0xffffffff,
+        }]
+        .into(),
+        outputs: vec![TransactionOutput {
+            value,
+            script_pubkey: vec![0x51].into(),
+        }]
+        .into(),
+        lock_time: 0,
+    }
+}
+
+/// UTXO set with two outputs for fee-calculation style tests (1 BTC and 0.5 BTC).
+/// Shared by integration tests so fixture behavior stays consistent.
+pub fn create_test_utxo_set_two_outputs() -> UtxoSet {
+    let mut utxo_set = UtxoSet::default();
+    utxo_set.insert(
+        OutPoint {
+            hash: [1; 32].into(),
+            index: 0,
+        },
+        std::sync::Arc::new(UTXO {
+            value: 100_000_000, // 1 BTC
+            script_pubkey: vec![0x51].into(),
+            height: 100,
+            is_coinbase: false,
+        }),
+    );
+    utxo_set.insert(
+        OutPoint {
+            hash: [2; 32].into(),
+            index: 0,
+        },
+        std::sync::Arc::new(UTXO {
+            value: 50_000_000, // 0.5 BTC
+            script_pubkey: vec![0x52].into(),
+            height: 101,
+            is_coinbase: false,
+        }),
+    );
+    utxo_set
 }
 
 #[cfg(all(test, feature = "property-tests"))]

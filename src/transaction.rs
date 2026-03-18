@@ -704,7 +704,7 @@ pub fn check_tx_inputs_with_owned_data(
 /// Hot-path function called frequently during validation.
 /// Always inline for maximum performance.
 #[inline(always)]
-#[spec_locked("5.1")]
+#[spec_locked("6.4")]
 pub fn is_coinbase(tx: &Transaction) -> bool {
     // Optimization: Use constant folding for zero hash check
     #[cfg(feature = "production")]

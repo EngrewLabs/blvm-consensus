@@ -6,24 +6,13 @@
 //! - UTXO set updates and commitment generation
 //! - Configuration loading and validation
 
-#[cfg(feature = "utxo-commitments")]
+#[cfg(all(feature = "utxo-commitments", feature = "test-utils"))]
 mod tests {
+    use blvm_consensus::test_utils::create_test_header;
     use blvm_consensus::types::{BlockHeader, Hash, Natural, Transaction, TransactionInput, TransactionOutput, OutPoint, UTXO, ByteString};
-    use blvm_consensus::utxo_commitments::*;
+    use blvm_protocol::utxo_commitments::*;
     use blvm_consensus::economic::total_supply;
     use std::collections::HashMap;
-
-    /// Create a test block header
-    fn create_test_header(height: Natural, prev_hash: Hash) -> BlockHeader {
-        BlockHeader {
-            version: 1,
-            prev_block_hash: prev_hash,
-            merkle_root: [0; 32],
-            timestamp: 1234567890 + (height * 600), // 10 minutes per block
-            bits: 0x1d00ffff,
-            nonce: 0,
-        }
-    }
 
     /// Create a test UTXO
     fn create_test_utxo(value: i64, height: Natural) -> UTXO {
@@ -31,6 +20,7 @@ mod tests {
             value,
             script_pubkey: vec![0x76, 0xa9, 0x14].into(), // P2PKH pattern
             height,
+            is_coinbase: false,
         }
     }
 
@@ -89,9 +79,9 @@ mod tests {
 
     #[test]
     fn test_spam_transaction_removes_spent_inputs() {
-        use blvm_consensus::utxo_commitments::initial_sync::InitialSync;
-        use blvm_consensus::utxo_commitments::merkle_tree::UtxoMerkleTree;
-        use blvm_consensus::utxo_commitments::peer_consensus::ConsensusConfig;
+        use blvm_protocol::utxo_commitments::initial_sync::InitialSync;
+        use blvm_protocol::utxo_commitments::merkle_tree::UtxoMerkleTree;
+        use blvm_protocol::utxo_commitments::peer_consensus::ConsensusConfig;
         use blvm_consensus::types::{Transaction, TransactionInput, TransactionOutput, OutPoint, UTXO};
         
         // Create initial sync manager
@@ -113,6 +103,7 @@ mod tests {
             value: 100000, // 0.001 BTC
             script_pubkey: vec![0x76, 0xa9, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x88, 0xac].into(), // P2PKH
             height: 100,
+            is_coinbase: false,
         };
         utxo_tree.insert(non_spam_outpoint.clone(), non_spam_utxo.clone()).unwrap();
         
@@ -126,7 +117,7 @@ mod tests {
             version: 1,
             inputs: vec![TransactionInput {
                 prevout: non_spam_outpoint.clone(),
-                script_sig: vec![0x51].into(), // OP_1 (placeholder)
+                script_sig: vec![0x51].into(), // OP_1 minimal script_sig for test
                 sequence: 0xffffffff,
             }].into(),
             outputs: vec![TransactionOutput {
@@ -323,7 +314,7 @@ mod tests {
         let mut headers = Vec::new();
         let mut prev_hash = [0; 32];
         for i in 0..10 {
-            let header = create_test_header(i, prev_hash);
+            let header = create_test_header(1234567890 + (i * 600), prev_hash);
             prev_hash = compute_block_hash(&header);
             headers.push(header);
         }
@@ -381,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_utxo_set_to_merkle_tree_conversion() {
-        use blvm_consensus::utxo_commitments::merkle_tree::UtxoMerkleTree;
+        use blvm_protocol::utxo_commitments::merkle_tree::UtxoMerkleTree;
         use blvm_consensus::types::UtxoSet;
 
         // Create UtxoSet
@@ -406,7 +397,7 @@ mod tests {
 
     #[test]
     fn test_utxo_tree_incremental_update_from_utxo_set() {
-        use blvm_consensus::utxo_commitments::merkle_tree::UtxoMerkleTree;
+        use blvm_protocol::utxo_commitments::merkle_tree::UtxoMerkleTree;
         use blvm_consensus::types::UtxoSet;
 
         // Create initial tree

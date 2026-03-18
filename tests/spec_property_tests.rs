@@ -43,6 +43,5 @@ fn prop_block_header_serialization_round_trip() {
     });
 }
 
-// TODO: Serialization Determinism - add strategy
-// Skipped Locktime Encoding Round-Trip: missing binding for EncodeLocktime or DecodeLocktime
-// Skipped BIP65 + BIP112 Locktime Consistency: missing binding for EncodeLocktime or DecodeLocktime
+// Serialization determinism: block header round-trip covered above. Locktime encoding
+// round-trip and BIP65/BIP112 consistency require EncodeLocktime/DecodeLocktime bindings.

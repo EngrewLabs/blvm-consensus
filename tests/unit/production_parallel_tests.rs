@@ -86,7 +86,7 @@ mod tests {
         };
         
         let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
-        let (result, _) = connect_block(&block, &witnesses, utxo_set, 0, None::<&[crate::types::BlockHeader]>, 0u64, crate::types::Network::Mainnet).unwrap();
+        let (result, _) = { let ctx = block::BlockValidationContext::for_network(crate::types::Network::Mainnet); connect_block(&block, &witnesses, utxo_set, 0, &ctx) }.unwrap();
         
         // Should produce valid result (or invalid, but should be deterministic)
         assert!(matches!(result, ValidationResult::Valid | ValidationResult::Invalid(_)),
@@ -164,7 +164,7 @@ mod tests {
         
         // Should handle error correctly
         let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
-        let result = connect_block(&block, &witnesses, utxo_set, 0, None::<&[crate::types::BlockHeader]>, 0u64, crate::types::Network::Mainnet);
+        let result = { let ctx = block::BlockValidationContext::for_network(crate::types::Network::Mainnet); connect_block(&block, &witnesses, utxo_set, 0, &ctx) };
         // May succeed or fail depending on when error is caught
         assert!(result.is_ok() || result.is_err(),
                 "Parallel verification must handle errors correctly");
@@ -221,7 +221,7 @@ mod tests {
         };
         
         let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
-        let (result, _) = connect_block(&block, &witnesses, UtxoSet::default(), 0, None::<&[crate::types::BlockHeader]>, 0u64, crate::types::Network::Mainnet).unwrap();
+        let (result, _) = { let ctx = block::BlockValidationContext::for_network(crate::types::Network::Mainnet); connect_block(&block, &witnesses, UtxoSet::default(), 0, &ctx) }.unwrap();
         // Should handle empty non-coinbase transactions correctly
         assert!(matches!(result, ValidationResult::Valid | ValidationResult::Invalid(_)));
     }
@@ -280,7 +280,7 @@ mod tests {
         };
         
         let witnesses: Vec<segwit::Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
-        let (result, _) = connect_block(&block, &witnesses, utxo_set, 0, None::<&[crate::types::BlockHeader]>, 0u64, crate::types::Network::Mainnet).unwrap();
+        let (result, _) = { let ctx = block::BlockValidationContext::for_network(crate::types::Network::Mainnet); connect_block(&block, &witnesses, utxo_set, 0, &ctx) }.unwrap();
         // Single input should work correctly in parallel mode
         assert!(matches!(result, ValidationResult::Valid | ValidationResult::Invalid(_)));
     }
@@ -318,8 +318,14 @@ mod tests {
             ],
         };
         
-        let (result1, _) = connect_block(&block, utxo_set.clone(), 0).unwrap();
-        let (result2, _) = connect_block(&block, utxo_set, 0).unwrap();
+        let witnesses: Vec<Vec<Witness>> = block
+            .transactions
+            .iter()
+            .map(|tx| (0..tx.inputs.len()).map(|_| vec![]).collect())
+            .collect();
+        let ctx = block::BlockValidationContext::for_network(crate::types::Network::Mainnet);
+        let (result1, _) = connect_block(&block, &witnesses, utxo_set.clone(), 0, &ctx).unwrap();
+        let (result2, _) = connect_block(&block, &witnesses, utxo_set, 0, &ctx).unwrap();
         
         // Results should be identical
         assert_eq!(format!("{:?}", result1), format!("{:?}", result2),

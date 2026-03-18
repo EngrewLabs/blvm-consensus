@@ -2,8 +2,7 @@
 
 use crate::economic::get_block_subsidy;
 use crate::error::Result;
-use crate::opcodes::*;
-use crate::pow::get_next_work_required;
+use crate::pow::{check_proof_of_work, get_next_work_required};
 use crate::transaction::check_transaction;
 use crate::types::*;
 use blvm_spec_lock::spec_locked;
@@ -135,15 +134,10 @@ pub fn create_new_block_with_time(
 #[track_caller] // Better error messages showing caller location
 #[spec_locked("12.3")]
 pub fn mine_block(mut block: Block, max_attempts: Natural) -> Result<(Block, MiningResult)> {
-    let target = expand_target(block.header.bits)?;
-
     for nonce in 0..max_attempts {
         block.header.nonce = nonce;
 
-        let block_hash = calculate_block_hash(&block.header);
-        let hash_u128 = u128::from_le_bytes(block_hash[..16].try_into().unwrap());
-
-        if hash_u128 <= target {
+        if check_proof_of_work(&block.header).unwrap_or(false) {
             return Ok((block, MiningResult::Success));
         }
     }
@@ -229,23 +223,26 @@ pub enum MiningResult {
 }
 
 /// Create coinbase transaction
+/// Orange Paper 12.2: Coinbase transaction structure.
+/// BIP54: When BIP54 is active, coinbase must have nLockTime = height - 13 and nSequence != 0xffff_ffff.
+/// This implementation sets those so that blocks are valid under BIP54 when activated.
+#[spec_locked("12.2")]
 fn create_coinbase_transaction(
-    _height: Natural,
+    height: Natural,
     subsidy: Integer,
     script: &ByteString,
     address: &ByteString,
 ) -> Result<Transaction> {
-    // Create coinbase input
+    let lock_time = height.saturating_sub(13);
     let coinbase_input = TransactionInput {
         prevout: OutPoint {
             hash: [0u8; 32],
             index: 0xffffffff,
         },
         script_sig: script.clone(),
-        sequence: 0xffffffff,
+        sequence: 0xfffffffe, // BIP54: not 0xffffffff so coinbase is unique
     };
 
-    // Create coinbase output
     let coinbase_output = TransactionOutput {
         value: subsidy,
         script_pubkey: address.clone(),
@@ -255,7 +252,7 @@ fn create_coinbase_transaction(
         version: 1,
         inputs: crate::tx_inputs![coinbase_input],
         outputs: crate::tx_outputs![coinbase_output],
-        lock_time: 0,
+        lock_time,
     })
 }
 
@@ -396,6 +393,8 @@ pub fn calculate_merkle_root_from_tx_ids(tx_ids: &[Hash]) -> Result<Hash> {
 
 /// Merkle tree building logic. Uses double SHA256 at each level (Bitcoin standard).
 /// Stack-allocates the 64-byte pair buffer to avoid heap allocation per node.
+/// Orange Paper 8.4.1: ComputeMerkleRoot pair-and-hash construction.
+#[spec_locked("8.4.1")]
 fn merkle_tree_from_hashes(hashes: &mut Vec<Hash>) -> Result<Hash> {
     let mut mutated = false;
 
@@ -524,6 +523,8 @@ fn encode_varint(value: u64) -> Vec<u8> {
 }
 
 /// Calculate block hash using proper Bitcoin header serialization
+/// Orange Paper 7.2: Block hash = SHA256d(header) for PoW validation
+#[spec_locked("7.2")]
 fn calculate_block_hash(header: &BlockHeader) -> Hash {
     let mut data = Vec::new();
 
@@ -566,6 +567,8 @@ fn double_sha256_hash(data: &[u8]) -> Hash {
 }
 
 /// Expand target from compact format (simplified)
+/// Orange Paper 7.1: Difficulty bits → target for PoW comparison
+#[spec_locked("7.1")]
 fn expand_target(bits: Natural) -> Result<u128> {
     let exponent = (bits >> 24) as u8;
     let mantissa = bits & 0x00ffffff;
@@ -581,7 +584,8 @@ fn expand_target(bits: Natural) -> Result<u128> {
                 "Target too large".into(),
             ));
         }
-        Ok((mantissa << shift) as u128)
+        // Cast to u128 before shift to avoid overflow (mantissa may be u64)
+        Ok((mantissa as u128) << shift)
     }
 }
 

@@ -17,18 +17,15 @@ fn test_deserialize_transaction_returns_correct_offset() {
     
     let tx = Transaction {
         version: 1,
-        inputs: vec![TransactionInput {
-            prevout: OutPoint {
-                hash: [0u8; 32],
-                index: 0,
-            },
-            script_sig: vec![0x04, 0xff, 0xff, 0x00, 0x1d, 0x01, 0x04], // 7 bytes
+        inputs: blvm_consensus::tx_inputs![TransactionInput {
+            prevout: OutPoint { hash: [0u8; 32], index: 0 },
             sequence: 0xffffffff,
-        }].into_boxed_slice(),
-        outputs: vec![TransactionOutput {
+            script_sig: vec![0x04, 0xff, 0xff, 0x00, 0x1d, 0x01, 0x04], // 7 bytes
+        }],
+        outputs: blvm_consensus::tx_outputs![TransactionOutput {
             value: 50_0000_0000, // 50 BTC
             script_pubkey: vec![0x41, 0x04, 0x67, 0x8a, 0xfd, 0xb0, 0xfe, 0x55, 0x48, 0x27, 0x19, 0x67, 0xf1, 0xa6, 0x71, 0x30, 0xb7, 0x10, 0x5c, 0xd6, 0xa8, 0x28, 0xe0, 0x39, 0x09, 0xa6, 0x79, 0x62, 0xe0, 0xea, 0x1f, 0x61, 0xde, 0xb6, 0x49, 0xf6, 0xbc, 0x3f, 0x4c, 0xef, 0x38, 0xc4, 0xf3, 0x55, 0x04, 0xe5, 0x1e, 0xc1, 0x12, 0xde, 0x5c, 0x38, 0x4d, 0xf7, 0xba, 0x0b, 0x8d, 0x57, 0x8a, 0x4c, 0x70, 0x2b, 0x6b, 0xf1, 0x1d, 0x5f, 0xac], // 65 bytes
-        }].into_boxed_slice(),
+        }],
         lock_time: 0,
     };
     
@@ -37,8 +34,8 @@ fn test_deserialize_transaction_returns_correct_offset() {
     let original_len = serialized.len();
     
     // Deserialize with offset tracking
-    use blvm_consensus::serialization::transaction::deserialize_transaction_with_offset;
-    let (deserialized, bytes_consumed) = deserialize_transaction_with_offset(&serialized).unwrap();
+    let (deserialized, bytes_consumed) =
+        blvm_consensus::serialization::deserialize_transaction_with_offset(&serialized).unwrap();
     
     // Verify bytes consumed matches serialized length
     assert_eq!(bytes_consumed, original_len, 
@@ -66,35 +63,29 @@ fn test_block_deserialization_tracks_offset_correctly() {
     
     let tx1 = Transaction {
         version: 1,
-        inputs: vec![TransactionInput {
-            prevout: OutPoint {
-                hash: [0u8; 32],
-                index: 0,
-            },
-            script_sig: vec![0x04, 0xff, 0xff, 0x00, 0x1d, 0x01, 0x04], // 7 bytes
+        inputs: blvm_consensus::tx_inputs![TransactionInput {
+            prevout: OutPoint { hash: [0u8; 32], index: 0 },
             sequence: 0xffffffff,
-        }].into_boxed_slice(),
-        outputs: vec![TransactionOutput {
+            script_sig: vec![0x04, 0xff, 0xff, 0x00, 0x1d, 0x01, 0x04], // 7 bytes
+        }],
+        outputs: blvm_consensus::tx_outputs![TransactionOutput {
             value: 50_0000_0000,
             script_pubkey: vec![0x41; 65], // 65 bytes
-        }].into_boxed_slice(),
+        }],
         lock_time: 0,
     };
-    
+
     let tx2 = Transaction {
         version: 1,
-        inputs: vec![TransactionInput {
-            prevout: OutPoint {
-                hash: [1u8; 32], // Different hash
-                index: 0,
-            },
-            script_sig: vec![0x07, 0x04, 0xff, 0xff, 0x00, 0x1d, 0x01, 0x04, 0xff], // 9 bytes (different length)
+        inputs: blvm_consensus::tx_inputs![TransactionInput {
+            prevout: OutPoint { hash: [1u8; 32], index: 0 },
             sequence: 0xffffffff,
-        }].into_boxed_slice(),
-        outputs: vec![TransactionOutput {
+            script_sig: vec![0x07, 0x04, 0xff, 0xff, 0x00, 0x1d, 0x01, 0x04, 0xff], // 9 bytes
+        }],
+        outputs: blvm_consensus::tx_outputs![TransactionOutput {
             value: 25_0000_0000,
-            script_pubkey: vec![0x41; 33], // 33 bytes (different length)
-        }].into_boxed_slice(),
+            script_pubkey: vec![0x41; 33], // 33 bytes
+        }],
         lock_time: 0,
     };
     
@@ -146,24 +137,21 @@ fn test_sequential_block_processing_maintains_correct_txids() {
     use blvm_consensus::types::*;
     
     // Create 3 different transactions with different script_sig lengths
-    let transactions: Vec<Transaction> = (0..3).map(|i| {
-        Transaction {
+    let transactions: Vec<Transaction> = (0..3)
+        .map(|i| Transaction {
             version: 1,
-            inputs: vec![TransactionInput {
-                prevout: OutPoint {
-                    hash: [i as u8; 32], // Different hash for each
-                    index: 0,
-                },
-                script_sig: vec![0x04, 0xff, 0xff, 0x00, 0x1d, 0x01, 0x04 + i], // Different script
+            inputs: blvm_consensus::tx_inputs![TransactionInput {
+                prevout: OutPoint { hash: [i as u8; 32], index: 0 },
                 sequence: 0xffffffff,
-            }].into_boxed_slice(),
-            outputs: vec![TransactionOutput {
+                script_sig: vec![0x04, 0xff, 0xff, 0x00, 0x1d, 0x01, 0x04 + i],
+            }],
+            outputs: blvm_consensus::tx_outputs![TransactionOutput {
                 value: (50 - i as i64) * 1000_0000,
                 script_pubkey: vec![0x41; 65],
-            }].into_boxed_slice(),
+            }],
             lock_time: 0,
-        }
-    }).collect();
+        })
+        .collect();
     
     // Serialize all transactions
     let tx_bytes: Vec<Vec<u8>> = transactions.iter()

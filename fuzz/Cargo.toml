@@ -10,6 +10,9 @@ cargo-fuzz = true
 
 [dependencies]
 blvm-consensus = { path = "..", features = ["utxo-commitments"] }
+blvm-protocol = { path = "../blvm-protocol", features = ["utxo-commitments"] }
+# Alias for fuzz targets still using old crate name
+consensus_proof = { path = "..", features = ["utxo-commitments"], package = "blvm-consensus" }
 libfuzzer-sys = "0.4"
 
 # Prevent warnings in generated code

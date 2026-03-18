@@ -161,10 +161,11 @@ fn count_tapscript_sigops(script: &ByteString) -> u32 {
     count
 }
 
-/// Check if a script is P2SH (Pay-to-Script-Hash)
+/// Check if a script is P2SH (Pay-to-Script-Hash) — Orange Paper 5.2.1 IsP2SH
 ///
 /// P2SH scripts have the format: OP_HASH160 (0xa9) <20-byte-hash> OP_EQUAL (0x87)
-fn is_pay_to_script_hash(script: &[u8]) -> bool {
+#[spec_locked("5.2.1")]
+pub fn is_pay_to_script_hash(script: &[u8]) -> bool {
     script.len() == 23
         && script[0] == OP_HASH160  // OP_HASH160
         && script[1] == 0x14  // Push 20 bytes
@@ -175,6 +176,8 @@ fn is_pay_to_script_hash(script: &[u8]) -> bool {
 ///
 /// For P2SH, the scriptSig pushes the redeem script. We need to extract
 /// the last push data item from scriptSig.
+/// Orange Paper 5.2.1: P2SH scriptSig must contain only pushes; last push = redeem script.
+#[spec_locked("5.2.1")]
 fn extract_redeem_script_from_scriptsig(script_sig: &ByteString) -> Option<ByteString> {
     let mut i = 0;
     let mut last_data: Option<ByteString> = None;
@@ -308,8 +311,7 @@ pub fn get_p2sh_sigop_count<U: UtxoLookup>(tx: &Transaction, utxo_lookup: &U) ->
 /// Count witness sigops in transaction
 ///
 /// Counts sigops in witness scripts for SegWit transactions.
-/// This is a simplified version - full implementation would need to handle
-/// P2WPKH, P2WSH, and Taproot witness scripts.
+/// P2WPKH: 1 sigop; P2WSH: count in witness script; P2TR: count in tapscript.
 ///
 /// # Arguments
 /// * `tx` - Transaction
@@ -319,7 +321,8 @@ pub fn get_p2sh_sigop_count<U: UtxoLookup>(tx: &Transaction, utxo_lookup: &U) ->
 ///
 /// # Returns
 /// Number of witness sigops
-fn count_witness_sigops<U: UtxoLookup>(
+#[spec_locked("11.1")]
+pub(crate) fn count_witness_sigops<U: UtxoLookup>(
     tx: &Transaction,
     witnesses: &[Witness],
     utxo_lookup: &U,
@@ -388,6 +391,54 @@ fn count_witness_sigops<U: UtxoLookup>(
     }
 
     Ok(count)
+}
+
+/// Legacy sigop count with accurate OP_CHECKMULTISIG (OP_1..OP_16 = 1..16, else 20).
+/// Used for BIP54 per-tx 2500 limit to match Core's GetSigOpCount(fAccurate=true).
+#[spec_locked("5.2.2")]
+pub fn get_legacy_sigop_count_accurate(tx: &Transaction) -> u32 {
+    let mut count = 0u32;
+    for input in &tx.inputs {
+        count = count.saturating_add(count_sigops_in_script(&input.script_sig, true));
+    }
+    for output in &tx.outputs {
+        count = count.saturating_add(count_sigops_in_script(&output.script_pubkey, true));
+    }
+    count
+}
+
+/// Get total transaction sigop count (BIP54 limit).
+///
+/// Sum of legacy + P2SH + witness sigop counts (same accounting as BIP16).
+/// Used to enforce per-transaction limit of 2500 sigops after BIP54 activation.
+pub fn get_transaction_sigop_count<U: UtxoLookup>(
+    tx: &Transaction,
+    utxo_lookup: &U,
+    witnesses: Option<&[Witness]>,
+    flags: u32,
+) -> Result<u64> {
+    let legacy = get_legacy_sigop_count(tx) as u64;
+    let p2sh = get_p2sh_sigop_count(tx, utxo_lookup)? as u64;
+    let witness = witnesses
+        .map(|w| count_witness_sigops(tx, w, utxo_lookup, flags))
+        .unwrap_or(Ok(0))?;
+    Ok(legacy.saturating_add(p2sh).saturating_add(witness))
+}
+
+/// BIP54 per-tx sigop count: legacy (accurate) + P2SH + witness.
+/// Matches Core's CheckSigopsBIP54 (GetSigOpCount(scriptSig, true) for legacy).
+pub fn get_transaction_sigop_count_for_bip54<U: UtxoLookup>(
+    tx: &Transaction,
+    utxo_lookup: &U,
+    witnesses: Option<&[Witness]>,
+    flags: u32,
+) -> Result<u64> {
+    let legacy = get_legacy_sigop_count_accurate(tx) as u64;
+    let p2sh = get_p2sh_sigop_count(tx, utxo_lookup)? as u64;
+    let witness = witnesses
+        .map(|w| count_witness_sigops(tx, w, utxo_lookup, flags))
+        .unwrap_or(Ok(0))?;
+    Ok(legacy.saturating_add(p2sh).saturating_add(witness))
 }
 
 /// Get total transaction sigop cost

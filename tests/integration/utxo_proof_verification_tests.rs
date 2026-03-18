@@ -11,8 +11,8 @@
 #[cfg(test)]
 mod tests {
     use blvm_consensus::types::{OutPoint, UTXO, Hash, Natural};
-    use blvm_consensus::utxo_commitments::*;
-    use blvm_consensus::utxo_commitments::peer_consensus::{ConsensusConfig, ConsensusResult, PeerConsensus};
+    use blvm_protocol::utxo_commitments::*;
+    use blvm_protocol::utxo_commitments::peer_consensus::{ConsensusConfig, ConsensusResult, PeerConsensus};
 
     #[test]
     fn test_integration_proof_verification_flow() {

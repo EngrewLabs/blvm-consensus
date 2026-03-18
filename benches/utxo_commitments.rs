@@ -1,21 +1,12 @@
+// UTXO commitments implementation moved to blvm-protocol.
+// Bench with: cargo bench -p blvm-protocol (when protocol has utxo_commitments benches)
 #[cfg(feature = "utxo-commitments")]
-use blvm_consensus::{
-    types::Natural,
-    utxo_commitments::data_structures::UtxoCommitment,
-    utxo_commitments::verification::{verify_header_chain, verify_supply},
-    BlockHeader,
-};
+use blvm_consensus::{types::Natural, BlockHeader};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 #[cfg(feature = "utxo-commitments")]
-fn create_test_commitment(height: Natural) -> UtxoCommitment {
-    UtxoCommitment {
-        merkle_root: [0u8; 32],
-        total_supply: 50_0000_0000 * height as u64, // Simplified
-        utxo_count: 0,
-        block_height: height,
-        block_hash: [0u8; 32],
-    }
+fn create_test_commitment(_height: Natural) -> [u8; 32] {
+    [0u8; 32] // Placeholder; real bench in blvm-protocol
 }
 
 #[cfg(feature = "utxo-commitments")]
@@ -40,23 +31,16 @@ fn create_test_header_chain(count: usize) -> Vec<BlockHeader> {
 
 #[cfg(feature = "utxo-commitments")]
 fn benchmark_verify_supply(c: &mut Criterion) {
-    let commitment = create_test_commitment(100);
-
-    c.bench_function("verify_supply", |b| {
-        b.iter(|| {
-            black_box(verify_supply(black_box(&commitment)));
-        })
-    });
+    // Bench moved to blvm-protocol; this is a no-op placeholder
+    let _ = create_test_commitment(100);
+    c.bench_function("verify_supply_placeholder", |b| b.iter(|| black_box(0)));
 }
 
 #[cfg(feature = "utxo-commitments")]
 fn benchmark_verify_header_chain(c: &mut Criterion) {
     let headers = create_test_header_chain(100);
-
-    c.bench_function("verify_header_chain_100", |b| {
-        b.iter(|| {
-            black_box(verify_header_chain(black_box(&headers)));
-        })
+    c.bench_function("verify_header_chain_placeholder", |b| {
+        b.iter(|| black_box(headers.len()))
     });
 }
 

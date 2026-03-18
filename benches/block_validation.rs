@@ -1,4 +1,4 @@
-use blvm_consensus::block::connect_block;
+use blvm_consensus::block::{connect_block, BlockValidationContext};
 use blvm_consensus::segwit::Witness;
 use blvm_consensus::{types::Network, Block, BlockHeader, Transaction, UtxoSet};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
@@ -28,6 +28,7 @@ fn benchmark_connect_block(c: &mut Criterion) {
     let utxo_set = UtxoSet::default();
     let witnesses: Vec<Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
 
+    let ctx = block::BlockValidationContext::for_network(Network::Mainnet);
     c.bench_function("connect_block", |b| {
         b.iter(|| {
             let _result = connect_block(
@@ -35,8 +36,7 @@ fn benchmark_connect_block(c: &mut Criterion) {
                 black_box(&witnesses),
                 black_box(utxo_set.clone()),
                 black_box(0),
-                black_box(None),
-                black_box(Network::Mainnet),
+                &ctx,
             );
             // Ignore errors for benchmarking (they're expected for invalid test data)
         })
@@ -76,6 +76,7 @@ fn benchmark_connect_block_multi_tx(c: &mut Criterion) {
     let utxo_set = UtxoSet::default();
     let witnesses: Vec<Witness> = block.transactions.iter().map(|_| Vec::new()).collect();
 
+    let ctx = block::BlockValidationContext::for_network(Network::Mainnet);
     c.bench_function("connect_block_multi_tx", |b| {
         b.iter(|| {
             let _result = connect_block(
@@ -83,8 +84,7 @@ fn benchmark_connect_block_multi_tx(c: &mut Criterion) {
                 black_box(&witnesses),
                 black_box(utxo_set.clone()),
                 black_box(0),
-                black_box(None),
-                black_box(Network::Mainnet),
+                &ctx,
             );
             // Ignore errors for benchmarking
         })

@@ -72,14 +72,19 @@ fn block_164676_connect_block_ibd_repro() {
             .map(|tx| (0..tx.inputs.len()).map(|_| Vec::new()).collect())
             .collect();
     }
+    let ctx = blvm_consensus::block::BlockValidationContext::from_connect_block_ibd_args(
+        None::<&[blvm_consensus::types::BlockHeader]>,
+        0u64,
+        Network::Mainnet,
+        None,
+        None,
+    );
     let (result, _new_utxo_set, _tx_ids, _utxo_delta) = connect_block_ibd(
         &block,
         &witnesses,
         utxo_set,
         HEIGHT,
-        None::<&[blvm_consensus::types::BlockHeader]>,
-        0u64,
-        Network::Mainnet,
+        &ctx,
         None,
         None,
         Some(std::sync::Arc::new(block.clone())),
