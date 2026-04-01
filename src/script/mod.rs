@@ -2265,13 +2265,15 @@ fn try_verify_p2tr_scriptpath_p2pk_fast_path(
     prevout_values: &[i64],
     prevout_script_pubkeys: &[&[u8]],
     block_height: Option<u64>,
+    network: crate::types::Network,
     schnorr_collector: Option<&crate::bip348::SchnorrSignatureCollector>,
 ) -> Option<Result<bool>> {
-    use crate::constants::TAPROOT_ACTIVATION_MAINNET;
+    use crate::activation::taproot_activation_height;
     use crate::taproot::parse_taproot_script_path_witness;
 
+    let tap_h = taproot_activation_height(network);
     if block_height
-        .map(|h| h < TAPROOT_ACTIVATION_MAINNET)
+        .map(|h| h < tap_h)
         .unwrap_or(true)
     {
         return None;
@@ -2334,11 +2336,13 @@ fn try_verify_p2tr_keypath_fast_path(
     prevout_values: &[i64],
     prevout_script_pubkeys: &[&[u8]],
     block_height: Option<u64>,
+    network: crate::types::Network,
     schnorr_collector: Option<&crate::bip348::SchnorrSignatureCollector>,
 ) -> Option<Result<bool>> {
-    use crate::constants::TAPROOT_ACTIVATION_MAINNET;
+    use crate::activation::taproot_activation_height;
+    let tap_h = taproot_activation_height(network);
     if block_height
-        .map(|h| h < TAPROOT_ACTIVATION_MAINNET)
+        .map(|h| h < tap_h)
         .unwrap_or(true)
     {
         return None;
@@ -2601,6 +2605,7 @@ pub fn verify_script_with_context_full(
             prevout_values,
             prevout_script_pubkeys,
             block_height,
+            network,
             schnorr_collector,
         ) {
             FAST_PATH_P2TR.fetch_add(1, Ordering::Relaxed);
@@ -2616,6 +2621,7 @@ pub fn verify_script_with_context_full(
             prevout_values,
             prevout_script_pubkeys,
             block_height,
+            network,
             schnorr_collector,
         ) {
             FAST_PATH_P2TR.fetch_add(1, Ordering::Relaxed);
@@ -2763,9 +2769,10 @@ pub fn verify_script_with_context_full(
     // CRITICAL FIX: Check if scriptPubkey is Taproot (P2TR) - OP_1 <32-byte-hash>
     // Taproot format: [OP_1, PUSH_32_BYTES, <32 bytes>] = 34 bytes total
     // For Taproot, scriptSig must be empty and validation happens via witness using Taproot-specific logic
-    use crate::constants::TAPROOT_ACTIVATION_MAINNET;
+    use crate::activation::taproot_activation_height;
+    let tap_h = taproot_activation_height(network);
     let is_taproot = redeem_script.is_none()  // Not P2SH
-        && block_height.is_some() && block_height.unwrap() >= TAPROOT_ACTIVATION_MAINNET
+        && block_height.is_some() && block_height.unwrap() >= tap_h
         && script_pubkey.len() == 34
         && script_pubkey[0] == OP_1  // OP_1 (witness version 1)
         && script_pubkey[1] == PUSH_32_BYTES; // push 32 bytes
@@ -5418,10 +5425,12 @@ fn execute_opcode_with_context_full(
                 // For BIP147, the dummy element must be exactly [0x00] (OP_0) after activation
                 // BIP147 requires the dummy to be exactly one byte: 0x00
                 // Not empty [], not multi-byte [0x00, ...], not non-zero [0x01, ...]
+                use crate::constants::{BIP147_ACTIVATION_MAINNET, BIP147_ACTIVATION_TESTNET};
+
                 let bip147_active = height
                     >= match bip147_network {
-                        Bip147Network::Mainnet => 481_824,
-                        Bip147Network::Testnet => 834_624,
+                        Bip147Network::Mainnet => BIP147_ACTIVATION_MAINNET,
+                        Bip147Network::Testnet => BIP147_ACTIVATION_TESTNET,
                         Bip147Network::Regtest => 0,
                     };
 

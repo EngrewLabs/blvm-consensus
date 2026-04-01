@@ -112,7 +112,8 @@ pub mod utxo_overlay;
 pub mod version_bits;
 pub mod witness;
 
-#[cfg(any(test, feature = "property-tests", feature = "test-utils"))]
+// Integration tests link this crate without `cfg(test)` on the library, so `test_utils` cannot be
+// gated only on `test`. Fixture helpers are small; `property-tests`/`proptest` stays gated inside the module.
 pub mod test_utils;
 
 #[cfg(feature = "profile")]
@@ -404,8 +405,8 @@ mod tests {
     fn test_validate_transaction() {
         let tx = Transaction {
             version: 1,
-            inputs: vec![],
-            outputs: vec![],
+            inputs: vec![].into(),
+            outputs: vec![].into(),
             lock_time: 0,
         };
         let result = check_transaction(&tx);

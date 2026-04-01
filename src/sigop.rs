@@ -472,7 +472,6 @@ pub fn get_transaction_sigop_cost<U: UtxoLookup>(
 /// Same as get_transaction_sigop_cost but accepts pre-fetched UTXOs in input order.
 /// Avoids redundant overlay lookups when caller already has UTXO data.
 #[spec_locked("5.2.2")]
-#[cfg(feature = "production")]
 pub fn get_transaction_sigop_cost_with_utxos(
     tx: &Transaction,
     utxos: &[Option<&UTXO>],
@@ -530,6 +529,25 @@ pub fn get_transaction_sigop_cost_with_utxos(
                                     true,
                                 )
                                     as u64);
+                            }
+                        }
+                    } else if (flags & 0x8000) != 0
+                        && script_pubkey.len() == 34
+                        && script_pubkey[0] == OP_1
+                        && script_pubkey[1] == 0x20
+                    {
+                        if let Some(witness) = witnesses.get(i) {
+                            if witness.len() >= 2 {
+                                let script_idx = if witness.len() >= 3
+                                    && witness[witness.len() - 2].first() == Some(&0x50)
+                                {
+                                    witness.len() - 3
+                                } else {
+                                    witness.len() - 2
+                                };
+                                let tapscript = &witness[script_idx];
+                                total_cost = total_cost
+                                    .saturating_add(count_tapscript_sigops(tapscript) as u64);
                             }
                         }
                     }
@@ -821,5 +839,70 @@ mod tests {
         // OP_1 (0x51) OP_CHECKMULTISIG
         let script = vec![0x51, 0xae];
         assert_eq!(count_sigops_in_script(&script, true), 1);
+    }
+
+    /// Prefetched-UTXO sigop cost must match overlay-based counting (used on assume-valid path).
+    #[test]
+    fn get_transaction_sigop_cost_with_utxos_matches_witness_slices_including_p2tr() {
+        use crate::segwit::Witness;
+
+        let prev = OutPoint {
+            hash: [7u8; 32].into(),
+            index: 0,
+        };
+        let mut spk = vec![OP_1, 0x20];
+        spk.extend_from_slice(&[9u8; 32]);
+
+        let utxo = UTXO {
+            value: 50_000,
+            script_pubkey: spk.into(),
+            height: 700_000,
+            is_coinbase: false,
+        };
+
+        let mut set: UtxoSet = Default::default();
+        utxo_set_insert(&mut set, prev, utxo);
+
+        let tapscript = vec![OP_CHECKSIG];
+        let witness_two: Witness = vec![tapscript.clone(), vec![0u8; 32]];
+        let witness_three: Witness = vec![tapscript, vec![0x50], vec![0u8; 32]];
+
+        let tx = Transaction {
+            version: 2,
+            inputs: vec![TransactionInput {
+                prevout: prev,
+                script_sig: vec![],
+                sequence: 0xffffffff,
+            }]
+            .into(),
+            outputs: vec![TransactionOutput {
+                value: 10_000,
+                script_pubkey: vec![OP_0].into(),
+            }]
+            .into(),
+            lock_time: 0,
+        };
+
+        let flags = 0x800 | 0x8000 | 0x01;
+        let uref = set.get(&prev).map(|a| a.as_ref());
+        let utxo_refs: Vec<Option<&UTXO>> = vec![uref];
+
+        for witnesses in [&witness_two, &witness_three] {
+            let w = vec![witnesses.clone()];
+            let with_slices = get_transaction_sigop_cost_with_witness_slices(
+                &tx,
+                &set,
+                Some(w.as_slice()),
+                flags,
+            )
+            .unwrap();
+            let with_utxos =
+                get_transaction_sigop_cost_with_utxos(&tx, &utxo_refs, Some(w.as_slice()), flags)
+                    .unwrap();
+            assert_eq!(
+                with_utxos, with_slices,
+                "P2TR tapscript sigop cost must match between utxo prefetch and overlay lookup"
+            );
+        }
     }
 }

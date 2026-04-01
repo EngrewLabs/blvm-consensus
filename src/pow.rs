@@ -135,12 +135,16 @@ fn get_next_work_required_internal(
     // Runtime assertion: Old target must be positive
     debug_assert!(!old_target.is_zero(), "Old target must be non-zero");
 
-    // Multiply target by clamped_timespan (integer multiplication)
-    let multiplied_target = old_target
-        .checked_mul_u64(clamped_timespan)
-        .ok_or_else(|| {
-            ConsensusError::InvalidProofOfWork("Target multiplication overflow".into())
-        })?;
+    // Multiply target by clamped_timespan (integer multiplication).
+    // Regtest minimum-difficulty nBits (0x207fffff) expands to a very large U256; multiplying
+    // by the clamped timespan can exceed U256::MAX. Bitcoin keeps prior difficulty in
+    // pathological cases — here we preserve `previous_bits` when no exact product fits.
+    let multiplied_target = match old_target.checked_mul_u64(clamped_timespan) {
+        Some(t) => t,
+        None => {
+            return Ok(previous_bits);
+        }
+    };
 
     // Runtime assertion: Multiplied target must be >= old target (timespan >= expected_time/4)
     debug_assert!(
@@ -661,17 +665,11 @@ pub fn expand_target(bits: Natural) -> Result<U256> {
     // we use the full mantissa including the sign bit
     let mantissa = bits & 0x00ffffff;
 
-    // Validate target format (exponent clamped to 32 for safety)
+    // Exponent in [3, 32] covers mainnet-style compact targets and regtest minimum-difficulty
+    // (e.g. nBits 0x207fffff, exponent 32).
     if !(3..=32).contains(&exponent) {
         return Err(ConsensusError::InvalidProofOfWork(
             "Invalid target exponent".into(),
-        ));
-    }
-
-    // Check if target is too large (exponent > 29 is usually invalid in practice)
-    if exponent > 29 {
-        return Err(ConsensusError::InvalidProofOfWork(
-            "Target too large".into(),
         ));
     }
 
@@ -837,6 +835,27 @@ mod property_tests {
     use super::*;
     use proptest::prelude::*;
 
+    fn arb_block_header() -> impl Strategy<Value = BlockHeader> {
+        (
+            any::<i64>(),
+            any::<[u8; 32]>(),
+            any::<[u8; 32]>(),
+            any::<u64>(),
+            0x03000000u32..0x1d00ffffu32,
+            any::<u64>(),
+        )
+            .prop_map(
+                |(version, prev_block_hash, merkle_root, timestamp, bits, nonce)| BlockHeader {
+                    version,
+                    prev_block_hash,
+                    merkle_root,
+                    timestamp,
+                    bits: bits as u64,
+                    nonce,
+                },
+            )
+    }
+
     /// Property test: expand_target handles valid ranges
     proptest! {
         #[test]
@@ -872,7 +891,7 @@ mod property_tests {
     proptest! {
         #[test]
         fn prop_check_proof_of_work_deterministic(
-            header in any::<BlockHeader>()
+            header in arb_block_header()
         ) {
             // Use valid target to avoid expansion errors
             let mut valid_header = header;
@@ -891,8 +910,8 @@ mod property_tests {
     proptest! {
         #[test]
         fn prop_get_next_work_required_bounds(
-            current_header in any::<BlockHeader>(),
-            prev_headers in proptest::collection::vec(any::<BlockHeader>(), 2..6)
+            current_header in arb_block_header(),
+            prev_headers in proptest::collection::vec(arb_block_header(), 2..6)
         ) {
             // Ensure reasonable timestamps
             let mut valid_headers = prev_headers;
@@ -1143,15 +1162,16 @@ mod tests {
     }
 
     #[test]
-    fn test_expand_target_too_large() {
-        let result = expand_target(0x1f00ffff); // exponent = 31
-        assert!(result.is_err());
+    fn test_expand_target_exponent_31() {
+        let result = expand_target(0x1f00ffff).unwrap(); // exponent = 31
+        assert!(!result.is_zero());
     }
 
     #[test]
-    fn test_expand_target_shift_too_large() {
-        let result = expand_target(0x2000ffff); // exponent = 32, would cause shift >= 255
-        assert!(result.is_err());
+    fn test_expand_target_exponent_32_regtest_bits() {
+        // Regtest minimum-difficulty ceiling uses nBits like 0x207fffff (exponent 32).
+        let result = expand_target(0x2000ffff).unwrap();
+        assert!(!result.is_zero());
     }
 
     #[test]
@@ -1174,12 +1194,14 @@ mod tests {
 
     #[test]
     fn test_check_proof_of_work_invalid_target() {
+        // `expand_target` accepts exponent in 3..=32 (mainnet + regtest ceiling); exponent 31 is valid.
+        // Exponent 2 is outside the allowed range and must error.
         let header = BlockHeader {
             version: 1,
             prev_block_hash: [0; 32],
             merkle_root: [0; 32],
             timestamp: 1231006505,
-            bits: 0x1f00ffff, // Invalid target (exponent = 31)
+            bits: 0x0200ffff, // exponent = 2 (invalid)
             nonce: 0,
         };
 

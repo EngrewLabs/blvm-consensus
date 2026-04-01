@@ -33,8 +33,11 @@ pub(crate) fn calculate_base_script_flags_for_block(
     if activation.is_fork_active(ForkId::Bip16, height) {
         flags |= 0x01; // SCRIPT_VERIFY_P2SH
     }
+    // BIP66: strict DER for ECDSA signatures only. Bitcoin Core `GetBlockScriptFlags`
+    // adds SCRIPT_VERIFY_DERSIG here — not SCRIPT_VERIFY_STRICTENC or SCRIPT_VERIFY_LOW_S
+    // (those are standardness / mempool policy; legacy blocks may contain high-S sigs).
     if activation.is_fork_active(ForkId::Bip66, height) {
-        flags |= 0x02 | 0x04 | 0x08; // STRICTENC, DERSIG, LOW_S
+        flags |= 0x04; // SCRIPT_VERIFY_DERSIG
     }
     if activation.is_fork_active(ForkId::Bip65, height) {
         flags |= 0x200; // CHECKLOCKTIMEVERIFY
@@ -52,7 +55,7 @@ pub(crate) fn calculate_base_script_flags_for_block(
 
 /// Convenience: base script flags from (height, network) when no context is available (e.g. mempool).
 #[inline]
-pub(crate) fn calculate_base_script_flags_for_block_network(
+pub fn calculate_base_script_flags_for_block_network(
     height: u64,
     network: crate::types::Network,
 ) -> u32 {
@@ -103,9 +106,9 @@ pub(crate) fn calculate_script_flags_for_block(
     add_per_tx_script_flags(base, tx, has_witness, height, activation)
 }
 
-/// Convenience: script flags from (height, network) when no context is available (e.g. mempool).
+/// Convenience: script flags from (height, network) when no context is available (e.g. mempool, bench tools).
 #[spec_locked("5.2.5")]
-pub(crate) fn calculate_script_flags_for_block_network(
+pub fn calculate_script_flags_for_block_network(
     tx: &Transaction,
     has_witness: bool,
     height: u64,
@@ -169,19 +172,20 @@ pub(super) fn insert_script_exec_cache_for_block(
 #[cfg(feature = "production")]
 pub(super) fn merge_overlay_changes_to_cache(
     additions: &FxHashMap<OutPoint, std::sync::Arc<UTXO>>,
-    deletions: &FxHashSet<OutPoint>,
+    deletions: &FxHashSet<crate::utxo_overlay::UtxoDeletionKey>,
     utxo_set: &mut UtxoSet,
     mut bip30_index: Option<&mut crate::bip_validation::Bip30Index>,
     mut undo_log: Option<&mut crate::reorganization::BlockUndoLog>,
 ) {
     use crate::reorganization::UndoEntry;
 
-    for outpoint in deletions {
-        if let Some(arc) = utxo_set.remove(outpoint) {
+    for del_key in deletions {
+        let outpoint = crate::utxo_overlay::utxo_deletion_key_to_outpoint(del_key);
+        if let Some(arc) = utxo_set.remove(&outpoint) {
             if let Some(idx) = bip30_index.as_deref_mut() {
                 if arc.is_coinbase {
                     if let std::collections::hash_map::Entry::Occupied(mut o) =
-                        idx.entry((*outpoint).hash)
+                        idx.entry(outpoint.hash)
                     {
                         *o.get_mut() = o.get().saturating_sub(1);
                         if *o.get() == 0 {
@@ -192,7 +196,7 @@ pub(super) fn merge_overlay_changes_to_cache(
             }
             if let Some(ref mut log) = undo_log {
                 log.entries.push(UndoEntry {
-                    outpoint: *outpoint,
+                    outpoint,
                     previous_utxo: Some(arc),
                     new_utxo: None,
                 });

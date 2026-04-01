@@ -599,6 +599,7 @@ fn get_current_timestamp() -> Natural {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::opcodes::*;
 
     #[test]
     fn test_create_new_block() {

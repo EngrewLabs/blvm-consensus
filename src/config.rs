@@ -75,11 +75,14 @@ pub struct MempoolConfig {
 
     /// Reject spam transactions at mempool entry (opt-in)
     /// Default: false (spam filtering is opt-in for mempool)
+    ///
+    /// **Admission:** enforced in `blvm-node` by `MempoolPolicyConfig::reject_spam_in_mempool`
+    /// in `MempoolManager::add_transaction` (uses `blvm-protocol` spam filter).
     #[serde(default = "default_reject_spam_in_mempool")]
     pub reject_spam_in_mempool: bool,
 
     /// Spam filter configuration (if reject_spam_in_mempool is enabled)
-    /// Note: Spam filter moved to blvm-protocol; this field is deprecated, use protocol config.
+    /// Note: Prefer `blvm-node` `MempoolPolicyConfig::spam_filter` + `SpamFilterConfigSerializable`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spam_filter_config: Option<serde_json::Value>,
 

@@ -2,6 +2,9 @@
 //!
 //! Replaces `eprintln!` with channel-based logging so validation never blocks on I/O.
 //! A dedicated background thread drains the channel and writes to stderr.
+//! Note: `tracing` also uses stderr; without a global lock, lines can rarely interleave with
+//! timestamps (`evict_ms=0` + `2026-03-29T...` on one physical line). Log analyzers normalize this;
+//! prefer `analyze_ibd_profile.py` over naive `grep` for `[IBD_VALIDATION]` phase=end splits.
 #![cfg(feature = "profile")]
 
 use std::io::Write;

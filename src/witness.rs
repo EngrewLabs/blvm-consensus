@@ -84,12 +84,12 @@ pub fn validate_taproot_witness_structure(witness: &Witness, is_script_path: boo
 
 /// Calculate transaction weight using SegWit formula
 ///
-/// BIP141: Weight(tx) = 4 × BaseSize(tx) + TotalSize(tx)
+/// BIP141: Weight(tx) = 3 × BaseSize(tx) + TotalSize(tx)
 /// BaseSize: Transaction size without witness data
 /// TotalSize: Transaction size with witness data
 #[spec_locked("11.1.1")]
 pub fn calculate_transaction_weight_segwit(base_size: Natural, total_size: Natural) -> Natural {
-    4 * base_size + total_size
+    3 * base_size + total_size
 }
 
 /// Calculate virtual size (vsize) from weight
@@ -254,7 +254,7 @@ mod tests {
         let base_size = 100;
         let total_size = 150;
         let weight = calculate_transaction_weight_segwit(base_size, total_size);
-        assert_eq!(weight, 4 * 100 + 150); // 550
+        assert_eq!(weight, 3 * base_size + total_size); // BIP141
     }
 
     #[test]

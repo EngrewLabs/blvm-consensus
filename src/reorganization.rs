@@ -864,12 +864,27 @@ mod property_tests {
         }
     }
 
+    /// Random compact-encoded header bits (same domain as `expand_target` tests).
+    fn arb_block() -> impl Strategy<Value = Block> {
+        (0x00000000u64..0x1d00ffffu64).prop_map(|bits| Block {
+            header: BlockHeader {
+                version: 1,
+                prev_block_hash: [0u8; 32],
+                merkle_root: [0u8; 32],
+                timestamp: 0,
+                bits,
+                nonce: 0,
+            },
+            transactions: Box::new([]),
+        })
+    }
+
     /// Property test: should_reorganize selects chain with maximum work
     proptest! {
         #[test]
         fn prop_should_reorganize_max_work(
-            new_chain in proptest::collection::vec(any::<Block>(), chain_len_range()),
-            current_chain in proptest::collection::vec(any::<Block>(), chain_len_range())
+            new_chain in proptest::collection::vec(arb_block(), chain_len_range()),
+            current_chain in proptest::collection::vec(arb_block(), chain_len_range())
         ) {
             // Calculate work for both chains - handle errors from invalid blocks
             let new_work = calculate_chain_work(&new_chain);
@@ -908,7 +923,7 @@ mod property_tests {
     proptest! {
         #[test]
         fn prop_calculate_chain_work_deterministic(
-            chain in proptest::collection::vec(any::<Block>(), chain_len_range_det())
+            chain in proptest::collection::vec(arb_block(), chain_len_range_det())
         ) {
             // Calculate work twice - handle errors from invalid blocks
             let work1 = calculate_chain_work(&chain);
@@ -955,8 +970,8 @@ mod property_tests {
     proptest! {
         #[test]
         fn prop_should_reorganize_equal_length(
-            chain1 in proptest::collection::vec(any::<Block>(), 1..3),
-            chain2 in proptest::collection::vec(any::<Block>(), 1..3)
+            chain1 in proptest::collection::vec(arb_block(), 1..3),
+            chain2 in proptest::collection::vec(arb_block(), 1..3)
         ) {
             // Ensure equal length
             let len = chain1.len().min(chain2.len());

@@ -9,6 +9,7 @@
 use blvm_consensus::segwit::calculate_transaction_weight;
 use blvm_consensus::segwit::Witness;
 use blvm_consensus::types::{OutPoint, Transaction, TransactionInput, TransactionOutput};
+use blvm_consensus::SEGWIT_ACTIVATION_MAINNET;
 
 /// Maximum block weight: 4,000,000 weight units
 pub const MAX_BLOCK_WEIGHT: u64 = 4_000_000;
@@ -168,8 +169,8 @@ fn test_weight_calculation_segwit_activation() {
     // Before SegWit: blocks use size (1MB limit)
     // After SegWit: blocks use weight (4MB limit)
 
-    let _pre_segwit_height = 481823;
-    let _post_segwit_height = 481824;
+    let _pre_segwit_height = SEGWIT_ACTIVATION_MAINNET - 1;
+    let _post_segwit_height = SEGWIT_ACTIVATION_MAINNET;
 
     let tx = Transaction {
         version: 1,

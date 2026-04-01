@@ -10,6 +10,9 @@ test_data/
 │   ├── transactions/      # Transaction test vectors (tx_valid.json, tx_invalid.json)
 │   ├── scripts/           # Script test vectors (if available)
 │   └── blocks/            # Block test vectors (if available)
+├── ibd_failure_height_*/  # Optional IBD repro dumps (see `tests/block_ibd_repro.rs`)
+│   ├── info.txt           # Committed: human-readable height / error summary
+│   └── *.bin              # Gitignored: block.bin, utxo_set.bin, witnesses.bin (large)
 ├── mainnet_blocks/        # Real mainnet blocks at key heights
 │   ├── block_0.hex        # Genesis block
 │   ├── block_481824.hex   # SegWit activation

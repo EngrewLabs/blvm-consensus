@@ -600,7 +600,7 @@ mod property_tests {
     ///
     /// Mathematical specification:
     /// ∀ tx ∈ Transaction, witness ∈ Option<Witness>:
-    /// Weight(tx) = 4 × base_size + total_size
+    /// Weight(tx) = 3 × base_size + total_size (BIP141; see `witness::calculate_transaction_weight_segwit`)
     proptest! {
         #[test]
         fn prop_transaction_weight_formula(
@@ -610,7 +610,7 @@ mod property_tests {
             let weight = calculate_transaction_weight(&tx, witness.as_ref()).unwrap();
             let base_size = calculate_base_size(&tx);
             let total_size = calculate_total_size(&tx, witness.as_ref());
-            let expected_weight = 4 * base_size + total_size;
+            let expected_weight = 3 * base_size + total_size;
 
             assert_eq!(weight, expected_weight);
         }

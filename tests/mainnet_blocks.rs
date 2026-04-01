@@ -5,17 +5,16 @@
 //!
 //! Test blocks from key consensus eras:
 //! - Genesis block (height 0)
-//! - Pre-SegWit (height < 481824)
-//! - SegWit activation (height 481824)
-//! - Post-SegWit (height > 481824, < 709632)
-//! - Taproot activation (height 709632)
-//! - Post-Taproot (height > 709632)
+//! Eras use mainnet activation heights from `blvm_consensus` constants.
 
 use blvm_consensus::block::{connect_block, BlockValidationContext};
 use blvm_consensus::segwit::Witness;
 use blvm_consensus::serialization::block::deserialize_block_with_witnesses;
 use blvm_consensus::types::Network;
-use blvm_consensus::{Block, BlockHeader, UtxoSet, ValidationResult};
+use blvm_consensus::{
+    Block, BlockHeader, SEGWIT_ACTIVATION_MAINNET, TAPROOT_ACTIVATION_MAINNET, UtxoSet,
+    ValidationResult,
+};
 
 /// Genesis block (height 0) - the first Bitcoin block
 ///
@@ -55,11 +54,11 @@ fn test_genesis_block_validation() {
 
 /// Test block validation at SegWit activation height
 ///
-/// Height 481824 is the first block with SegWit activation.
+/// At `SEGWIT_ACTIVATION_MAINNET`, SegWit rules apply.
 /// This block should validate with SegWit rules enabled.
 #[test]
 fn test_segwit_activation_block() {
-    let segwit_activation_height = 481824;
+    let segwit_activation_height = SEGWIT_ACTIVATION_MAINNET;
 
     // Try to load block from disk if available
     let block_dir = std::path::PathBuf::from("tests/test_data/mainnet_blocks");
@@ -96,11 +95,11 @@ fn test_segwit_activation_block() {
 
 /// Test block validation at Taproot activation height
 ///
-/// Height 709632 is the first block with Taproot activation.
+/// At `TAPROOT_ACTIVATION_MAINNET`, Taproot rules apply.
 /// This block should validate with Taproot rules enabled.
 #[test]
 fn test_taproot_activation_block() {
-    let taproot_activation_height = 709632;
+    let taproot_activation_height = TAPROOT_ACTIVATION_MAINNET;
 
     // Try to load block from disk if available
     let block_dir = std::path::PathBuf::from("tests/test_data/mainnet_blocks");
@@ -147,7 +146,7 @@ fn test_coinbase_transaction_eras() {
     use blvm_consensus::types::OutPoint;
     use blvm_consensus::types::{Transaction, TransactionInput, TransactionOutput};
 
-    // Pre-SegWit coinbase (height < 481824)
+    // Pre-SegWit coinbase (height < SEGWIT_ACTIVATION_MAINNET)
     let pre_segwit_coinbase = Transaction {
         version: 1,
         inputs: vec![TransactionInput {
@@ -170,7 +169,7 @@ fn test_coinbase_transaction_eras() {
     let result = check_transaction(&pre_segwit_coinbase);
     assert!(result.is_ok());
 
-    // Post-SegWit coinbase includes witness commitment (height >= 481824)
+    // Post-SegWit coinbase includes witness commitment (height >= SEGWIT_ACTIVATION_MAINNET)
     // Note: Actual witness commitment would be in the coinbase output
     let post_segwit_coinbase = Transaction {
         version: 1,

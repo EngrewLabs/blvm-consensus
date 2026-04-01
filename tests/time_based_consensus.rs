@@ -13,6 +13,7 @@
 use blvm_consensus::bip113::get_median_time_past;
 use blvm_consensus::types::BlockHeader;
 use blvm_consensus::types::{OutPoint, Transaction, TransactionInput, TransactionOutput};
+use blvm_consensus::BIP112_CSV_ACTIVATION_MAINNET;
 
 /// Test BIP65 CLTV (CheckLockTimeVerify) - height-based locktime
 ///
@@ -246,12 +247,11 @@ fn test_bip113_median_time_past_empty() {
 /// Verifies that locktime rules work correctly at soft fork activation heights.
 #[test]
 fn test_locktime_soft_fork_interaction() {
-    // BIP65 (CLTV) activated at block 419328
-    // BIP112 (CSV) activated at block 419328
-    // BIP113 (median time-past) activated at block 481824
+    // BIP112 (CSV) on mainnet: `BIP112_CSV_ACTIVATION_MAINNET` (same height as BIP65 CLTV there).
+    // BIP113 (median time-past) ties to SegWit deployment: `SEGWIT_ACTIVATION_MAINNET`.
 
-    // Test transaction before CLTV activation
-    let _pre_cltv_height = 419327;
+    // Test transaction before CSV activation
+    let _pre_cltv_height = BIP112_CSV_ACTIVATION_MAINNET - 1;
     let tx = Transaction {
         version: 1,
         inputs: vec![TransactionInput {
@@ -274,8 +274,8 @@ fn test_locktime_soft_fork_interaction() {
     // Transaction should be valid (no CLTV/CSV at this height)
     assert_eq!(tx.lock_time, 0);
 
-    // Test transaction after CLTV/CSV activation
-    let _post_cltv_height = 419328;
+    // Test transaction after CSV activation
+    let _post_cltv_height = BIP112_CSV_ACTIVATION_MAINNET;
     // Same transaction should be valid with CLTV/CSV enabled
     assert_eq!(tx.lock_time, 0);
 }

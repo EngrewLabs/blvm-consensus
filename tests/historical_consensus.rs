@@ -4,9 +4,9 @@
 //! consensus bugs that were fixed in the reference implementation.
 //!
 //! This ensures compatibility with blocks from different consensus eras:
-//! - Pre-SegWit (blocks < 481824)
-//! - Post-SegWit (blocks >= 481824)
-//! - Post-Taproot (blocks >= 709632)
+//! - Pre-SegWit (mainnet blocks before `SEGWIT_ACTIVATION_MAINNET`)
+//! - Post-SegWit (at/after that height)
+//! - Post-Taproot (at/after `TAPROOT_ACTIVATION_MAINNET`)
 //!
 //! Also tests historical consensus bugs:
 //! - CVE-2012-2459: Merkle tree duplicate hash vulnerability
@@ -14,8 +14,8 @@
 use blvm_consensus::block::{connect_block, BlockValidationContext};
 use blvm_consensus::types::Network;
 use blvm_consensus::{
-    Block, BlockHeader, OutPoint, Transaction, TransactionInput, TransactionOutput, UtxoSet,
-    ValidationResult, UTXO,
+    Block, BlockHeader, OutPoint, SEGWIT_ACTIVATION_MAINNET, TAPROOT_ACTIVATION_MAINNET,
+    Transaction, TransactionInput, TransactionOutput, UtxoSet, ValidationResult, UTXO,
 };
 
 /// Test CVE-2012-2459: Merkle tree duplicate hash vulnerability
@@ -310,13 +310,12 @@ fn test_cve_2018_17144_double_spend_in_block() {
 
 /// Test pre-SegWit block validation
 ///
-/// Blocks before SegWit activation (height < 481824) should not have
+/// Blocks before SegWit activation (mainnet height < `SEGWIT_ACTIVATION_MAINNET`) should not have
 /// witness data and should use legacy transaction format.
 #[test]
 fn test_pre_segwit_block_validation() {
     // Pre-SegWit blocks should validate correctly
-    // Height 481823 is the last block before SegWit activation
-    let pre_segwit_height = 481823;
+    let pre_segwit_height = SEGWIT_ACTIVATION_MAINNET - 1;
 
     let block = Block {
         header: BlockHeader {
@@ -343,13 +342,12 @@ fn test_pre_segwit_block_validation() {
 
 /// Test post-SegWit block validation
 ///
-/// Blocks after SegWit activation (height >= 481824) can have witness data
+/// Blocks at/after SegWit activation on mainnet can have witness data
 /// and should use SegWit transaction format.
 #[test]
 fn test_post_segwit_block_validation() {
     // Post-SegWit blocks should validate correctly
-    // Height 481824 is the first block with SegWit activation
-    let post_segwit_height = 481824;
+    let post_segwit_height = SEGWIT_ACTIVATION_MAINNET;
 
     let block = Block {
         header: BlockHeader {
@@ -376,13 +374,12 @@ fn test_post_segwit_block_validation() {
 
 /// Test post-Taproot block validation
 ///
-/// Blocks after Taproot activation (height >= 709632) can have Taproot outputs
+/// Blocks at/after Taproot activation on mainnet can have Taproot outputs
 /// and should validate Taproot transactions correctly.
 #[test]
 fn test_post_taproot_block_validation() {
     // Post-Taproot blocks should validate correctly
-    // Height 709632 is the first block with Taproot activation
-    let post_taproot_height = 709632;
+    let post_taproot_height = TAPROOT_ACTIVATION_MAINNET;
 
     let block = Block {
         header: BlockHeader {

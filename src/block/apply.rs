@@ -30,7 +30,7 @@ pub fn apply_transaction(
 ) -> Result<(UtxoSet, Vec<UndoEntry>)> {
     let tx_id = calculate_tx_id(tx);
     let mut no_index = None;
-    apply_transaction_with_id(tx, tx_id, utxo_set, height, &mut no_index)
+    apply_transaction_with_id(tx, tx_id, utxo_set, height, &mut no_index, true)
 }
 
 /// ApplyTransaction with pre-computed transaction ID
@@ -47,6 +47,7 @@ pub(crate) fn apply_transaction_with_id(
     mut utxo_set: UtxoSet,
     height: Natural,
     bip30_index: &mut Option<&mut Bip30Index>,
+    collect_undo: bool,
 ) -> Result<(UtxoSet, Vec<UndoEntry>)> {
     assert!(
         !tx.inputs.is_empty() || is_coinbase(tx),
@@ -61,7 +62,11 @@ pub(crate) fn apply_transaction_with_id(
         "Block height {height} must fit in i64"
     );
 
-    let mut undo_entries = Vec::new();
+    let mut undo_entries = if collect_undo {
+        Vec::with_capacity(tx.inputs.len().saturating_add(tx.outputs.len()))
+    } else {
+        Vec::new()
+    };
     let initial_utxo_count = utxo_set.len();
 
     #[cfg(feature = "production")]
@@ -113,16 +118,18 @@ pub(crate) fn apply_transaction_with_id(
                     previous_utxo.value
                 );
 
-                undo_entries.push(UndoEntry {
-                    outpoint: input.prevout,
-                    previous_utxo: Some(std::sync::Arc::clone(&arc)),
-                    new_utxo: None,
-                });
-                assert!(
-                    undo_entries.len() <= tx.inputs.len() + tx.outputs.len(),
-                    "Undo entry count {} must be reasonable",
-                    undo_entries.len()
-                );
+                if collect_undo {
+                    undo_entries.push(UndoEntry {
+                        outpoint: input.prevout,
+                        previous_utxo: Some(std::sync::Arc::clone(&arc)),
+                        new_utxo: None,
+                    });
+                    assert!(
+                        undo_entries.len() <= tx.inputs.len() + tx.outputs.len(),
+                        "Undo entry count {} must be reasonable",
+                        undo_entries.len()
+                    );
+                }
             }
         }
     }
@@ -168,16 +175,18 @@ pub(crate) fn apply_transaction_with_id(
         );
 
         let utxo_arc = std::sync::Arc::new(utxo);
-        undo_entries.push(UndoEntry {
-            outpoint,
-            previous_utxo: None,
-            new_utxo: Some(std::sync::Arc::clone(&utxo_arc)),
-        });
-        assert!(
-            undo_entries.len() <= tx.outputs.len() + tx.inputs.len(),
-            "Undo entry count {} must be reasonable",
-            undo_entries.len()
-        );
+        if collect_undo {
+            undo_entries.push(UndoEntry {
+                outpoint,
+                previous_utxo: None,
+                new_utxo: Some(std::sync::Arc::clone(&utxo_arc)),
+            });
+            assert!(
+                undo_entries.len() <= tx.outputs.len() + tx.inputs.len(),
+                "Undo entry count {} must be reasonable",
+                undo_entries.len()
+            );
+        }
 
         utxo_set.insert(outpoint, utxo_arc);
 

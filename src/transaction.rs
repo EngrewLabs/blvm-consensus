@@ -766,70 +766,100 @@ pub fn calculate_transaction_size(tx: &Transaction) -> usize {
 /// - Coinbase transactions have scriptSig length [2, 100] bytes (rule 5)
 /// - Non-coinbase inputs must not have null prevouts (rule 6, checked in check_tx_inputs)
 
+/// Proptest strategies for transaction-shaped values (no `Arbitrary` impl — orphan rules).
+#[cfg(test)]
+pub(crate) mod transaction_proptest {
+    use super::*;
+    use proptest::prelude::*;
+
+    pub fn arb_transaction() -> BoxedStrategy<Transaction> {
+        (
+            any::<u64>(),
+            prop::collection::vec(
+                (
+                    any::<[u8; 32]>(),
+                    any::<u64>(),
+                    prop::collection::vec(any::<u8>(), 0..100),
+                    any::<u64>(),
+                ),
+                0..10,
+            ),
+            prop::collection::vec(
+                (
+                    any::<i64>(),
+                    prop::collection::vec(any::<u8>(), 0..100),
+                ),
+                0..10,
+            ),
+            any::<u64>(),
+        )
+            .prop_map(|(version, inputs, outputs, lock_time)| {
+                let inputs: Vec<TransactionInput> = inputs
+                    .into_iter()
+                    .map(|(hash, index, script_sig, sequence)| TransactionInput {
+                        prevout: OutPoint {
+                            hash,
+                            index: index as u32,
+                        },
+                        script_sig,
+                        sequence,
+                    })
+                    .collect();
+                let outputs: Vec<TransactionOutput> = outputs
+                    .into_iter()
+                    .map(|(value, script_pubkey)| TransactionOutput {
+                        value,
+                        script_pubkey,
+                    })
+                    .collect();
+                Transaction {
+                    version,
+                    #[cfg(feature = "production")]
+                    inputs: inputs.into(),
+                    #[cfg(not(feature = "production"))]
+                    inputs,
+                    #[cfg(feature = "production")]
+                    outputs: outputs.into(),
+                    #[cfg(not(feature = "production"))]
+                    outputs,
+                    lock_time,
+                }
+            })
+            .boxed()
+    }
+
+    pub fn arb_outpoint() -> impl Strategy<Value = OutPoint> {
+        (any::<[u8; 32]>(), any::<u32>()).prop_map(|(hash, index)| OutPoint { hash, index })
+    }
+
+    pub fn arb_utxo() -> impl Strategy<Value = UTXO> {
+        (
+            any::<i64>(),
+            prop::collection::vec(any::<u8>(), 0..40),
+            any::<u64>(),
+            any::<bool>(),
+        )
+            .prop_map(|(value, script_pubkey, height, is_coinbase)| UTXO {
+                value,
+                script_pubkey: script_pubkey.into(),
+                height,
+                is_coinbase,
+            })
+    }
+}
+
 #[cfg(test)]
 #[allow(unused_doc_comments)]
 mod property_tests {
     use super::*;
+    use super::transaction_proptest::{arb_outpoint, arb_transaction, arb_utxo};
     use proptest::prelude::*;
-
-    // Arbitrary implementation for Transaction (inline since tests/fuzzing/arbitrary_impls.rs
-    // is in separate test crate and not accessible from src/ tests)
-    impl Arbitrary for Transaction {
-        type Parameters = ();
-        type Strategy = BoxedStrategy<Self>;
-
-        fn arbitrary_with(_args: Self::Parameters) -> Self::Strategy {
-            (
-                any::<u64>(), // version
-                prop::collection::vec(
-                    (
-                        any::<[u8; 32]>(),                          // prevout hash
-                        any::<u64>(),                               // prevout index
-                        prop::collection::vec(any::<u8>(), 0..100), // script_sig
-                        any::<u64>(),                               // sequence
-                    ),
-                    0..10, // input count
-                ),
-                prop::collection::vec(
-                    (
-                        any::<i64>(),                               // value
-                        prop::collection::vec(any::<u8>(), 0..100), // script_pubkey
-                    ),
-                    0..10, // output count
-                ),
-                any::<u64>(), // lock_time
-            )
-                .prop_map(|(version, inputs, outputs, lock_time)| Transaction {
-                    version,
-                    inputs: inputs
-                        .into_iter()
-                        .map(|(hash, index, script_sig, sequence)| TransactionInput {
-                            prevout: OutPoint {
-                                hash,
-                                index: index as u32,
-                            },
-                            script_sig,
-                            sequence,
-                        })
-                        .collect(),
-                    outputs: outputs
-                        .into_iter()
-                        .map(|(value, script_pubkey)| TransactionOutput {
-                            value,
-                            script_pubkey,
-                        })
-                        .collect(),
-                    lock_time,
-                })
-                .boxed()
-        }
-    }
 
     /// Property test: check_transaction validates structure correctly
     proptest! {
         #[test]
         fn prop_check_transaction_structure(
-            tx in any::<Transaction>()
+            tx in arb_transaction()
         ) {
             // Bound for tractability
             let mut bounded_tx = tx;
@@ -871,8 +901,8 @@ mod property_tests {
     proptest! {
         #[test]
         fn prop_check_tx_inputs_coinbase(
-            tx in any::<Transaction>(),
-            utxo_set in prop::collection::vec((any::<OutPoint>(), any::<UTXO>()), 0..50).prop_map(|v| v.into_iter().map(|(op, u)| (op, std::sync::Arc::new(u))).collect::<UtxoSet>()),
+            tx in arb_transaction(),
+            utxo_set in prop::collection::vec((arb_outpoint(), arb_utxo()), 0..50).prop_map(|v| v.into_iter().map(|(op, u)| (op, std::sync::Arc::new(u))).collect::<UtxoSet>()),
             height in 0u64..1000u64
         ) {
             // Bound for tractability
@@ -898,7 +928,7 @@ mod property_tests {
     proptest! {
         #[test]
         fn prop_is_coinbase_correct(
-            tx in any::<Transaction>()
+            tx in arb_transaction()
         ) {
             let is_cb = is_coinbase(&tx);
 
@@ -915,7 +945,7 @@ mod property_tests {
     proptest! {
         #[test]
         fn prop_calculate_transaction_size_consistent(
-            tx in any::<Transaction>()
+            tx in arb_transaction()
         ) {
             // Bound for tractability
             let mut bounded_tx = tx;

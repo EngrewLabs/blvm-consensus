@@ -98,13 +98,14 @@ pub fn check_bip30(
 
 /// BIP34: Block Height in Coinbase
 ///
-/// Starting at block 227,836 (mainnet), coinbase scriptSig must contain the block height.
+/// Starting at the mainnet height in `BIP34_ACTIVATION_MAINNET` (Bitcoin Core `BIP34Height`),
+/// coinbase scriptSig must contain the block height.
 /// Mathematical specification: Orange Paper Section 5.4.2
 ///
 /// **BIP34Check**: ℬ × ℕ → {valid, invalid}
 ///
 /// Activation Heights:
-/// - Mainnet: Block 227,836
+/// - Mainnet: `BIP34_ACTIVATION_MAINNET` (227,931; Bitcoin Core `chainparams`)
 /// - Testnet: Block 211,111
 /// - Regtest: Block 0 (always active)
 #[spec_locked("5.4.2")]
@@ -321,7 +322,7 @@ fn extract_height_from_script_sig(script_sig: &[u8]) -> Result<Natural> {
 /// **BIP66Check**: 𝕊 × ℕ → {valid, invalid}
 ///
 /// Activation Heights:
-/// - Mainnet: Block 363,724
+/// - Mainnet: `BIP66_ACTIVATION_MAINNET` (363,725)
 /// - Testnet: Block 330,776
 /// - Regtest: Block 0 (always active)
 #[spec_locked("5.4.3")]
@@ -450,8 +451,8 @@ fn is_strict_der(signature: &[u8]) -> Result<bool> {
 /// **BIP90Check**: ℋ × ℕ → {valid, invalid}
 ///
 /// Activation Heights:
-/// - BIP34: Mainnet 227,836 (requires version >= 2)
-/// - BIP66: Mainnet 363,724 (requires version >= 3)
+/// - BIP34: Mainnet 227,931 (requires version >= 2)
+/// - BIP66: Mainnet 363,725 (requires version >= 3)
 /// - BIP65: Mainnet 388,381 (requires version >= 4)
 #[spec_locked("5.4.4")]
 pub fn check_bip90(
@@ -621,6 +622,7 @@ pub enum Bip147Network {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::{BIP147_ACTIVATION_MAINNET, BIP66_ACTIVATION_MAINNET};
 
     #[test]
     fn test_bip30_basic() {
@@ -707,7 +709,7 @@ mod tests {
 
     #[test]
     fn test_bip34_after_activation() {
-        let height = 227_836;
+        let height = crate::constants::BIP34_ACTIVATION_MAINNET;
         let transactions: Vec<Transaction> = vec![Transaction {
             version: 1,
             inputs: vec![TransactionInput {
@@ -755,14 +757,14 @@ mod tests {
         assert!(result, "Version 1 should be valid before BIP34");
 
         // Test version 1 after BIP34 activation (should fail)
-        let result = check_bip90_network(1, 227_836, crate::types::Network::Mainnet).unwrap();
+        let result = check_bip90_network(1, crate::constants::BIP34_ACTIVATION_MAINNET, crate::types::Network::Mainnet).unwrap();
         assert!(
             !result,
             "Version 1 should be invalid after BIP34 activation"
         );
 
         // Test version 2 after BIP34 activation (should pass)
-        let result = check_bip90_network(2, 227_836, crate::types::Network::Mainnet).unwrap();
+        let result = check_bip90_network(2, crate::constants::BIP34_ACTIVATION_MAINNET, crate::types::Network::Mainnet).unwrap();
         assert!(result, "Version 2 should be valid after BIP34 activation");
 
         // Test version 2 after BIP66 activation (should fail)
@@ -849,7 +851,7 @@ mod tests {
 
     #[test]
     fn test_bip34_invalid_height() {
-        let height = 227_836;
+        let height = crate::constants::BIP34_ACTIVATION_MAINNET;
         let transactions: Vec<Transaction> = vec![Transaction {
             version: 1,
             inputs: vec![TransactionInput {
@@ -858,7 +860,7 @@ mod tests {
                     index: 0xffffffff,
                 },
                 // Wrong height encoding
-                script_sig: vec![0x03, 0x00, 0x00, 0x00], // Height 0 instead of 227836
+                script_sig: vec![0x03, 0x00, 0x00, 0x00], // Height 0 instead of activation height
                 sequence: 0xffffffff,
             }]
             .into(),
@@ -890,7 +892,12 @@ mod tests {
     fn test_bip66_strict_der() {
         // Valid DER signature (minimal example)
         let valid_der = vec![0x30, 0x06, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00];
-        let result = check_bip66_network(&valid_der, 363_724, crate::types::Network::Mainnet).unwrap();
+        let result = check_bip66_network(
+            &valid_der,
+            BIP66_ACTIVATION_MAINNET - 1,
+            crate::types::Network::Mainnet,
+        )
+        .unwrap();
         // Note: This may fail if signature is not actually valid DER, but the check should not panic
         assert!(
             result || !result,
@@ -912,7 +919,7 @@ mod tests {
         let result = check_bip147_network(
             &script_sig_valid,
             &script_pubkey,
-            481_824,
+            BIP147_ACTIVATION_MAINNET,
             Bip147Network::Mainnet,
         )
         .unwrap();
@@ -923,7 +930,7 @@ mod tests {
         let result = check_bip147_network(
             &script_sig_invalid,
             &script_pubkey,
-            481_824,
+            BIP147_ACTIVATION_MAINNET,
             Bip147Network::Mainnet,
         )
         .unwrap();

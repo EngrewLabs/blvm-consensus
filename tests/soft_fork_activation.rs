@@ -8,6 +8,7 @@
 //! https://github.com/bitcoin/bips/blob/master/bip-0009.mediawiki
 
 use blvm_consensus::types::BlockHeader;
+use blvm_consensus::{SEGWIT_ACTIVATION_MAINNET, TAPROOT_ACTIVATION_MAINNET};
 
 /// BIP9 version bits constants
 ///
@@ -370,7 +371,7 @@ fn test_bip9_deactivation() {
 
 /// Test historical SegWit activation
 ///
-/// SegWit (BIP141) activated at block height 481824 on mainnet.
+/// SegWit (BIP141) on mainnet: `SEGWIT_ACTIVATION_MAINNET`.
 /// This test verifies the activation process.
 #[test]
 fn test_segwit_activation() {
@@ -399,7 +400,7 @@ fn test_segwit_activation() {
     }
 
     let current_time = 1500000000;
-    let current_height = 481824;
+    let current_height = SEGWIT_ACTIVATION_MAINNET;
 
     // At activation height, should be Active
     let state = calculate_bip9_state(&segwit_deployment, &headers, current_time, current_height);
@@ -409,7 +410,7 @@ fn test_segwit_activation() {
 
 /// Test historical Taproot activation
 ///
-/// Taproot (BIP341) activated at block height 709632 on mainnet.
+/// Taproot (BIP341) on mainnet: `TAPROOT_ACTIVATION_MAINNET`.
 #[test]
 fn test_taproot_activation() {
     // Taproot uses bit 2 (0x00000004) in version bits
@@ -436,7 +437,7 @@ fn test_taproot_activation() {
     }
 
     let current_time = 1625000000;
-    let current_height = 709632;
+    let current_height = TAPROOT_ACTIVATION_MAINNET;
 
     // At activation height, should be Active
     let state = calculate_bip9_state(&taproot_deployment, &headers, current_time, current_height);

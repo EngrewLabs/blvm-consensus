@@ -62,9 +62,7 @@ fn test_witness_commitment_segwit_block() {
 /// Test witness commitment validation at SegWit activation height
 #[test]
 fn test_witness_commitment_activation_height() {
-    // SegWit activated at height 481824
-    let segwit_activation_height = 481824;
-
+    // Scenario name: at mainnet SegWit deployment (`SEGWIT_ACTIVATION_MAINNET`).
     let block = Block {
         header: BlockHeader {
             version: 0x20000000, // SegWit version bit

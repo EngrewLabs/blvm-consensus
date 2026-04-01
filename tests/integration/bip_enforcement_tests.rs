@@ -88,12 +88,12 @@ fn test_connect_block_rejects_bip30_violation() {
 
 /// Test that BIP34 (block height in coinbase) is enforced in connect_block
 ///
-/// This test creates a block at height >= 227836 without height in coinbase.
+/// This test creates a block at height >= BIP34 activation without height in coinbase.
 /// If BIP34 check is NOT called in connect_block, this block will be accepted (BUG).
 /// If BIP34 check IS called, this block will be rejected (CORRECT).
 #[test]
 fn test_connect_block_rejects_bip34_violation() {
-    let height = 227_836; // BIP34 activation height
+    let height = BIP34_ACTIVATION_MAINNET; // BIP34 activation height (Bitcoin Core BIP34Height)
     
     // Create coinbase WITHOUT height encoding (violates BIP34)
     let coinbase_tx = Transaction {
@@ -155,7 +155,7 @@ fn test_connect_block_rejects_bip34_violation() {
 /// This ensures BIP34 check is called but correctly allows blocks before activation.
 #[test]
 fn test_connect_block_allows_bip34_before_activation() {
-    let height = 100_000; // Before BIP34 activation (227836)
+    let height = 100_000; // Before BIP34 activation
     
     // Create coinbase WITHOUT height encoding (OK before activation)
     let coinbase_tx = Transaction {
@@ -206,12 +206,12 @@ fn test_connect_block_allows_bip34_before_activation() {
 
 /// Test that BIP90 (block version enforcement) is enforced in connect_block
 ///
-/// This test creates a block with version 1 at height >= 227836 (after BIP34 activation).
+/// This test creates a block with version 1 at height >= BIP34 activation.
 /// If BIP90 check is NOT called in connect_block, this block will be accepted (BUG).
 /// If BIP90 check IS called, this block will be rejected (CORRECT).
 #[test]
 fn test_connect_block_rejects_bip90_violation() {
-    let height = 227_836; // BIP34 activation height (requires version >= 2)
+    let height = BIP34_ACTIVATION_MAINNET; // BIP34 activation height (requires version >= 2)
     
     // Create block with version 1 (violates BIP90 - requires version >= 2 after BIP34)
     let coinbase_tx = Transaction {
@@ -273,7 +273,7 @@ fn test_connect_block_rejects_bip90_violation() {
 /// This ensures BIP90 check is called but correctly allows valid versions.
 #[test]
 fn test_connect_block_allows_bip90_valid_version() {
-    let height = 227_836; // BIP34 activation height (requires version >= 2)
+    let height = BIP34_ACTIVATION_MAINNET; // BIP34 activation height (requires version >= 2)
     
     // Create block with version 2 (valid for BIP90)
     let coinbase_tx = Transaction {
@@ -327,7 +327,7 @@ fn test_connect_block_allows_bip90_valid_version() {
 /// This test creates a block that violates multiple BIPs to ensure all checks are called.
 #[test]
 fn test_connect_block_multiple_bip_violations() {
-    let height = 227_836;
+    let height = BIP34_ACTIVATION_MAINNET;
     
     // Create block that violates BIP30, BIP34, and BIP90
     let coinbase_tx = Transaction {
@@ -409,7 +409,7 @@ fn test_connect_block_multiple_bip_violations() {
 /// This test verifies the order by checking which violation is caught first.
 #[test]
 fn test_bip_check_order() {
-    let height = 227_836;
+    let height = BIP34_ACTIVATION_MAINNET;
     
     // Create block that violates BIP90 (version) - should be caught first
     let coinbase_tx = Transaction {

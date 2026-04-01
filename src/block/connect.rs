@@ -1,7 +1,9 @@
 //! Block connect logic: connect_block_inner and connect_block_inner_with_tx_ids.
 //! Extracted from block/mod.rs for clarity (§1.1).
+//!
+//! Profile `[PERF_CLIFF]`: `BLVM_PERF_CLIFF_RANGES` (comma-separated `START-END`), `BLVM_PERF_CLIFF_STRIDE` (default 100).
 
-use crate::activation::{ForkActivationTable, IsForkActive};
+use crate::activation::IsForkActive;
 use crate::bip113::get_median_time_past;
 use crate::constants::*;
 use crate::economic::get_block_subsidy;
@@ -27,6 +29,15 @@ use super::{
     UtxoDelta,
 };
 
+/// Shared empty witness matrix for blocks with no segwit data (avoids per-block `Arc::new(Vec::new())`).
+#[cfg(feature = "production")]
+#[inline]
+fn arc_empty_witness_rows() -> std::sync::Arc<Vec<Vec<Witness>>> {
+    use std::sync::{Arc, OnceLock};
+    static EMPTY: OnceLock<Arc<Vec<Vec<Witness>>>> = OnceLock::new();
+    EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
+}
+
 #[cold]
 fn make_fee_overflow_error(transaction_index: Option<usize>) -> ConsensusError {
     let message = if let Some(i) = transaction_index {
@@ -45,28 +56,28 @@ fn coinbase_script_sig_len(coinbase: &crate::types::Transaction) -> usize {
         .unwrap_or(0)
 }
 
-fn invalid_block_result(
+fn invalid_block_result<'a>(
     utxo_set: &UtxoSet,
     tx_ids: &[Hash],
     msg: impl Into<String>,
 ) -> Result<(
     ValidationResult,
     UtxoSet,
-    Vec<Hash>,
+    Cow<'a, [Hash]>,
     crate::reorganization::BlockUndoLog,
     Option<UtxoDelta>,
 )> {
     Ok((
         ValidationResult::Invalid(msg.into()),
         utxo_set.clone(),
-        tx_ids.to_vec(),
+        Cow::Owned(tx_ids.to_vec()),
         crate::reorganization::BlockUndoLog::new(),
         None,
     ))
 }
 
 /// BIP54 per-transaction sigop cap (§1.3 — single place for prod / non-prod paths).
-fn check_bip54_sigop_limit<U: crate::utxo_overlay::UtxoLookup>(
+fn check_bip54_sigop_limit<'a, U: crate::utxo_overlay::UtxoLookup>(
     bip54_active: bool,
     tx: &Transaction,
     utxo_lookup: &U,
@@ -77,7 +88,7 @@ fn check_bip54_sigop_limit<U: crate::utxo_overlay::UtxoLookup>(
 ) -> Result<Option<(
     ValidationResult,
     UtxoSet,
-    Vec<Hash>,
+    Cow<'a, [Hash]>,
     crate::reorganization::BlockUndoLog,
     Option<UtxoDelta>,
 )>> {
@@ -95,6 +106,78 @@ fn check_bip54_sigop_limit<U: crate::utxo_overlay::UtxoLookup>(
         return Ok(Some(r));
     }
     Ok(None)
+}
+
+/// Default `[PERF_CLIFF]` height bands (every [`PERF_CLIFF_STRIDE`] when inside any band).
+#[cfg(feature = "profile")]
+fn perf_cliff_default_bands() -> Vec<(u64, u64)> {
+    vec![
+        (120_000, 145_000),
+        (180_000, 195_000),
+        (200_000, 240_000),
+        (300_000, 330_000),
+        (380_000, 420_000),
+    ]
+}
+
+/// `BLVM_PERF_CLIFF_RANGES`: comma-separated `START-END` inclusive (e.g. `300000-305000,320000-330000`).
+#[cfg(feature = "profile")]
+fn parse_perf_cliff_ranges(s: &str) -> Option<Vec<(u64, u64)>> {
+    let mut out = Vec::new();
+    for part in s.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let (a, b) = part.split_once('-')?;
+        let lo: u64 = a.trim().parse().ok()?;
+        let hi: u64 = b.trim().parse().ok()?;
+        if lo > hi {
+            return None;
+        }
+        out.push((lo, hi));
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// Whether `height` should emit `[PERF_CLIFF]` (profile + this stride, typically 100).
+#[cfg(feature = "profile")]
+fn perf_cliff_sample_height(height: u64, stride: u64) -> bool {
+    if stride == 0 || height % stride != 0 {
+        return false;
+    }
+    use std::sync::OnceLock;
+    static BANDS: OnceLock<Vec<(u64, u64)>> = OnceLock::new();
+    let bands = BANDS.get_or_init(|| {
+        if let Ok(s) = std::env::var("BLVM_PERF_CLIFF_RANGES") {
+            let t = s.trim();
+            if !t.is_empty() {
+                if let Some(v) = parse_perf_cliff_ranges(t) {
+                    return v;
+                }
+                eprintln!(
+                    "[blvm_consensus] BLVM_PERF_CLIFF_RANGES invalid; using default PERF_CLIFF bands"
+                );
+            }
+        }
+        perf_cliff_default_bands()
+    });
+    bands
+        .iter()
+        .any(|(lo, hi)| height >= *lo && height <= *hi)
+}
+
+#[cfg(feature = "profile")]
+fn perf_cliff_stride() -> u64 {
+    use std::sync::OnceLock;
+    static STRIDE: OnceLock<u64> = OnceLock::new();
+    *STRIDE.get_or_init(|| {
+        std::env::var("BLVM_PERF_CLIFF_STRIDE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(100)
+    })
 }
 
 #[cfg(all(feature = "production", feature = "rayon"))]
@@ -148,7 +231,7 @@ fn script_check_queue() -> &'static crate::checkqueue::ScriptCheckQueue {
         crate::checkqueue::ScriptCheckQueue::new(n, Some(batch_size))
     })
 }
-pub(crate) fn connect_block_inner(
+pub(crate) fn connect_block_inner<'a>(
     block: &Block,
     witnesses: &[Vec<Witness>],
     mut utxo_set: UtxoSet,
@@ -156,14 +239,14 @@ pub(crate) fn connect_block_inner(
     height: Natural,
     context: &BlockValidationContext,
     bip30_index: Option<&mut crate::bip_validation::Bip30Index>,
-    precomputed_tx_ids: Option<&[Hash]>,
+    precomputed_tx_ids: Option<&'a [Hash]>,
     block_arc: Option<std::sync::Arc<Block>>,
     ibd_mode: bool,
     best_header_chainwork: Option<u128>,
 ) -> Result<(
     ValidationResult,
     UtxoSet,
-    Vec<Hash>,
+    Cow<'a, [Hash]>,
     crate::reorganization::BlockUndoLog,
     Option<UtxoDelta>,
 )> {
@@ -183,11 +266,28 @@ pub(crate) fn connect_block_inner(
         utxo_set.len()
     );
     assert!(
-        witnesses.len() == block.transactions.len(),
-        "Witness count {} must match transaction count {}",
+        witnesses.is_empty() || witnesses.len() == block.transactions.len(),
+        "Witness count {} must match transaction count {} (or be empty for pre-SegWit)",
         witnesses.len(),
         block.transactions.len()
     );
+
+    // Empty `witnesses` means "no witness stacks" from legacy/non-witness callers.
+    // Expand to one empty stack per transaction so weight, script checks, and witness
+    // commitment logic all use `witnesses.len() == block.transactions.len()`.
+    // Drop `witnesses_arc` when expanding: callers may pass a shared empty Arc (wrong length).
+    let witness_row_fallback: Option<Vec<Vec<Witness>>> =
+        if witnesses.is_empty() && !block.transactions.is_empty() {
+            Some(vec![Vec::new(); block.transactions.len()])
+        } else {
+            None
+        };
+    let witnesses_arc = if witness_row_fallback.is_some() {
+        None
+    } else {
+        witnesses_arc
+    };
+    let witnesses: &[Vec<Witness>] = witness_row_fallback.as_deref().unwrap_or(witnesses);
 
     // Note: Header validation is handled by validate_block_header() below,
     // not by assertions, to allow tests to verify validation behavior
@@ -201,10 +301,9 @@ pub(crate) fn connect_block_inner(
             return invalid_block_result(&utxo_set, &[], "Block has no transactions");
         }
 
-        // Quick reject: too many transactions (before expensive validation)
-        // Estimate: MAX_BLOCK_SIZE / average_tx_size ≈ 1,000,000 / 250 = ~4000 transactions
-        // Use conservative limit of 10,000 transactions
-        if block.transactions.len() > 10_000 {
+        // Quick reject: impossible tx count (before expensive validation). Real limit is weight;
+        // use the same weight-derived ceiling as `compute_block_tx_ids` / parallel batch paths.
+        if block.transactions.len() > crate::constants::MAX_TRANSACTIONS_PER_BLOCK {
             return invalid_block_result(
                 &utxo_set,
                 &[],
@@ -323,7 +422,7 @@ pub(crate) fn connect_block_inner(
     }
     #[cfg(any(debug_assertions, feature = "runtime-invariants"))]
     debug_assert!(
-        bip90_result || height < 227_836, // BIP90 only applies after activation
+        bip90_result || height < BIP34_ACTIVATION_MAINNET, // BIP90 only applies after activation
         "BIP90 check was called but returned false - this should be handled below"
     );
     if !bip90_result {
@@ -343,17 +442,17 @@ pub(crate) fn connect_block_inner(
         height,
         _fn_start.elapsed().as_secs_f64() * 1000.0
     );
-    let tx_ids_owned: Vec<Hash> = match precomputed_tx_ids {
-        Some(s) => s.to_vec(),
+    let tx_ids_cow: Cow<'a, [Hash]> = match precomputed_tx_ids {
+        Some(s) => Cow::Borrowed(s),
         None => {
             if block.transactions.is_empty() {
-                vec![]
+                Cow::Owned(vec![])
             } else {
-                crate::block::compute_block_tx_ids(block)
+                Cow::Owned(crate::block::compute_block_tx_ids(block))
             }
         }
     };
-    let tx_ids: &[Hash] = &tx_ids_owned;
+    let tx_ids: &[Hash] = tx_ids_cow.as_ref();
 
     // Block tx merkle root verification (Orange Paper 8.4)
     // CRITICAL: header.merkle_root must match computed root of block transactions
@@ -405,7 +504,7 @@ pub(crate) fn connect_block_inner(
     let bip34_result = crate::bip_validation::check_bip34(block, height, context)?;
     #[cfg(any(debug_assertions, feature = "runtime-invariants"))]
     debug_assert!(
-        bip34_result || height < 227_836, // BIP34 only applies after activation
+        bip34_result || height < BIP34_ACTIVATION_MAINNET, // BIP34 only applies after activation
         "BIP34 check was called but returned false - this should be handled below"
     );
     if !bip34_result {
@@ -498,8 +597,27 @@ pub(crate) fn connect_block_inner(
     #[cfg(not(feature = "production"))]
     let skip_signatures = false;
 
+    // BLVM_DEBUG_ASSUMEVALID=1: log when height is below assume-valid but Core rules disable skip
+    // (two-week or minimum-chain-work). That forces the full script loop + overlay work even though
+    // ECDSA may still be short-circuited in verify_signature — see script/signature.rs.
+    #[cfg(feature = "production")]
+    if std::env::var("BLVM_DEBUG_ASSUMEVALID").is_ok() {
+        let av = crate::block::get_assume_valid_height();
+        if av > 0 && height < av && !skip_signatures {
+            eprintln!(
+                "[blvm_consensus::assumevalid] assume-valid skip disabled for this block (two-week or chainwork gate; full script path) height={height} assume_valid_height={av} two_week_ok={two_week_ok} chainwork_ok={chainwork_ok} block_timestamp={} network_time={network_time} best_header_chainwork={best_header_chainwork:?} n_min_chain_work={}",
+                block.header.timestamp,
+                crate::config::get_n_minimum_chain_work(),
+            );
+        }
+    }
+
     // Pre-compute base script flags once per block from activation context
     let base_script_flags = calculate_base_script_flags_for_block(height, context);
+
+    // Cache fork activation at block level — avoids per-tx table lookup
+    let segwit_active = context.is_fork_active(ForkId::SegWit, height);
+    let taproot_active = segwit_active && context.is_fork_active(ForkId::Taproot, height);
 
     // Pre-compute overlay capacities once (used by all validation paths)
     let estimated_outputs: usize = block.transactions.iter().map(|tx| tx.outputs.len()).sum();
@@ -578,21 +696,28 @@ pub(crate) fn connect_block_inner(
             // false "invalid signature" at e.g. block 164676 (see docs/IBD_BATCH_SPEED_PLAN.md §11).
             #[cfg(feature = "production")]
             use std::sync::Arc;
+            #[cfg(feature = "profile")]
             let validation_start = std::time::Instant::now();
+            #[cfg(feature = "profile")]
             let total_input_lookup_time = std::time::Duration::ZERO;
+            #[cfg(feature = "profile")]
             let mut total_script_time = std::time::Duration::ZERO;
+            #[cfg(feature = "profile")]
             let mut total_tx_structure_time = std::time::Duration::ZERO;
+            #[cfg(feature = "profile")]
             let total_overlay_apply_time = std::time::Duration::ZERO;
+            #[cfg(feature = "profile")]
             let total_check_tx_inputs_time = std::time::Duration::ZERO;
+            #[cfg(all(feature = "production", feature = "profile"))]
+            let mut script_checks_queued_count: usize = 0;
 
             // Structure validation: skip during IBD (block passed PoW, structure is guaranteed valid).
             // Non-IBD paths still validate.
+            #[cfg(feature = "profile")]
             let structure_start = std::time::Instant::now();
             let mut valid_tx_indices = Vec::with_capacity(block.transactions.len());
             if ibd_mode {
-                for i in 0..block.transactions.len() {
-                    valid_tx_indices.push(i);
-                }
+                valid_tx_indices.extend(0..block.transactions.len());
             } else {
                 let tx_structure_results: Vec<(usize, Result<ValidationResult>)> = {
                     if block.transactions.len() < 500 {
@@ -630,15 +755,20 @@ pub(crate) fn connect_block_inner(
                     }
                 }
             }
-            total_tx_structure_time += structure_start.elapsed();
+            #[cfg(feature = "profile")]
+            { total_tx_structure_time += structure_start.elapsed(); }
 
             // Per-input ECDSA counters for composite index (base << 16) | sub so batch sort order
             // is deterministic under parallel script verification (see docs/IBD_BATCH_SPEED_PLAN.md §11).
             #[cfg(feature = "production")]
-            let total_ecdsa_inputs: usize = valid_tx_indices
-                .iter()
-                .map(|&idx| block.transactions[idx].inputs.len())
-                .sum();
+            let total_ecdsa_inputs: usize = if skip_signatures {
+                0
+            } else {
+                valid_tx_indices
+                    .iter()
+                    .map(|&idx| block.transactions[idx].inputs.len())
+                    .sum()
+            };
             #[cfg(feature = "production")]
             let ecdsa_sub_counters: std::sync::Arc<
                 Vec<std::sync::atomic::AtomicUsize>,
@@ -669,10 +799,14 @@ pub(crate) fn connect_block_inner(
             let results_arc = Arc::new(crossbeam_queue::SegQueue::new());
             // Block-level buffers: build as local Vecs, freeze to Arc before session (immutable for workers).
             #[cfg(all(feature = "production", feature = "rayon"))]
-            let total_inputs: usize = valid_tx_indices
-                .iter()
-                .map(|&i| block.transactions[i].inputs.len())
-                .sum();
+            let total_inputs: usize = if skip_signatures {
+                0
+            } else {
+                valid_tx_indices
+                    .iter()
+                    .map(|&i| block.transactions[i].inputs.len())
+                    .sum()
+            };
             #[cfg(all(feature = "production", feature = "rayon"))]
             let mut script_pubkey_vec: Vec<u8> =
                 Vec::with_capacity(total_inputs.saturating_mul(64).min(256 * 1024));
@@ -681,25 +815,6 @@ pub(crate) fn connect_block_inner(
             #[cfg(all(feature = "production", feature = "rayon"))]
             let mut script_pubkey_indices_vec: Vec<(usize, usize)> =
                 Vec::with_capacity(total_inputs);
-            // Hoist frozen buffers (same scope as block_arc, tx_contexts_arc)
-            #[cfg(all(feature = "production", feature = "rayon"))]
-            let script_pubkey_buffer: std::sync::Arc<Vec<u8>>;
-            #[cfg(all(feature = "production", feature = "rayon"))]
-            let prevout_values_buffer: std::sync::Arc<Vec<i64>>;
-            #[cfg(all(feature = "production", feature = "rayon"))]
-            let script_pubkey_indices_buffer: std::sync::Arc<Vec<(usize, usize)>>;
-            #[cfg(all(feature = "production", feature = "rayon"))]
-            let tx_contexts_arc: std::sync::Arc<
-                Vec<crate::checkqueue::TxScriptContext>,
-            >;
-            #[cfg(all(feature = "production", feature = "rayon"))]
-            let witness_buffer: std::sync::Arc<Vec<Vec<Witness>>> = witnesses_arc
-                .map(Arc::clone)
-                .unwrap_or_else(|| Arc::new(witnesses.to_vec()));
-            #[cfg(all(feature = "production", feature = "rayon"))]
-            let precomputed_sighashes_arc: std::sync::Arc<Vec<Option<[u8; 32]>>>;
-            #[cfg(all(feature = "production", feature = "rayon"))]
-            let precomputed_p2pkh_hashes_arc: std::sync::Arc<Vec<Option<[u8; 20]>>>;
 
             // Dedicated script workers: build buffers+tx_contexts, freeze to Arc, create session, add checks.
             #[cfg(all(feature = "production", feature = "rayon"))]
@@ -716,7 +831,7 @@ pub(crate) fn connect_block_inner(
                     Result<(
                         ValidationResult,
                         UtxoSet,
-                        Vec<Hash>,
+                        Cow<'a, [Hash]>,
                         crate::reorganization::BlockUndoLog,
                         Option<UtxoDelta>,
                     )>,
@@ -745,17 +860,8 @@ pub(crate) fn connect_block_inner(
                     let _ = crate::script_profile::get_and_reset_p2pkh_timing();
                 }
 
+                #[cfg(feature = "profile")]
                 let script_start = std::time::Instant::now();
-                type EarlyReturn = std::result::Result<
-                    (
-                        ValidationResult,
-                        UtxoSet,
-                        Vec<Hash>,
-                        crate::reorganization::BlockUndoLog,
-                        Option<UtxoDelta>,
-                    ),
-                    ConsensusError,
-                >;
 
                 for (loop_idx, &i) in valid_tx_indices.iter().enumerate() {
                     if early_return.is_some() {
@@ -764,20 +870,31 @@ pub(crate) fn connect_block_inner(
                     let tx = &block_ref.transactions[i];
 
                     let wits_i = witnesses_ref.get(i).map(|w| w.as_slice());
-                    let has_wit_i = if height < 481824 {
-                        false
-                    } else {
-                        wits_i
+                    let has_wit_i = segwit_active
+                        && wits_i
                             .map(|w| w.iter().any(|wit| !is_witness_empty(wit)))
-                            .unwrap_or(false)
+                            .unwrap_or(false);
+                    let tx_flags_i = if !segwit_active {
+                        base_script_flags
+                    } else {
+                        let mut flags = base_script_flags;
+                        if has_wit_i || crate::segwit::is_segwit_transaction(tx) {
+                            flags |= 0x800;
+                        }
+                        if taproot_active {
+                            for output in &tx.outputs {
+                                let script = &output.script_pubkey;
+                                if script.len() == TAPROOT_SCRIPT_LENGTH
+                                    && script[0] == OP_1
+                                    && script[1] == PUSH_32_BYTES
+                                {
+                                    flags |= 0x8000;
+                                    break;
+                                }
+                            }
+                        }
+                        flags
                     };
-                    let tx_flags_i = calculate_script_flags_for_block_with_base(
-                        tx,
-                        has_wit_i,
-                        base_script_flags,
-                        height,
-                        context,
-                    );
 
                     let (input_valid, fee, prevout_values_range, script_pubkey_indices_range) =
                         if is_coinbase(tx) {
@@ -802,14 +919,83 @@ pub(crate) fn connect_block_inner(
                                 }
                             };
                             (ValidationResult::Valid, 0, (0, 0), (0, 0))
+                        } else if skip_signatures {
+                            // Fast path: skip_signatures avoids per-tx utxo_refs Vec allocation.
+                            // Sigop cost uses overlay directly (UtxoLookup trait).
+                            utxo_data_reusable.clear();
+                            utxo_data_reusable.reserve(tx.inputs.len());
+                            let mut utxo_missing: Option<(usize, crate::types::OutPoint)> = None;
+                            for (input_idx, input) in tx.inputs.iter().enumerate() {
+                                match overlay.get(&input.prevout) {
+                                    Some(u) => {
+                                        utxo_data_reusable.push(Some((
+                                            u.value,
+                                            u.is_coinbase,
+                                            u.height,
+                                        )));
+                                    }
+                                    None => {
+                                        utxo_data_reusable.push(None);
+                                        utxo_missing = Some((input_idx, input.prevout));
+                                        break;
+                                    }
+                                }
+                            }
+                            if let Some((idx, prevout)) = utxo_missing {
+                                early_return = Some(invalid_block_result(
+                                    &utxo_set,
+                                    tx_ids,
+                                    format!(
+                                        "UTXO not found for input {} (prevout {}:{} tx_idx={})",
+                                        idx,
+                                        hex::encode(prevout.hash),
+                                        prevout.index,
+                                        i,
+                                    ),
+                                ));
+                                break;
+                            }
+                            match crate::sigop::get_transaction_sigop_cost_with_witness_slices(
+                                tx, &overlay, wits_i, tx_flags_i,
+                            ) {
+                                Ok(cost) => {
+                                    total_sigop_cost = match total_sigop_cost.checked_add(cost) {
+                                        Some(v) => v,
+                                        None => {
+                                            early_return = Some(Err(ConsensusError::BlockValidation(
+                                                "Sigop cost overflow".into(),
+                                            )));
+                                            break;
+                                        }
+                                    };
+                                }
+                                Err(e) => {
+                                    early_return = Some(Err(e));
+                                    break;
+                                }
+                            }
+                            let (input_valid, fee) =
+                                match crate::transaction::check_tx_inputs_with_owned_data(
+                                    tx,
+                                    height,
+                                    &utxo_data_reusable,
+                                ) {
+                                    Ok(x) => x,
+                                    Err(e) => {
+                                        early_return = Some(Err(e));
+                                        break;
+                                    }
+                                };
+                            (input_valid, fee, (0, 0), (0, 0))
                         } else {
+                            // Full path: build utxo_refs for sigop + script check buffers.
                             utxo_data_reusable.clear();
                             utxo_data_reusable.reserve(tx.inputs.len());
                             let mut utxo_refs: Vec<Option<&crate::types::UTXO>> =
                                 Vec::with_capacity(tx.inputs.len());
                             let pv_start = prevout_values_vec.len();
                             let spi_start = script_pubkey_indices_vec.len();
-                            let mut utxo_missing: Option<usize> = None;
+                            let mut utxo_missing: Option<(usize, crate::types::OutPoint)> = None;
                             for (input_idx, input) in tx.inputs.iter().enumerate() {
                                 match overlay.get(&input.prevout) {
                                     Some(u) => {
@@ -829,20 +1015,25 @@ pub(crate) fn connect_block_inner(
                                     None => {
                                         utxo_refs.push(None);
                                         utxo_data_reusable.push(None);
-                                        utxo_missing = Some(input_idx);
+                                        utxo_missing = Some((input_idx, input.prevout));
                                         break;
                                     }
                                 }
                             }
-                            if let Some(idx) = utxo_missing {
+                            if let Some((idx, prevout)) = utxo_missing {
                                 early_return = Some(invalid_block_result(
                                     &utxo_set,
-                                    &tx_ids_owned,
-                                    format!("UTXO not found for input {}", idx),
+                                    tx_ids,
+                                    format!(
+                                        "UTXO not found for input {} (prevout {}:{} tx_idx={})",
+                                        idx,
+                                        hex::encode(prevout.hash),
+                                        prevout.index,
+                                        i,
+                                    ),
                                 ));
                                 break;
                             }
-                            #[cfg(feature = "production")]
                             match crate::sigop::get_transaction_sigop_cost_with_utxos(
                                 tx, &utxo_refs, wits_i, tx_flags_i,
                             ) {
@@ -850,31 +1041,9 @@ pub(crate) fn connect_block_inner(
                                     total_sigop_cost = match total_sigop_cost.checked_add(cost) {
                                         Some(v) => v,
                                         None => {
-                                            early_return =
-                                                Some(Err(ConsensusError::BlockValidation(
-                                                    "Sigop cost overflow".into(),
-                                                )));
-                                            break;
-                                        }
-                                    };
-                                }
-                                Err(e) => {
-                                    early_return = Some(Err(e));
-                                    break;
-                                }
-                            }
-                            #[cfg(not(feature = "production"))]
-                            match crate::sigop::get_transaction_sigop_cost_with_witness_slices(
-                                tx, &overlay, wits_i, tx_flags_i,
-                            ) {
-                                Ok(cost) => {
-                                    total_sigop_cost = match total_sigop_cost.checked_add(cost) {
-                                        Some(v) => v,
-                                        None => {
-                                            early_return =
-                                                Some(Err(ConsensusError::BlockValidation(
-                                                    "Sigop cost overflow".into(),
-                                                )));
+                                            early_return = Some(Err(ConsensusError::BlockValidation(
+                                                "Sigop cost overflow".into(),
+                                            )));
                                             break;
                                         }
                                     };
@@ -964,7 +1133,7 @@ pub(crate) fn connect_block_inner(
                     let pv = prevout_values_vec.as_slice();
                     // Script exec cache: skip all checks if (witness_hash, flags) cached.
                     #[cfg(all(feature = "production", feature = "rayon"))]
-                    if height >= 250_000 {
+                    if segwit_active {
                         if let Some(tx_witnesses) = witnesses_ref.get(i) {
                             if tx_witnesses.len() == tx.inputs.len() {
                                 let key =
@@ -1014,10 +1183,30 @@ pub(crate) fn connect_block_inner(
                     return r;
                 }
 
-                tx_contexts_arc = Arc::new(tx_contexts);
-                script_pubkey_buffer = Arc::new(script_pubkey_vec);
-                prevout_values_buffer = Arc::new(prevout_values_vec);
-                script_pubkey_indices_buffer = Arc::new(script_pubkey_indices_vec);
+                // Assume-valid (or all txs satisfied via script-exec cache): no ScriptChecks queued.
+                // Skip CCheckQueue session setup, empty run_checks_sequential, and redundant Arc clones.
+                if block_checks_buf.is_empty() {
+                    for r in queue_results {
+                        validation_results.push(r.expect("CCheckQueue: all slots must be filled"));
+                    }
+                    #[cfg(all(feature = "production", feature = "profile"))]
+                    {
+                        script_checks_queued_count = 0;
+                    }
+                } else {
+                let witness_buffer: std::sync::Arc<Vec<Vec<Witness>>> = witnesses_arc
+                    .map(Arc::clone)
+                    .unwrap_or_else(|| {
+                        if witnesses.is_empty() {
+                            arc_empty_witness_rows()
+                        } else {
+                            Arc::new(witnesses.to_vec())
+                        }
+                    });
+                let tx_contexts_arc = Arc::new(tx_contexts);
+                let script_pubkey_buffer = Arc::new(script_pubkey_vec);
+                let prevout_values_buffer = Arc::new(prevout_values_vec);
+                let script_pubkey_indices_buffer = Arc::new(script_pubkey_indices_vec);
                 #[cfg(all(feature = "production", feature = "blvm-secp256k1"))]
                 let schnorr_collector = if use_per_sig_schnorr() {
                     None
@@ -1031,8 +1220,8 @@ pub(crate) fn connect_block_inner(
 
                 // Small-block fast path: skip CCheckQueue overhead for blocks with <32 inputs.
                 const SMALL_BLOCK_THRESHOLD: usize = 32;
-                precomputed_sighashes_arc = Arc::new(precomputed_sighashes);
-                precomputed_p2pkh_hashes_arc = Arc::new(precomputed_p2pkh_hashes);
+                let precomputed_sighashes_arc = Arc::new(precomputed_sighashes);
+                let precomputed_p2pkh_hashes_arc = Arc::new(precomputed_p2pkh_hashes);
 
                 let check_results = if total_inputs < SMALL_BLOCK_THRESHOLD {
                     let seq_session = BlockSessionContext {
@@ -1049,6 +1238,7 @@ pub(crate) fn connect_block_inner(
                         height,
                         median_time_past,
                         network,
+                        activation: context.activation.clone(),
                         results: Arc::new(crossbeam_queue::SegQueue::new()),
                         #[cfg(feature = "production")]
                         precomputed_sighashes: Arc::clone(&precomputed_sighashes_arc),
@@ -1074,6 +1264,7 @@ pub(crate) fn connect_block_inner(
                         height,
                         median_time_past,
                         network,
+                        activation: context.activation.clone(),
                         results: Arc::clone(&results_arc),
                         #[cfg(feature = "production")]
                         precomputed_sighashes: Arc::clone(&precomputed_sighashes_arc),
@@ -1109,10 +1300,14 @@ pub(crate) fn connect_block_inner(
                                 };
 
                                 // P2PK fast path: <pubkey> OP_CHECKSIG (35 or 67 bytes)
+                                // Gate: script_sig must parse as exactly <sig> (1 push).
                                 if (spk_len == 35 || spk_len == 67)
                                     && last_byte == OP_CHECKSIG
                                     && (script_pubkey[0] == PUSH_33_BYTES
                                         || script_pubkey[0] == PUSH_65_BYTES)
+                                    && crate::script::parse_p2pk_script_sig(
+                                        tx.inputs[c.input_idx].script_sig.as_slice()
+                                    ).is_some()
                                 {
                                     return crate::script::verify_p2pk_inline(
                                         tx.inputs[c.input_idx].script_sig.as_slice(),
@@ -1136,12 +1331,18 @@ pub(crate) fn connect_block_inner(
                                 }
 
                                 // P2PKH fast path: OP_DUP OP_HASH160 <20> ... OP_EQUALVERIFY OP_CHECKSIG
+                                // Gate: script_sig must parse as exactly <sig> <pubkey> (2 pushes).
+                                // Non-standard script_sigs (e.g. OP_0 <sig> <pubkey>) fall through to
+                                // the full interpreter which handles them correctly.
                                 if spk_len == 25
                                     && script_pubkey[0] == OP_DUP
                                     && script_pubkey[1] == OP_HASH160
                                     && script_pubkey[2] == PUSH_20_BYTES
                                     && script_pubkey[23] == OP_EQUALVERIFY
                                     && last_byte == OP_CHECKSIG
+                                    && crate::script::parse_p2pkh_script_sig(
+                                        tx.inputs[c.input_idx].script_sig.as_slice()
+                                    ).is_some()
                                 {
                                     return crate::script::verify_p2pkh_inline(
                                         tx.inputs[c.input_idx].script_sig.as_slice(),
@@ -1203,7 +1404,8 @@ pub(crate) fn connect_block_inner(
                     check_results
                 };
 
-                total_script_time += script_start.elapsed();
+                #[cfg(feature = "profile")]
+                { total_script_time += script_start.elapsed(); }
 
                 let tx_contexts_len = tx_contexts_arc.len();
                 // Aggregate per-tx: all inputs must pass
@@ -1222,6 +1424,11 @@ pub(crate) fn connect_block_inner(
                 for r in queue_results {
                     validation_results.push(r.expect("CCheckQueue: all slots must be filled"));
                 }
+                #[cfg(all(feature = "production", feature = "profile"))]
+                {
+                    script_checks_queued_count = block_checks_buf.len();
+                }
+                }
             }
 
             // Sequential application (write operations) — must be sequential
@@ -1235,19 +1442,14 @@ pub(crate) fn connect_block_inner(
             );
 
             for (i, result) in validation_results.into_iter().enumerate() {
-                // Bounds checking assertion: Result index must be valid
-                assert!(
-                    i < block_arc.transactions.len(),
-                    "Result index {} out of bounds in validation loop",
-                    i
-                );
+                debug_assert!(i < block_arc.transactions.len());
                 let (input_valid, fee, script_valid) = result?;
 
                 if !matches!(input_valid, ValidationResult::Valid) {
                     return Ok((
                         input_valid,
                         utxo_set,
-                        tx_ids_owned.clone(),
+                        tx_ids_cow.clone(),
                         crate::reorganization::BlockUndoLog::new(),
                         None,
                     ));
@@ -1256,7 +1458,7 @@ pub(crate) fn connect_block_inner(
                 if !script_valid {
                     return invalid_block_result(
                         &utxo_set,
-                        &tx_ids_owned,
+                        tx_ids,
                         format!("Invalid script at transaction {i}"),
                     );
                 }
@@ -1311,7 +1513,7 @@ pub(crate) fn connect_block_inner(
                     );
                     return invalid_block_result(
                         &utxo_set,
-                        &tx_ids_owned,
+                        tx_ids,
                         format!("Schnorr batch verification failed: {:?}", e),
                     );
                 } else {
@@ -1326,7 +1528,7 @@ pub(crate) fn connect_block_inner(
                         );
                         return invalid_block_result(
                             &utxo_set,
-                            &tx_ids_owned,
+                            tx_ids,
                             "Invalid Schnorr signature in block",
                         );
                     }
@@ -1401,7 +1603,9 @@ pub(crate) fn connect_block_inner(
                     let drain_copy_ms = drain_copy_ns as f64 / 1_000_000.0;
                     let drain_parse_ms = drain_parse_ns as f64 / 1_000_000.0;
                     let drain_secp_ms = drain_secp_ns as f64 / 1_000_000.0;
-                    profile_log!("[PERF] Block {}: total={:?} (script={:?} batch={:?}), script_sub: sighash={:.2}ms interpreter={:.2}ms multisig={:.2}ms p2pkh_entry={:.2}ms p2pkh_parse={:.2}ms p2pkh_hash160={:.2}ms p2pkh_bip66={:.2}ms p2pkh_collect={:.2}ms p2pkh_secp={:.2}ms collect_slot={:.2}ms collect_lock={:.2}ms collect_copy={:.2}ms collect_chunk={:.2}ms worker_refs={:.2}ms worker_p2pkh={:.2}ms worker_refs_lock={:.2}ms run_check_loop={:.2}ms results_extend={:.2}ms batch_extract={:.2}ms batch_secp={:.2}ms batch_cache={:.2}ms drain_copy={:.2}ms drain_parse={:.2}ms drain_secp={:.2}ms ecdsa_cache_hits={} ecdsa_cache_misses={}, structure={:?}, input_lookup={:?}, check_inputs={:?}, overlay_apply={:?}, txs={} inputs={} schnorr_sigs={} ecdsa_sigs={}",
+                    // script_checks_queued = inputs sent to CCheckQueue (0 when assume-valid skips signatures).
+                    // (Former field ecdsa_sigs was always 0 here — misleading vs real verification.)
+                    profile_log!("[PERF] Block {}: total={:?} (validation_loop={:?} batch={:?}), script_sub: sighash={:.2}ms interpreter={:.2}ms multisig={:.2}ms p2pkh_entry={:.2}ms p2pkh_parse={:.2}ms p2pkh_hash160={:.2}ms p2pkh_bip66={:.2}ms p2pkh_collect={:.2}ms p2pkh_secp={:.2}ms collect_slot={:.2}ms collect_lock={:.2}ms collect_copy={:.2}ms collect_chunk={:.2}ms worker_refs={:.2}ms worker_p2pkh={:.2}ms worker_refs_lock={:.2}ms run_check_loop={:.2}ms results_extend={:.2}ms batch_extract={:.2}ms batch_secp={:.2}ms batch_cache={:.2}ms drain_copy={:.2}ms drain_parse={:.2}ms drain_secp={:.2}ms ecdsa_cache_hits={} ecdsa_cache_misses={}, structure={:?}, input_lookup={:?}, check_inputs={:?}, overlay_apply={:?}, txs={} inputs={} schnorr_batch_sigs={} script_checks_queued={}",
                         height,
                         total_with_batch,
                         total_script_time,
@@ -1421,7 +1625,7 @@ pub(crate) fn connect_block_inner(
                         block_arc.transactions.len(),
                         total_inputs,
                         schnorr_sig_count,
-                        0
+                        script_checks_queued_count
                     );
                     let total_ns = total_with_batch.as_nanos() as f64;
                     if total_ns > 0.0 {
@@ -1435,10 +1639,8 @@ pub(crate) fn connect_block_inner(
                         let overlay_pct = pct(total_overlay_apply_time);
                         let structure_pct = pct(total_tx_structure_time);
                         let total_ms = total_with_batch.as_secs_f64() * 1000.0;
-                        if ((120_000..=145_000).contains(&height)
-                            || (180_000..=195_000).contains(&height))
-                            && height % 100 == 0
-                        {
+                        // Sparse bands: defaults or `BLVM_PERF_CLIFF_RANGES`; stride `BLVM_PERF_CLIFF_STRIDE` (default 100).
+                        if perf_cliff_sample_height(height, perf_cliff_stride()) {
                             profile_log!(
                                 "[PERF_CLIFF] Block {}: total={:.1}ms | script={:.0}% batch={:.0}% input_lookup={:.0}% check_inputs={:.0}% overlay={:.0}% structure={:.0}% | txs={} inputs={}",
                                 height, total_ms, script_pct, batch_pct, input_lookup_pct, check_inputs_pct, overlay_pct, structure_pct,
@@ -1517,7 +1719,7 @@ pub(crate) fn connect_block_inner(
                     wits_i,
                     tx_flags,
                     &utxo_set,
-                    &tx_ids_owned,
+                    tx_ids,
                 )? {
                     return Ok(invalid);
                 }
@@ -1529,7 +1731,7 @@ pub(crate) fn connect_block_inner(
                 if !matches!(tx_valid, ValidationResult::Valid) {
                     return invalid_block_result(
                         &utxo_set,
-                        &tx_ids_owned,
+                        tx_ids,
                         format!("Invalid transaction at index {i}"),
                     );
                 }
@@ -1571,7 +1773,7 @@ pub(crate) fn connect_block_inner(
                                 );
                                 return invalid_block_result(
                                     &utxo_set,
-                                    &tx_ids_owned,
+                                    tx_ids,
                                     format!("UTXO not found for input {}", input_idx),
                                 );
                             }
@@ -1635,7 +1837,7 @@ pub(crate) fn connect_block_inner(
                     );
                     return invalid_block_result(
                         &utxo_set,
-                        &tx_ids_owned,
+                        tx_ids,
                         format!("Invalid transaction inputs at index {i}"),
                     );
                 }
@@ -1735,7 +1937,7 @@ pub(crate) fn connect_block_inner(
                             )? {
                                 return invalid_block_result(
                                     &utxo_set,
-                                    &tx_ids_owned,
+                                    tx_ids,
                                     format!("Invalid script at transaction {}, input {}", i, j),
                                 );
                             }
@@ -1750,7 +1952,7 @@ pub(crate) fn connect_block_inner(
                             if batch_results.iter().any(|&valid| !valid) {
                                 return invalid_block_result(
                                     &utxo_set,
-                                    &tx_ids_owned,
+                                    tx_ids,
                                     format!("Invalid Schnorr signature in transaction {i}"),
                                 );
                             }
@@ -1802,7 +2004,7 @@ pub(crate) fn connect_block_inner(
                     wits_j,
                     tx_flags,
                     &utxo_set,
-                    &tx_ids_owned,
+                    tx_ids,
                 )? {
                     return Ok(invalid);
                 }
@@ -1885,7 +2087,7 @@ pub(crate) fn connect_block_inner(
                 wits_i,
                 tx_flags,
                 &utxo_set,
-                &tx_ids_owned,
+                tx_ids,
             )? {
                 return Ok(invalid);
             }
@@ -1894,7 +2096,7 @@ pub(crate) fn connect_block_inner(
             if !matches!(check_transaction(tx)?, ValidationResult::Valid) {
                 return invalid_block_result(
                     &utxo_set,
-                    &tx_ids_owned,
+                    tx_ids,
                     format!("Invalid transaction at index {i}"),
                 );
             }
@@ -1916,7 +2118,7 @@ pub(crate) fn connect_block_inner(
                 );
                 return invalid_block_result(
                     &utxo_set,
-                    &tx_ids_owned,
+                    tx_ids,
                     format!("Invalid transaction inputs at index {i}"),
                 );
             }
@@ -2050,7 +2252,7 @@ pub(crate) fn connect_block_inner(
                         )? {
                             return invalid_block_result(
                                 &utxo_set,
-                                &tx_ids_owned,
+                                tx_ids,
                                 format!("Invalid script at transaction {i}, input {j}"),
                             );
                         }
@@ -2065,7 +2267,7 @@ pub(crate) fn connect_block_inner(
                         if batch_results.iter().any(|&valid| !valid) {
                             return invalid_block_result(
                                 &utxo_set,
-                                &tx_ids_owned,
+                                tx_ids,
                                 format!("Invalid Schnorr signature in transaction {i}"),
                             );
                         }
@@ -2115,7 +2317,7 @@ pub(crate) fn connect_block_inner(
         if !is_coinbase(coinbase) {
             return invalid_block_result(
                 &utxo_set,
-                &tx_ids_owned,
+                tx_ids,
                 "First transaction must be coinbase",
             );
         }
@@ -2127,7 +2329,7 @@ pub(crate) fn connect_block_inner(
         if !(2..=100).contains(&script_sig_len) {
             return invalid_block_result(
                 &utxo_set,
-                &tx_ids_owned,
+                tx_ids,
                 format!(
                     "Coinbase scriptSig length {script_sig_len} must be between 2 and 100 bytes"
                 ),
@@ -2159,7 +2361,7 @@ pub(crate) fn connect_block_inner(
         if coinbase_output > MAX_MONEY {
             return invalid_block_result(
                 &utxo_set,
-                &tx_ids_owned,
+                tx_ids,
                 format!(
                     "Coinbase output {coinbase_output} exceeds maximum money supply"
                 ),
@@ -2179,16 +2381,19 @@ pub(crate) fn connect_block_inner(
         if coinbase_output > max_coinbase_value {
             return invalid_block_result(
                 &utxo_set,
-                &tx_ids_owned,
+                tx_ids,
                 format!(
                     "Coinbase output {coinbase_output} exceeds fees {total_fees} + subsidy {subsidy}"
                 ),
             );
         }
 
-        // Validate witness commitment if witnesses are present (SegWit block)
-        // Check if any witness is non-empty (indicating SegWit block)
-        let has_segwit = witnesses.iter().any(|w| !w.is_empty());
+        // Validate witness commitment if witnesses are present (SegWit block).
+        // Short-circuit: no witness commitment possible before SegWit activation.
+        let has_segwit = segwit_active
+            && witnesses.iter().any(|tx_w| {
+                tx_w.iter().any(|stack| !stack.is_empty())
+            });
         // Invariant assertion: Witness count must match transaction count
         assert!(
             witnesses.len() == block.transactions.len(),
@@ -2213,7 +2418,7 @@ pub(crate) fn connect_block_inner(
             if !validate_witness_commitment(coinbase, &witness_merkle_root)? {
                 return invalid_block_result(
                     &utxo_set,
-                    &tx_ids_owned,
+                    tx_ids,
                     "Invalid witness commitment in coinbase transaction",
                 );
             }
@@ -2221,7 +2426,7 @@ pub(crate) fn connect_block_inner(
     } else {
         return invalid_block_result(
             &utxo_set,
-            &tx_ids_owned,
+            tx_ids,
             "Block must have at least one transaction",
         );
     }
@@ -2234,24 +2439,33 @@ pub(crate) fn connect_block_inner(
     if total_sigop_cost > MAX_BLOCK_SIGOPS_COST {
         return invalid_block_result(
             &utxo_set,
-            &tx_ids_owned,
+            tx_ids,
             format!(
                 "Block sigop cost {total_sigop_cost} exceeds maximum {MAX_BLOCK_SIGOPS_COST}"
             ),
         );
     }
 
+    // BIP30 index is only read by check_bip30 while the fork is active; skip index mutations
+    // after deactivation to avoid redundant HashMap work on every coinbase touch.
+    let maintain_bip30_index = context.is_fork_active(ForkId::Bip30, height);
+
     #[cfg(feature = "production")]
     if crate::config::use_overlay_delta() {
         if let Some(overlay) = overlay_for_delta {
             let (additions_arc, deletions) = overlay.into_changes();
             let mut undo_log = crate::reorganization::BlockUndoLog::new();
+            let bip30_for_merge = if maintain_bip30_index {
+                bip30_index
+            } else {
+                None
+            };
             if ibd_mode {
                 script_cache::merge_overlay_changes_to_cache(
                     &additions_arc,
                     &deletions,
                     &mut utxo_set,
-                    bip30_index,
+                    bip30_for_merge,
                     None,
                 );
             } else {
@@ -2259,18 +2473,22 @@ pub(crate) fn connect_block_inner(
                     &additions_arc,
                     &deletions,
                     &mut utxo_set,
-                    bip30_index,
+                    bip30_for_merge,
                     Some(&mut undo_log),
                 );
             }
             #[cfg(feature = "rayon")]
-            if !ibd_mode && !crate::block::skip_script_exec_cache() && height >= 250_000 {
+            if !ibd_mode
+                && !skip_signatures
+                && !crate::block::skip_script_exec_cache()
+                && segwit_active
+            {
                 script_cache::insert_script_exec_cache_for_block(block, witnesses, height, context);
             }
             return Ok((
                 ValidationResult::Valid,
                 utxo_set,
-                tx_ids_owned,
+                tx_ids_cow,
                 undo_log,
                 Some(UtxoDelta {
                     additions: additions_arc,
@@ -2296,6 +2514,8 @@ pub(crate) fn connect_block_inner(
         &tx_ids,
         total_fees,
         bip30_index,
+        maintain_bip30_index,
+        ibd_mode,
     )?;
     #[cfg(feature = "profile")]
     profile_log!(
@@ -2304,7 +2524,12 @@ pub(crate) fn connect_block_inner(
         _fn_start.elapsed().as_secs_f64() * 1000.0
     );
     #[cfg(all(feature = "production", feature = "rayon"))]
-    if matches!(result, ValidationResult::Valid) && !crate::block::skip_script_exec_cache() && height >= 250_000 {
+    if matches!(result, ValidationResult::Valid)
+        && !ibd_mode
+        && !skip_signatures
+        && !crate::block::skip_script_exec_cache()
+        && segwit_active
+    {
         script_cache::insert_script_exec_cache_for_block(block, witnesses, height, context);
     }
     #[cfg(feature = "profile")]
@@ -2313,7 +2538,7 @@ pub(crate) fn connect_block_inner(
         height,
         _fn_start.elapsed().as_secs_f64() * 1000.0
     );
-    Ok((result, new_utxo_set, tx_ids_owned, undo_log, None))
+    Ok((result, new_utxo_set, tx_ids_cow, undo_log, None))
 }
 fn connect_block_inner_with_tx_ids(
     block: &Block,
@@ -2325,15 +2550,18 @@ fn connect_block_inner_with_tx_ids(
     tx_ids: &[Hash],
     total_fees: i64,
     mut bip30_index: Option<&mut crate::bip_validation::Bip30Index>,
+    maintain_bip30_index: bool,
+    ibd_mode: bool,
 ) -> Result<(
     ValidationResult,
     UtxoSet,
     crate::reorganization::BlockUndoLog,
 )> {
     // 5. Apply all transactions to UTXO set (with pre-computed transaction IDs)
-    // Build undo log for all UTXO changes
+    // Build undo log for all UTXO changes (skipped during IBD — never persisted on parallel path).
     use crate::reorganization::BlockUndoLog;
     let mut undo_log = BlockUndoLog::new();
+    let collect_undo = !ibd_mode;
     // Invariant assertion: Undo log must start empty
     assert!(undo_log.entries.is_empty(), "Undo log must start empty");
 
@@ -2350,31 +2578,36 @@ fn connect_block_inner_with_tx_ids(
     // Therefore, the application loop MUST ALWAYS run to apply changes to utxo_set.
     {
         // Normal path: Apply transactions sequentially to build undo log
+        let mut bip30_none_slot: Option<&mut crate::bip_validation::Bip30Index> = None;
         for (i, tx) in block.transactions.iter().enumerate() {
-            // Bounds checking assertion: Transaction index must be valid
-            assert!(
-                i < block.transactions.len(),
-                "Transaction index {i} out of bounds in application loop"
-            );
-            assert!(
-                i < tx_ids.len(),
-                "Transaction index {i} out of bounds for transaction IDs"
-            );
+            debug_assert!(i < block.transactions.len());
+            debug_assert!(i < tx_ids.len());
 
             let initial_utxo_size = utxo_set.len();
-            let (new_utxo_set, tx_undo_entries) =
-                apply::apply_transaction_with_id(tx, tx_ids[i], utxo_set, height, &mut bip30_index)?;
+            let bip30_apply_ref = if maintain_bip30_index {
+                &mut bip30_index
+            } else {
+                &mut bip30_none_slot
+            };
+            let (new_utxo_set, tx_undo_entries) = apply::apply_transaction_with_id(
+                tx,
+                tx_ids[i],
+                utxo_set,
+                height,
+                bip30_apply_ref,
+                collect_undo,
+            )?;
 
-            // Invariant assertion: Undo entries must be reasonable
-            assert!(
+            debug_assert!(
                 tx_undo_entries.len() <= tx.inputs.len() + tx.outputs.len(),
                 "Undo entry count {} must be reasonable for transaction {}",
                 tx_undo_entries.len(),
                 i
             );
 
-            // Add all undo entries from this transaction to the block's undo log
-            undo_log.entries.extend(tx_undo_entries);
+            if collect_undo {
+                undo_log.entries.extend(tx_undo_entries);
+            }
             utxo_set = new_utxo_set;
 
             // Invariant assertion: UTXO set size must change reasonably
@@ -2441,7 +2674,9 @@ fn connect_block_inner_with_tx_ids(
 
     // Reverse entries for efficient undo (most recent first)
     // Note: Undo log size depends on transaction structure (inputs/outputs), not just count
-    undo_log.entries.reverse();
+    if collect_undo {
+        undo_log.entries.reverse();
+    }
 
     // Runtime invariant verification: Supply change must equal subsidy + fees
     // Mathematical specification:

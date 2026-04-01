@@ -1,0 +1,5 @@
+height=363726
+error=Block validation failed at height 363726: Invalid script at transaction 2
+txs=294
+inputs=713
+utxo_len=629

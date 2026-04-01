@@ -4,6 +4,10 @@
 //! Run: `scripts/ibd_failure_to_repro_test.sh [HEIGHT]` to copy dump to repo.
 //!
 //! Run test: BLVM_IBD_FAILURE_HEIGHT=N cargo test --test block_ibd_repro -- --ignored
+//!
+//! Repo layout under `tests/test_data/ibd_failure_height_{h}/`: commit **`info.txt`** only;
+//! large `*.bin` payloads are **gitignored** (see workspace `.gitignore`). Populate bins locally
+//! or via `scripts/ibd_failure_to_repro_test.sh`.
 
 use blvm_consensus::block::connect_block_ibd;
 use blvm_consensus::segwit::Witness;
@@ -200,11 +204,33 @@ fn block_ibd_repro() {
             }
         }
     }
+    // Print all prevouts for transactions with ≥2 inputs (to identify which "input 1" might fail)
+    eprintln!("--- Transactions with multiple inputs (to identify 'input 1' in skip_signatures path) ---");
+    for (tx_idx, tx) in block.transactions.iter().enumerate() {
+        if blvm_consensus::transaction::is_coinbase(tx) { continue; }
+        if tx.inputs.len() >= 2 {
+            for (inp_idx, input) in tx.inputs.iter().enumerate() {
+                let found = utxo_set.get(&input.prevout).is_some();
+                eprintln!(
+                    "  tx {} input {}: prevout {:02x?}..:{} in_utxo_set={}",
+                    tx_idx, inp_idx,
+                    &input.prevout.hash[..4],
+                    input.prevout.index,
+                    found,
+                );
+            }
+        }
+    }
     eprintln!("--- Individual verification complete, now running connect_block_ibd ---");
 
+    // Use current time so two_week_ok=true, enabling skip_signatures if BLVM_ASSUME_VALID_HEIGHT is set
+    let network_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let ctx = blvm_consensus::block::BlockValidationContext::from_connect_block_ibd_args(
         None::<&[blvm_consensus::types::BlockHeader]>,
-        0u64,
+        network_time,
         Network::Mainnet,
         None,
         None,

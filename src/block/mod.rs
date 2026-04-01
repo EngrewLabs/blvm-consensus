@@ -10,9 +10,11 @@ mod header;
 mod apply;
 mod script_cache;
 pub use apply::{apply_transaction, calculate_tx_id};
+pub use script_cache::{
+    calculate_base_script_flags_for_block_network, calculate_script_flags_for_block_network,
+};
 pub(crate) use script_cache::{
-    calculate_base_script_flags_for_block, calculate_script_flags_for_block_network,
-    calculate_script_flags_for_block_with_base,
+    calculate_base_script_flags_for_block, calculate_script_flags_for_block_with_base,
 };
 
 use crate::bip113::get_median_time_past;
@@ -23,8 +25,6 @@ use crate::opcodes::*;
 #[cfg(feature = "profile")]
 use crate::profile_log;
 use blvm_spec_lock::spec_locked;
-use std::borrow::Cow;
-
 use crate::activation::{ForkActivationTable, IsForkActive};
 use crate::segwit::{validate_witness_commitment, Witness};
 use crate::transaction::{check_transaction, is_coinbase};
@@ -48,11 +48,14 @@ pub struct UtxoDeltaInner<M, S> {
 }
 
 #[cfg(feature = "production")]
-pub type UtxoDelta = UtxoDeltaInner<FxHashMap<OutPoint, std::sync::Arc<UTXO>>, FxHashSet<OutPoint>>;
+pub type UtxoDelta = UtxoDeltaInner<
+    FxHashMap<OutPoint, std::sync::Arc<UTXO>>,
+    FxHashSet<crate::utxo_overlay::UtxoDeletionKey>,
+>;
 #[cfg(not(feature = "production"))]
 pub type UtxoDelta = UtxoDeltaInner<
     std::collections::HashMap<OutPoint, std::sync::Arc<UTXO>>,
-    std::collections::HashSet<OutPoint>,
+    std::collections::HashSet<crate::utxo_overlay::UtxoDeletionKey>,
 >;
 
 /// Assume-valid checkpoint configuration
@@ -173,19 +176,20 @@ pub fn connect_block(
 /// recent_headers, network_time, network, BIP54 override, and boundary).
 ///
 /// * `bip30_index` - Optional index for O(1) BIP30 duplicate-coinbase check.
-/// * `precomputed_tx_ids` - Optional pre-computed tx IDs; when `Some`, skips hashing in consensus.
+/// * `precomputed_tx_ids` - Optional pre-computed tx IDs; when `Some`, skips hashing in consensus
+///   and returns those IDs as `Cow::Borrowed` (no per-block `Vec` clone).
 #[spec_locked("5.3")]
-pub fn connect_block_ibd(
+pub fn connect_block_ibd<'a>(
     block: &Block,
     witnesses: &[Vec<Witness>],
     utxo_set: UtxoSet,
     height: Natural,
     context: &BlockValidationContext,
     bip30_index: Option<&mut crate::bip_validation::Bip30Index>,
-    precomputed_tx_ids: Option<&[Hash]>,
+    precomputed_tx_ids: Option<&'a [Hash]>,
     block_arc: Option<std::sync::Arc<Block>>,
     witnesses_arc: Option<&std::sync::Arc<Vec<Vec<Witness>>>>,
-) -> Result<(ValidationResult, UtxoSet, Vec<Hash>, Option<UtxoDelta>)> {
+) -> Result<(ValidationResult, UtxoSet, std::borrow::Cow<'a, [Hash]>, Option<UtxoDelta>)> {
     let (result, new_utxo_set, tx_ids, _undo_log, utxo_delta) = connect::connect_block_inner(
         block,
         witnesses,
@@ -318,44 +322,52 @@ mod tx_id_pool {
 /// Produces {Hash(tx) : tx ∈ block.transactions} for ComputeMerkleRoot input (Orange Paper 8.4.1).
 /// Public so node layer can compute once and share between collect_gaps and connect_block_ibd (#21).
 #[spec_locked("8.4.1")]
+pub fn compute_block_tx_ids_into(block: &Block, out: &mut Vec<Hash>) {
+    out.clear();
+    out.reserve(block.transactions.len());
+    #[cfg(all(feature = "production", feature = "rayon"))]
+    {
+        use rayon::prelude::*;
+        assert!(
+            block.transactions.len() <= 25_000,
+            "Transaction count {} must be reasonable for batch processing",
+            block.transactions.len()
+        );
+        let chunk: Vec<Hash> = block
+            .transactions
+            .as_ref()
+            .par_iter()
+            .map(tx_id_pool::compute_tx_id_with_pool)
+            .collect();
+        out.extend(chunk);
+    }
+
+    #[cfg(all(feature = "production", not(feature = "rayon")))]
+    {
+        out.extend(
+            block
+                .transactions
+                .iter()
+                .map(tx_id_pool::compute_tx_id_with_pool),
+        );
+    }
+
+    #[cfg(not(feature = "production"))]
+    {
+        out.extend(
+            block
+                .transactions
+                .iter()
+                .map(calculate_tx_id),
+        );
+    }
+}
+
+#[spec_locked("8.4.1")]
 pub fn compute_block_tx_ids(block: &Block) -> Vec<Hash> {
-    let tx_ids: Vec<Hash> = {
-        #[cfg(all(feature = "production", feature = "rayon"))]
-        {
-            use rayon::prelude::*;
-            assert!(
-                block.transactions.len() <= 10_000,
-                "Transaction count {} must be reasonable for batch processing",
-                block.transactions.len()
-            );
-            block
-                .transactions
-                .as_ref()
-                .par_iter()
-                .map(tx_id_pool::compute_tx_id_with_pool)
-                .collect()
-        }
-
-        #[cfg(all(feature = "production", not(feature = "rayon")))]
-        {
-            block
-                .transactions
-                .iter()
-                .map(tx_id_pool::compute_tx_id_with_pool)
-                .collect()
-        }
-
-        #[cfg(not(feature = "production"))]
-        {
-            // Sequential fallback for non-production builds
-            block
-                .transactions
-                .iter()
-                .map(calculate_tx_id)
-                .collect::<Vec<Hash>>()
-        }
-    };
-    tx_ids
+    let mut v = Vec::new();
+    compute_block_tx_ids_into(block, &mut v);
+    v
 }
 
     #[test]

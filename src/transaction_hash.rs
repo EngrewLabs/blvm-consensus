@@ -1757,6 +1757,7 @@ pub fn batch_compute_bip143_sighashes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::opcodes::*;
 
     #[test]
     fn test_sighash_type_parsing() {

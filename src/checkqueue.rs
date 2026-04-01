@@ -5,9 +5,10 @@
 
 #![cfg(all(feature = "production", feature = "rayon"))]
 
+use crate::activation::{ForkActivationTable, IsForkActive};
 use crate::error::{ConsensusError, Result};
 use crate::script::verify_script_with_context_full;
-use crate::types::{Block, Natural, Network};
+use crate::types::{Block, ForkId, Natural, Network};
 use crate::witness::is_witness_empty;
 use crate::witness::Witness;
 use crossbeam_queue::SegQueue;
@@ -80,6 +81,8 @@ pub struct BlockSessionContext {
     pub height: Natural,
     pub median_time_past: Option<u64>,
     pub network: Network,
+    /// Fork heights for this validation session (same table as `BlockValidationContext::activation`).
+    pub activation: ForkActivationTable,
     /// Lock-free: workers push batch_results; master drains at complete(). Reduces Mutex contention.
     pub results: Arc<SegQueue<Vec<(usize, bool)>>>,
     /// Precomputed sighashes for P2PKH inputs, indexed by ecdsa_index_base + input_idx.
@@ -183,7 +186,10 @@ impl ScriptCheckQueue {
                 &buffer[start..start + len]
             }
         };
-        let witness_for_script = if session.height < 481824 {
+        let witness_for_script = if !session
+            .activation
+            .is_fork_active(ForkId::SegWit, session.height)
+        {
             None
         } else {
             session

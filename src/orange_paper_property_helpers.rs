@@ -22,7 +22,11 @@ pub fn expected_verifyconsensuscommitment_from_orange_paper(_params: u64) -> i64
     )
 }
 
-/// VerifyConsensusCommitment(uc, hs) — stub; use blvm_protocol::utxo_commitments::verification
+/// VerifyConsensusCommitment(uc, hs) — intentionally not implemented here.
+///
+/// Consensus stays free of the full UTXO-commitment verification graph; call
+/// `blvm_protocol::utxo_commitments::verification` (`verify_header_chain`, `verify_supply`,
+/// `verify_commitment_block_hash`) from tests or tooling that already depend on protocol.
 #[cfg(feature = "utxo-commitments")]
 pub fn expected_verifyconsensuscommitment_from_orange_paper_impl<C>(
     _commitment: &C,

@@ -43,10 +43,17 @@ pub fn bip54_deployment_mainnet() -> Bip9Deployment {
 /// * `current_time` – Network time (Unix timestamp) for start/timeout checks.
 /// * `deployment` – BIP9 deployment (bit, start_time, timeout).
 ///
-/// Returns `Some(activation_height)` if the deployment is active at or before
-/// `current_height`, so the caller can pass it as `bip54_activation_override`.
-/// Returns `None` if the deployment is not active (defined, started, locked in but not
-/// yet active, or failed), or if there are too few headers to determine lock-in.
+/// Returns `Some(activation_height)` when the last `LOCK_IN_PERIOD` headers (the retarget
+/// window ending at `current_height - 1`) show ≥[`ACTIVATION_THRESHOLD`] signalling for
+/// `deployment.bit`. Then `activation_height = (period_index + 2) * 2016` where
+/// `period_index = (current_height - 1) / 2016` (BIP9: ACTIVE at start of period `period_index + 2`).
+///
+/// This does **not** mean rules are active at `current_height` yet; use
+/// `bip_validation::is_bip54_active_at(height, network, Some(activation_height))` for that.
+///
+/// When scanning the chain sequentially, merge multiple `Some(h)` values with `h.min(...)` so
+/// an earlier period’s lock-in (smaller activation height) is not overwritten by a later window’s
+/// larger computed height (see `merge_bip54_activation_candidate`).
 pub fn activation_height_from_headers<H: AsRef<BlockHeader>>(
     headers: &[H],
     current_height: u64,
@@ -82,10 +89,21 @@ pub fn activation_height_from_headers<H: AsRef<BlockHeader>>(
     let period_index = period_end / LOCK_IN_PERIOD as u64;
     let activation_height = (period_index + 2) * LOCK_IN_PERIOD as u64;
 
-    if current_height >= activation_height {
-        Some(activation_height)
-    } else {
-        None
+    Some(activation_height)
+}
+
+/// Combine a running BIP54/version-bits activation height with a new candidate from
+/// [`activation_height_from_headers`]. Keeps the **minimum** (earliest) height.
+#[inline]
+pub fn merge_bip54_activation_candidate(
+    previous: Option<u64>,
+    candidate: Option<u64>,
+) -> Option<u64> {
+    match (previous, candidate) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
     }
 }
 
@@ -94,7 +112,7 @@ mod tests {
     use super::*;
     use crate::types::BlockHeader;
 
-    fn header(version: u32) -> BlockHeader {
+    fn header(version: i64) -> BlockHeader {
         BlockHeader {
             version,
             prev_block_hash: [0u8; 32],
@@ -125,10 +143,21 @@ mod tests {
         };
         // 2016 headers all with bit 0 set (period ending at current_height-1)
         let headers: Vec<BlockHeader> = (0..2016).map(|_| header(1)).collect();
-        // Period 1 (2016..4031) had lock-in → LOCKED_IN at 4032, ACTIVE at 6048 (BIP9)
-        assert!(activation_height_from_headers(&headers, 4032, 1, &dep).is_none());
+        // Period 1 ends at 4031: lock-in → ACTIVE from height 6048 onward.
+        assert_eq!(
+            activation_height_from_headers(&headers, 4032, 1, &dep),
+            Some(6048)
+        );
+        // Period 2 window at H=6048: alone this implies activation 8064; IBD merges with min(6048, …).
         assert_eq!(
             activation_height_from_headers(&headers, 6048, 1, &dep),
+            Some(8064)
+        );
+        assert_eq!(
+            merge_bip54_activation_candidate(
+                activation_height_from_headers(&headers, 4032, 1, &dep),
+                activation_height_from_headers(&headers, 6048, 1, &dep),
+            ),
             Some(6048)
         );
     }
@@ -141,7 +170,15 @@ mod tests {
             timeout: u64::MAX,
         };
         let headers: Vec<BlockHeader> = (0..2016).map(|_| header(1)).collect();
-        // current_height 4031: period 1 had lock-in, activation is 6048
-        assert!(activation_height_from_headers(&headers, 4031, 1, &dep).is_none());
+        let act = activation_height_from_headers(&headers, 4031, 1, &dep);
+        assert_eq!(act, Some(6048));
+        assert!(
+            !crate::bip_validation::is_bip54_active_at(
+                4031,
+                crate::types::Network::Mainnet,
+                act
+            ),
+            "override height must not activate BIP54 before that height"
+        );
     }
 }

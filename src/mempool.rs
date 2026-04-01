@@ -917,6 +917,7 @@ fn is_coinbase(tx: &Transaction) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::opcodes::*;
 
     #[test]
     fn test_accept_to_memory_pool_valid() {

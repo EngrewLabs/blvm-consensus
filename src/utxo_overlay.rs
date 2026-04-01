@@ -35,7 +35,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::{HashMap as FxHashMap, HashSet as FxHashSet};
 
 /// Fixed-size key for deletions set — avoids OutPoint clone in remove() (~3k inputs/block).
-type OutPointKey = [u8; 36];
+/// Same encoding as `outpoint_to_key` below: 32-byte txid + 4-byte big-endian vout.
+pub type UtxoDeletionKey = [u8; 36];
+
+type OutPointKey = UtxoDeletionKey;
 
 #[inline]
 fn outpoint_to_key(op: &OutPoint) -> OutPointKey {
@@ -46,11 +49,16 @@ fn outpoint_to_key(op: &OutPoint) -> OutPointKey {
 }
 
 #[inline]
-fn key_to_outpoint(key: &OutPointKey) -> OutPoint {
+pub fn utxo_deletion_key_to_outpoint(key: &UtxoDeletionKey) -> OutPoint {
     let mut hash = [0u8; 32];
     hash.copy_from_slice(&key[..32]);
     let index = u32::from_be_bytes(key[32..36].try_into().unwrap());
     OutPoint { hash, index }
+}
+
+#[inline]
+fn key_to_outpoint(key: &OutPointKey) -> OutPoint {
+    utxo_deletion_key_to_outpoint(key)
 }
 
 /// Trait for UTXO lookups - implemented by both UtxoSet and UtxoOverlay.
@@ -292,14 +300,9 @@ impl<'a> UtxoOverlay<'a> {
         self,
     ) -> (
         FxHashMap<OutPoint, std::sync::Arc<UTXO>>,
-        FxHashSet<OutPoint>,
+        FxHashSet<UtxoDeletionKey>,
     ) {
-        let deletions = self
-            .deletions
-            .into_iter()
-            .map(|k| key_to_outpoint(&k))
-            .collect();
-        (self.additions, deletions)
+        (self.additions, self.deletions)
     }
 }
 
@@ -427,17 +430,13 @@ pub fn apply_transaction_to_overlay_no_undo(
     tx_id: crate::types::Hash,
     height: crate::types::Natural,
 ) {
-    use crate::transaction::is_coinbase;
+    let is_cb = crate::transaction::is_coinbase(tx);
 
-    // Remove spent inputs (except for coinbase). Use mark_spent to avoid cloning UTXO.
-    if !is_coinbase(tx) {
+    if !is_cb {
         for input in &tx.inputs {
             overlay.mark_spent(&input.prevout);
         }
     }
-
-    // Add new outputs
-    let is_cb = is_coinbase(tx);
     for (i, output) in tx.outputs.iter().enumerate() {
         let outpoint = OutPoint {
             hash: tx_id,

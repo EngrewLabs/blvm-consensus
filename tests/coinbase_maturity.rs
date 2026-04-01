@@ -13,6 +13,7 @@ use blvm_consensus::types::{
 use blvm_consensus::witness::Witness;
 
 use blvm_consensus::constants::COINBASE_MATURITY;
+use blvm_consensus::{SEGWIT_ACTIVATION_MAINNET, TAPROOT_ACTIVATION_MAINNET};
 
 /// Test coinbase maturity at exact boundary (100 blocks)
 #[test]
@@ -102,9 +103,9 @@ fn test_coinbase_maturity_different_eras() {
     // COINBASE_MATURITY is constant across all consensus eras
     // Test that it's the same at different heights
 
-    let pre_segwit_height = 481823;
-    let post_segwit_height = 481824;
-    let post_taproot_height = 709632;
+    let pre_segwit_height = SEGWIT_ACTIVATION_MAINNET - 1;
+    let post_segwit_height = SEGWIT_ACTIVATION_MAINNET;
+    let post_taproot_height = TAPROOT_ACTIVATION_MAINNET;
 
     // Maturity requirement is the same in all eras
     assert_eq!(COINBASE_MATURITY, 100);

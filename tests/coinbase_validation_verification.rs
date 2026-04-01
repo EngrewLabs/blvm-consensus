@@ -201,7 +201,7 @@ fn test_coinbase_output_with_fees() {
     let subsidy = get_block_subsidy(height);
     let fees = 1_000_000; // 0.01 BTC in fees
 
-    let coinbase = create_coinbase_tx(height, subsidy + fees);
+    let coinbase = create_coinbase_tx(subsidy + fees);
 
     // This should be valid (output = subsidy + fees)
     assert!(is_coinbase(&coinbase), "Should be coinbase");
