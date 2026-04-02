@@ -26,7 +26,7 @@ smallvec = { version = "1.11", optional = true, features = ["serde", "const_gene
 # Default: blvm-secp256k1 (batch verification). Fallback: crates.io secp256k1 0.28 (libsecp256k1). NO secp256k1-fork.
 secp256k1 = { version = "0.28", default-features = true }
 # blvm-secp256k1: pure Rust, BIP 341 correct TapTweak (use for Taproot path)
-blvm-secp256k1 = { path = "../blvm-secp256k1", optional = true }
+blvm-secp256k1 = { version = ">=0.1, <1", optional = true }
 # Enable SIMD optimizations for hashing
 # The "asm" feature enables optimized assembly implementations
 # Note: sha2-asm doesn't support Windows, so we use target-specific dependencies below
@@ -61,14 +61,14 @@ blvm-primitives = { version = ">=0.1, <1", default-features = false }
 
 # Spec-lock for mathematical verification
 # CI: setup-spec-lock.sh clones to ../blvm-spec-lock when needed for the cargo-spec-lock CLI
-blvm-spec-lock = { path = "../blvm-spec-lock", default-features = false }
+blvm-spec-lock = { version = ">=0.1, <1", default-features = false }
 # Spec-macros for spec_locked attributes (migration in progress - commented out until committed)
 # blvm-spec-macros = { path = "../blvm-spec-macros", optional = true }
 
 
 [dev-dependencies]
 blvm-muhash = { version = ">=0.1, <1" }
-blvm-protocol = { path = "../blvm-protocol", features = ["utxo-commitments"] }
+blvm-protocol = { version = ">=0.1, <1", features = ["utxo-commitments"] }
 # Formal verification tools - EXACT VERSIONS for reproducibility
 proptest = "=1.5.0"
 # Fuzzing framework for better test coverage ergonomics
@@ -79,6 +79,14 @@ reqwest = { version = "0.11", features = ["json"], default-features = false }
 tokio = { version = "1.35", features = ["rt", "macros"] }
 # Performance benchmarking framework
 criterion = "0.5"
+
+# Local monorepo: sibling paths override the blvm-* version pins above.
+[patch.crates-io]
+blvm-primitives = { path = "../blvm-primitives" }
+blvm-spec-lock = { path = "../blvm-spec-lock" }
+blvm-protocol = { path = "../blvm-protocol" }
+blvm-muhash = { path = "../blvm-muhash" }
+blvm-secp256k1 = { path = "../blvm-secp256k1" }
 
 [features]
 # Production (batch verification, fast paths) is default; blvm-secp256k1 is default crypto backend
