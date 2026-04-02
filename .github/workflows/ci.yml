@@ -77,8 +77,8 @@ jobs:
         run: |
           CACHE_ROOT="/tmp/runner-cache"
           
-          # Generate cache key from Cargo.lock hash
-          DEPS_KEY=$(sha256sum Cargo.lock | cut -d' ' -f1)
+          # Generate cache key from Cargo.toml (library crates do not commit Cargo.lock)
+          DEPS_KEY=$(sha256sum Cargo.toml | cut -d' ' -f1)
           
           # Include toolchain version in cache key
           TOOLCHAIN=$(grep -E '^channel|rust-version' rust-toolchain.toml Cargo.toml 2>/dev/null | head -1 | sha256sum | cut -d' ' -f1 || echo "1.88.0")
@@ -150,7 +150,7 @@ jobs:
         run: |
           # Run tests only (no coverage) for fast PR feedback
           # Coverage runs separately in coverage.yml workflow
-          # Note: --locked removed for library crate (Cargo.lock is in .gitignore)
+          # Note: --locked omitted; library crate does not commit Cargo.lock
           cargo test --all-features
       
       - name: Capture test output hash
@@ -742,14 +742,6 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "version_tag=${VERSION_TAG}" >> $GITHUB_OUTPUT
       
-      - name: Update Cargo.lock first (before version change)
-        if: env.CARGO_REGISTRY_TOKEN != ''
-        run: |
-          # Remove old lock file and regenerate to ensure latest dependency versions
-          rm -f Cargo.lock
-          cargo update
-          echo "✅ Cargo.lock regenerated with latest dependencies"
-      
       - name: Update version in Cargo.toml
         if: env.CARGO_REGISTRY_TOKEN != ''
         run: |
@@ -771,20 +763,6 @@ jobs:
           echo "✅ Updated Cargo.toml to version ${VERSION}"
           echo "Package version line:"
           grep "^version = " Cargo.toml | head -1
-      
-      - name: Regenerate Cargo.lock after version change
-        if: env.CARGO_REGISTRY_TOKEN != ''
-        run: |
-          # Regenerate lock file after version change to ensure consistency
-          rm -f Cargo.lock
-          cargo update
-          echo "✅ Cargo.lock regenerated after version update"
-          
-          # Verify the package version in Cargo.lock matches
-          if grep -q "name = \"blvm-consensus\"" Cargo.lock 2>/dev/null; then
-            echo "Package version in Cargo.lock:"
-            grep -A 1 "name = \"blvm-consensus\"" Cargo.lock | grep "version" | head -1
-          fi
       
       - name: Pre-release smoke test
         if: env.CARGO_REGISTRY_TOKEN != ''
@@ -1181,8 +1159,12 @@ jobs:
           RUSTC_VERSION=$(rustc --version | cut -d' ' -f2)
           CARGO_VERSION=$(cargo --version | cut -d' ' -f2)
           
-          # Hash Cargo.lock
-          CARGO_LOCK_HASH=$(sha256sum Cargo.lock | cut -d' ' -f1)
+          # Hash resolved lock if present (generated during build), else manifest
+          if [ -f Cargo.lock ]; then
+            CARGO_LOCK_HASH=$(sha256sum Cargo.lock | cut -d' ' -f1)
+          else
+            CARGO_LOCK_HASH=$(sha256sum Cargo.toml | cut -d' ' -f1)
+          fi
           
           # Check if debug assertions are enabled
           DEBUG_ASSERTIONS="false"
