@@ -26,6 +26,7 @@ TARGETS=(
     "serialization"
     "script_opcodes"
     "differential_fuzzing"
+    "bip66_validation"
 )
 
 for target in "${TARGETS[@]}"; do
@@ -78,6 +79,21 @@ add_seed "pow_validation" "genesis_header.hex" "01000000000000000000000000000000
 add_seed "economic_validation" "height_0.hex" "0000000000000000"
 # Height at first halving
 add_seed "economic_validation" "height_210000.hex" "a086010000000000"
+
+# BIP66 validation seeds
+# Input format: byte[0]=selector (0=pre-activation, 1=activation boundary, 2=regtest),
+# bytes[1..]=signature candidate
+# Valid minimal DER: selector + 0x30 [total-len] 0x02 [R-len] [R] 0x02 [S-len] [S] [sighash]
+add_seed "bip66_validation" "valid_minimal_regtest.hex" "02300602010102010101"
+add_seed "bip66_validation" "valid_minimal_mainnet.hex" "01300602010102010101"
+# Pre-activation: anything passes
+add_seed "bip66_validation" "pre_activation_garbage.hex" "00ffffff"
+# Too short for DER (should reject when active)
+add_seed "bip66_validation" "too_short.hex" "023001"
+# Wrong SEQUENCE tag (should reject when active)
+add_seed "bip66_validation" "wrong_tag.hex" "02310602010102010101"
+# Empty signature (selector only)
+add_seed "bip66_validation" "empty_sig.hex" "02"
 
 # Add Bitcoin Core test vectors if available
 BITCOIN_CORE_TEST_DIR="${BITCOIN_CORE_TEST_DIR:-/home/user/src/bitcoin/test/functional/data/util}"
