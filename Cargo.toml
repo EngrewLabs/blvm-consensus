@@ -59,8 +59,9 @@ hashbrown = { version = "0.14", optional = true }
 # crates.io: allow any 0.x >=0.1 without editing Cargo.toml for each patch/minor
 blvm-primitives = { version = ">=0.1, <1", default-features = false }
 
-# Spec-lock for mathematical verification
-# CI: setup-spec-lock.sh clones to ../blvm-spec-lock when needed for the cargo-spec-lock CLI
+# Spec-lock for mathematical verification (`blvm-spec-lock` is published on crates.io).
+# Monorepo dev: [patch.crates-io] below pins ../blvm-spec-lock; CI strips patches and uses crates.io.
+# CI: setup-spec-lock.sh clones ../blvm-spec-lock when the cargo-spec-lock CLI is needed.
 blvm-spec-lock = { version = ">=0.1, <1", default-features = false }
 # Spec-macros for spec_locked attributes (migration in progress - commented out until committed)
 # blvm-spec-macros = { path = "../blvm-spec-macros", optional = true }

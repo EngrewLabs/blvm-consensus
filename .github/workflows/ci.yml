@@ -10,17 +10,6 @@ on:
   repository_dispatch:
     types: [build-chain, upstream-changed]
   workflow_dispatch:
-    inputs:
-      skip_verification:
-        description: 'Skip spec-lock verification and attestation steps'
-        required: false
-        type: boolean
-        default: false
-      skip_tests:
-        description: 'Skip test execution steps'
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -56,7 +45,7 @@ jobs:
       - name: Setup blvm-spec-lock dependency
         run: |
           # blvm-spec-lock dependency resolution:
-          # 1. Default: Use crate from crates.io (blvm-spec-lock = "0.1.0")
+          # 1. Default: crates.io `blvm-spec-lock` (after strip-patch; semver in Cargo.toml)
           # 2. Fallback: Clone GitHub repo and use path dependency if crate not available
           # 3. Local dev: Use .cargo/config.toml with [patch.crates-io] (not in CI)
           bash scripts/setup-spec-lock.sh
@@ -109,8 +98,7 @@ jobs:
       (github.event_name != 'push' || github.event.head_commit == null || 
        (!contains(github.event.head_commit.message, '[skip ci]') &&
         !contains(github.event.head_commit.message, '[ci skip]') &&
-        !contains(github.event.head_commit.message, '[no ci]'))) &&
-      (github.event_name != 'workflow_dispatch' || github.event.inputs.skip_tests != 'true')
+        !contains(github.event.head_commit.message, '[no ci]')))
     steps:
       - uses: actions/checkout@v4
       
@@ -313,8 +301,7 @@ jobs:
       (github.event_name != 'push' || github.event.head_commit == null || 
        (!contains(github.event.head_commit.message, '[skip ci]') &&
         !contains(github.event.head_commit.message, '[ci skip]') &&
-        !contains(github.event.head_commit.message, '[no ci]'))) &&
-      (github.event_name != 'workflow_dispatch' || github.event.inputs.skip_verification != 'true')
+        !contains(github.event.head_commit.message, '[no ci]')))
     steps:
       - uses: actions/checkout@v4
       
@@ -439,11 +426,8 @@ jobs:
        (!contains(github.event.head_commit.message, '[skip ci]') &&
         !contains(github.event.head_commit.message, '[ci skip]') &&
         !contains(github.event.head_commit.message, '[no ci]'))) &&
-      ((github.event_name == 'workflow_dispatch' && github.event.inputs.skip_tests == 'true' && github.event.inputs.skip_verification == 'true') ||
-       (github.event_name == 'workflow_dispatch' && github.event.inputs.skip_tests == 'true' && (needs.verify.result == 'success' || needs.verify.result == 'skipped')) ||
-       (github.event_name == 'workflow_dispatch' && github.event.inputs.skip_verification == 'true' && (needs.test.result == 'success' || needs.test.result == 'skipped')) ||
-       (needs.test.result == 'success' && needs.verify.result == 'success' && needs.clippy.result == 'success' && 
-        needs.fmt.result == 'success' && needs.docs.result == 'success' && needs.security.result == 'success'))
+      (needs.test.result == 'success' && needs.verify.result == 'success' && needs.clippy.result == 'success' && 
+        needs.fmt.result == 'success' && needs.docs.result == 'success' && needs.security.result == 'success')
     steps:
       - uses: actions/checkout@v4
       
@@ -500,10 +484,7 @@ jobs:
         !contains(github.event.head_commit.message, '[ci skip]') &&
         !contains(github.event.head_commit.message, '[no ci]') &&
         !contains(github.event.head_commit.message, '[skip release]'))) &&
-      ((github.event_name == 'workflow_dispatch' && github.event.inputs.skip_tests == 'true' && github.event.inputs.skip_verification == 'true') ||
-       (github.event_name == 'workflow_dispatch' && github.event.inputs.skip_tests == 'true' && (needs.verify.result == 'success' || needs.verify.result == 'skipped')) ||
-       (github.event_name == 'workflow_dispatch' && github.event.inputs.skip_verification == 'true' && (needs.test.result == 'success' || needs.test.result == 'skipped')) ||
-       (needs.test.result == 'success' && needs.verify.result == 'success'))
+      (needs.test.result == 'success' && needs.verify.result == 'success')
     permissions:
       contents: write
       id-token: write
@@ -652,24 +633,9 @@ jobs:
             exit 1
           fi
           
-          # Add -unverified suffix if verification OR tests are skipped
-          # (untested counts as unverified)
-          # Check if we're in workflow_dispatch mode
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            SKIP_VERIFICATION="${{ github.event.inputs.skip_verification }}"
-            SKIP_TESTS="${{ github.event.inputs.skip_tests }}"
-          else
-            SKIP_VERIFICATION="false"
-            SKIP_TESTS="false"
-          fi
-          
-          if [ "$SKIP_VERIFICATION" = "true" ] || [ "$SKIP_TESTS" = "true" ]; then
-            VERSION_TAG="v${VERSION}-unverified"
-            echo "⚠️  Releasing UNVERIFIED version: ${VERSION_TAG}"
-          else
-            VERSION_TAG="v${VERSION}"
-            echo "✅ Releasing version: ${VERSION_TAG}"
-          fi
+          # Release tags are always vX.Y.Z — CI gates require tests + spec-lock verify on every release
+          VERSION_TAG="v${VERSION}"
+          echo "✅ Release tag: ${VERSION_TAG}"
           
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "version_tag=${VERSION_TAG}" >> $GITHUB_OUTPUT
@@ -1074,7 +1040,6 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
       
       - name: Download attestation artifacts
-        if: ${{ github.event_name != 'workflow_dispatch' || (github.event.inputs.skip_verification != 'true' && github.event.inputs.skip_tests != 'true') }}
         uses: actions/download-artifact@v4
         with:
           pattern: '*-attestation-data'
@@ -1082,7 +1047,6 @@ jobs:
           path: attestation-data
       
       - name: Collect build metadata
-        if: ${{ github.event_name != 'workflow_dispatch' || (github.event.inputs.skip_verification != 'true' && github.event.inputs.skip_tests != 'true') }}
         id: metadata
         run: |
           # Get toolchain versions
@@ -1147,7 +1111,6 @@ jobs:
           echo "  Cargo.lock hash: $CARGO_LOCK_HASH"
       
       - name: Create build metadata JSON
-        if: ${{ github.event_name != 'workflow_dispatch' || (github.event.inputs.skip_verification != 'true' && github.event.inputs.skip_tests != 'true') }}
         run: |
           # Create metadata JSON file for artifact storage
           cat > build-metadata.json << EOF
@@ -1166,7 +1129,6 @@ jobs:
           cat build-metadata.json
       
       - name: Upload build metadata
-        if: ${{ github.event_name != 'workflow_dispatch' || (github.event.inputs.skip_verification != 'true' && github.event.inputs.skip_tests != 'true') }}
         uses: actions/upload-artifact@v4
         with:
           name: build-metadata
@@ -1174,7 +1136,6 @@ jobs:
           retention-days: 365
       
       - name: Attest build provenance
-        if: ${{ github.event_name != 'workflow_dispatch' || (github.event.inputs.skip_verification != 'true' && github.event.inputs.skip_tests != 'true') }}
         uses: actions/attest-build-provenance@v1
         with:
           subject-name: "blvm-consensus"
