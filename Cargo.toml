@@ -65,6 +65,8 @@ blvm-primitives = { version = ">=0.1, <1", default-features = false }
 blvm-spec-lock = { version = ">=0.1, <1", default-features = false }
 # Spec-macros for spec_locked attributes (migration in progress - commented out until committed)
 # blvm-spec-macros = { path = "../blvm-spec-macros", optional = true }
+# Property-based strategies in src/test_utils.rs (must be a normal optional dep when `property-tests` is on — dev-deps are not linked for `cargo build --all-features` on the library).
+proptest = { version = "=1.5.0", optional = true }
 
 
 [dev-dependencies]
@@ -123,7 +125,7 @@ parallel-verification = ["rayon"]
 
 # Property test strategies (transaction_with_witness_strategy, etc.) for spec-lock generated tests
 # Required for integration tests in tests/spec_property_tests.rs
-property-tests = []
+property-tests = ["dep:proptest"]
 
 # Shared test fixtures (create_coinbase_tx, create_test_utxo_set_two_outputs).
 # Enable for integration tests that use test_utils: cargo test --features test-utils

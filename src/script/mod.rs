@@ -5959,7 +5959,7 @@ fn execute_opcode_with_context_full(
                             message: "OP_CHECKSIGFROMSTACK not yet activated".into(),
                         });
                     }
-                    Ok(true) // OP_SUCCESS204 succeeds
+                    return Ok(true); // OP_SUCCESS204 succeeds
                 }
 
                 use crate::bip348::verify_signature_from_stack;
@@ -5988,7 +5988,7 @@ fn execute_opcode_with_context_full(
                 // BIP-348: If signature is empty, push empty vector and continue
                 if signature_bytes.is_empty() {
                     stack.push(to_stack_element(&[])); // Empty vector, not 0
-                    Ok(true)
+                    return Ok(true);
                 }
 
                 // BIP-348: Verify signature (only for 32-byte pubkeys)
