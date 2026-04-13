@@ -19,20 +19,19 @@ pub use script_cache::{
 
 use crate::activation::{ForkActivationTable, IsForkActive};
 use crate::bip113::get_median_time_past;
-use crate::constants::*;
-use crate::economic::get_block_subsidy;
-use crate::error::{ConsensusError, Result};
-use crate::opcodes::*;
-#[cfg(feature = "profile")]
-use crate::profile_log;
-use crate::segwit::{validate_witness_commitment, Witness};
-use crate::transaction::{check_transaction, is_coinbase};
+use crate::error::Result;
+use crate::segwit::Witness;
 use crate::types::*;
-use crate::utxo_overlay::{apply_transaction_to_overlay_no_undo, UtxoOverlay};
-use crate::witness::is_witness_empty;
 use blvm_spec_lock::spec_locked;
 #[cfg(feature = "production")]
 use rustc_hash::{FxHashMap, FxHashSet};
+
+#[cfg(test)]
+use crate::constants::*;
+#[cfg(test)]
+use crate::opcodes::*;
+#[cfg(test)]
+use crate::transaction::{check_transaction, is_coinbase};
 
 // Rayon is used conditionally in the code, imported where needed
 

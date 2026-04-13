@@ -4,29 +4,28 @@
 //! Profile `[PERF_CLIFF]`: `BLVM_PERF_CLIFF_RANGES` (comma-separated `START-END`), `BLVM_PERF_CLIFF_STRIDE` (default 100).
 
 use crate::activation::IsForkActive;
-use crate::bip113::get_median_time_past;
 use crate::constants::*;
 use crate::economic::get_block_subsidy;
 use crate::error::{ConsensusError, Result};
 use crate::opcodes::*;
 #[cfg(feature = "profile")]
 use crate::profile_log;
+#[cfg(not(feature = "production"))]
 use crate::script::verify_script_with_context_full;
 use crate::segwit::{validate_witness_commitment, Witness};
-use crate::transaction::{check_transaction, check_tx_inputs, is_coinbase};
+use crate::transaction::{check_transaction, is_coinbase};
+#[cfg(not(feature = "production"))]
+use crate::transaction::check_tx_inputs;
 use crate::types::*;
 use crate::utxo_overlay::{apply_transaction_to_overlay_no_undo, UtxoOverlay};
 use crate::witness::is_witness_empty;
-use blvm_spec_lock::spec_locked;
-#[cfg(feature = "production")]
-use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 
-use super::{
-    apply, calculate_base_script_flags_for_block, calculate_script_flags_for_block_with_base,
-    compute_block_tx_ids, get_assume_valid_height, header, script_cache, skip_script_exec_cache,
-    BlockValidationContext, UtxoDelta,
-};
+use super::{apply, calculate_base_script_flags_for_block, header, BlockValidationContext, UtxoDelta};
+#[cfg(feature = "production")]
+use super::script_cache;
+#[cfg(not(feature = "production"))]
+use super::calculate_script_flags_for_block_with_base;
 
 /// Shared empty witness matrix for blocks with no segwit data (avoids per-block `Arc::new(Vec::new())`).
 #[cfg(feature = "production")]

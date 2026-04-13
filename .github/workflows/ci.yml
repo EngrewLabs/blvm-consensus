@@ -354,7 +354,9 @@ jobs:
             echo "❌ No spec found at ../blvm-spec (PROTOCOL.md, ARCHITECTURE.md, or THE_ORANGE_PAPER.md). setup-spec.sh should have cloned blvm-spec."
             exit 1
           fi
-          ../blvm-spec-lock/target/release/cargo-spec-lock verify --strict $SPEC_ARGS 2>&1 | tee spec_lock_output.txt
+          # Strict mode: SPEC_LOCK_STRICT=1 works with cargo-spec-lock builds that lack `--strict` on the CLI.
+          export SPEC_LOCK_STRICT=1
+          ../blvm-spec-lock/target/release/cargo-spec-lock verify $SPEC_ARGS 2>&1 | tee spec_lock_output.txt
           EXIT_CODE=${PIPESTATUS[0]}
           if [ $EXIT_CODE -ne 0 ]; then
             echo "❌ blvm-spec-lock verification failed"
