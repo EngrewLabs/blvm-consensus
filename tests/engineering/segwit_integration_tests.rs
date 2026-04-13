@@ -3,18 +3,21 @@
 //! Tests for Segregated Witness (BIP141/143) integration with transaction validation,
 //! block weight calculation, and witness handling.
 
+use bitcoin_hashes::{sha256d, Hash as BitcoinHash};
 use blvm_consensus::*;
 use blvm_consensus::segwit::*;
 use blvm_consensus::script::verify_script_with_context_full;
 use blvm_consensus::constants::MAX_BLOCK_WEIGHT;
 use super::bip_test_helpers::*;
 
-/// Create witness commitment script (helper for tests)
-/// OP_RETURN <36-byte-commitment>
-fn create_witness_commitment_script(commitment: &[u8; 32]) -> Vec<u8> {
-    let mut script = vec![0x6a, 0x24]; // OP_RETURN, 36 bytes
-    script.extend_from_slice(commitment);
-    script.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // 4 bytes padding
+/// BIP141 witness commitment output: `OP_RETURN` `0x24` `0xaa21a9ed` || `sha256d(witness_root || nonce)`.
+fn create_witness_commitment_script(witness_root: &[u8; 32], nonce: &[u8; 32]) -> Vec<u8> {
+    let mut preimage = [0u8; 64];
+    preimage[..32].copy_from_slice(witness_root);
+    preimage[32..].copy_from_slice(nonce);
+    let h = sha256d::Hash::hash(&preimage);
+    let mut script = vec![0x6a, 0x24, 0xaa, 0x21, 0xa9, 0xed];
+    script.extend_from_slice(&h[..]);
     script
 }
 
@@ -206,9 +209,10 @@ fn test_segwit_witness_commitment() {
     let witness_root = [1u8; 32];
     
     // Add witness commitment to coinbase script
-    coinbase_tx.outputs[0].script_pubkey = create_witness_commitment_script(&witness_root);
+    coinbase_tx.outputs[0].script_pubkey =
+        create_witness_commitment_script(&witness_root, &[0u8; 32]);
     
-    let is_valid = validate_witness_commitment(&coinbase_tx, &witness_root).unwrap();
+    let is_valid = validate_witness_commitment(&coinbase_tx, &witness_root, &[]).unwrap();
     
     assert!(is_valid);
 }
@@ -634,14 +638,15 @@ fn test_segwit_witness_commitment_validation() {
     let witness_root = [0x42u8; 32];
     
     // Add witness commitment
-    coinbase_tx.outputs[0].script_pubkey = create_witness_commitment_script(&witness_root);
+    coinbase_tx.outputs[0].script_pubkey =
+        create_witness_commitment_script(&witness_root, &[0u8; 32]);
     
-    let is_valid = validate_witness_commitment(&coinbase_tx, &witness_root).unwrap();
+    let is_valid = validate_witness_commitment(&coinbase_tx, &witness_root, &[]).unwrap();
     assert!(is_valid);
     
     // Test with wrong witness root (should fail)
     let wrong_root = [0x99u8; 32];
-    let is_invalid = validate_witness_commitment(&coinbase_tx, &wrong_root).unwrap();
+    let is_invalid = validate_witness_commitment(&coinbase_tx, &wrong_root, &[]).unwrap();
     assert!(!is_invalid);
 }
 

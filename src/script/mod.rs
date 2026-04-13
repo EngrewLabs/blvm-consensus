@@ -219,55 +219,6 @@ static FAST_PATH_BARE_MULTISIG: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "production")]
 static FAST_PATH_INTERPRETER: AtomicU64 = AtomicU64::new(0);
 
-/// Debug: log (idx, sighash) when collecting or verifying. Set BLVM_DEBUG_SIGHASH=1.
-/// Cached: was std::env::var() per collected signature (~2000+/block) — now checked once.
-#[cfg(feature = "production")]
-fn debug_sighash_log(idx: usize, sighash: &[u8; 32], is_collect: bool) {
-    static DEBUG_SIGHASH_ENABLED: OnceLock<bool> = OnceLock::new();
-    if !*DEBUG_SIGHASH_ENABLED
-        .get_or_init(|| std::env::var("BLVM_DEBUG_SIGHASH").ok().as_deref() == Some("1"))
-    {
-        return;
-    }
-    static DEBUG_SIGHASH_DIR: OnceLock<String> = OnceLock::new();
-    let dir = DEBUG_SIGHASH_DIR
-        .get_or_init(|| std::env::var("BLVM_DEBUG_SIGHASH_DIR").unwrap_or_else(|_| "target".into()))
-        .as_str();
-    let path = std::path::Path::new(dir).join(if is_collect {
-        "blvm_sighash_collect.txt"
-    } else {
-        "blvm_sighash_verify.txt"
-    });
-    let line = format!("{}\t{}\n", idx, hex::encode(sighash));
-    let guard = if is_collect {
-        DEBUG_SIGHASH_COLLECT_FILE.lock()
-    } else {
-        DEBUG_SIGHASH_VERIFY_FILE.lock()
-    };
-    if let Ok(mut mu) = guard {
-        if mu.is_none() {
-            *mu = std::fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(&path)
-                .ok();
-        }
-        if let Some(ref mut f) = *mu {
-            use std::io::Write;
-            let _ = f.write_all(line.as_bytes());
-            let _ = f.flush();
-        }
-    }
-}
-
-#[cfg(feature = "production")]
-static DEBUG_SIGHASH_COLLECT_FILE: std::sync::Mutex<Option<std::fs::File>> =
-    std::sync::Mutex::new(None);
-#[cfg(feature = "production")]
-static DEBUG_SIGHASH_VERIFY_FILE: std::sync::Mutex<Option<std::fs::File>> =
-    std::sync::Mutex::new(None);
-
 #[cfg(feature = "production")]
 fn get_script_cache() -> &'static RwLock<lru::LruCache<u64, bool>> {
     SCRIPT_CACHE.get_or_init(|| {
@@ -1043,36 +994,20 @@ pub fn try_verify_p2pkh_fast_path(
     let _t_secp = std::time::Instant::now();
     let height = block_height.unwrap_or(0);
     let is_valid: Result<bool> = {
-        let assumevalid_height = signature::get_assumevalid_height();
-        if assumevalid_height > 0 && height < assumevalid_height {
-            Ok(true)
-        } else {
-            let der_sig = &signature_bytes[..signature_bytes.len() - 1];
-            if flags & 0x04 != 0
-                && !crate::bip_validation::check_bip66_network(signature_bytes, height, network)
-                    .unwrap_or(false)
-            {
+        let der_sig = &signature_bytes[..signature_bytes.len() - 1];
+        if flags & 0x04 != 0
+            && !crate::bip_validation::check_bip66_network(signature_bytes, height, network)
+                .unwrap_or(false)
+        {
+            Ok(false)
+        } else if flags & 0x02 != 0 {
+            let base_sighash = sighash_byte & !0x80;
+            if !(0x01..=0x03).contains(&base_sighash) {
                 Ok(false)
-            } else if flags & 0x02 != 0 {
-                let base_sighash = sighash_byte & !0x80;
-                if !(0x01..=0x03).contains(&base_sighash) {
+            } else if pubkey_bytes.len() == 33 {
+                if pubkey_bytes[0] != 0x02 && pubkey_bytes[0] != 0x03 {
                     Ok(false)
-                } else if pubkey_bytes.len() == 33 {
-                    if pubkey_bytes[0] != 0x02 && pubkey_bytes[0] != 0x03 {
-                        Ok(false)
-                    } else {
-                        let strict_der = flags & 0x04 != 0;
-                        let enforce_low_s = flags & 0x08 != 0;
-                        Ok(crate::secp256k1_backend::verify_ecdsa_direct(
-                            der_sig,
-                            pubkey_bytes,
-                            &sighash,
-                            strict_der,
-                            enforce_low_s,
-                        )
-                        .unwrap_or(false))
-                    }
-                } else if pubkey_bytes.len() == 65 && pubkey_bytes[0] == 0x04 {
+                } else {
                     let strict_der = flags & 0x04 != 0;
                     let enforce_low_s = flags & 0x08 != 0;
                     Ok(crate::secp256k1_backend::verify_ecdsa_direct(
@@ -1083,10 +1018,8 @@ pub fn try_verify_p2pkh_fast_path(
                         enforce_low_s,
                     )
                     .unwrap_or(false))
-                } else {
-                    Ok(false)
                 }
-            } else {
+            } else if pubkey_bytes.len() == 65 && pubkey_bytes[0] == 0x04 {
                 let strict_der = flags & 0x04 != 0;
                 let enforce_low_s = flags & 0x08 != 0;
                 Ok(crate::secp256k1_backend::verify_ecdsa_direct(
@@ -1097,7 +1030,20 @@ pub fn try_verify_p2pkh_fast_path(
                     enforce_low_s,
                 )
                 .unwrap_or(false))
+            } else {
+                Ok(false)
             }
+        } else {
+            let strict_der = flags & 0x04 != 0;
+            let enforce_low_s = flags & 0x08 != 0;
+            Ok(crate::secp256k1_backend::verify_ecdsa_direct(
+                der_sig,
+                pubkey_bytes,
+                &sighash,
+                strict_der,
+                enforce_low_s,
+            )
+            .unwrap_or(false))
         }
     };
     #[cfg(all(feature = "production", feature = "profile"))]
@@ -4759,7 +4705,7 @@ fn script_num_from_opcode(opcode: u8) -> i64 {
 /// Serialize data as a Bitcoin push operation: <push_opcode> <data>
 /// This creates the byte pattern that FindAndDelete searches for.
 /// Push data to script (BIP62 encoding rules).
-fn serialize_push_data(data: &[u8]) -> Vec<u8> {
+pub(crate) fn serialize_push_data(data: &[u8]) -> Vec<u8> {
     let len = data.len();
     let mut result = Vec::with_capacity(len + 5);
     if len < 76 {
@@ -4782,125 +4728,74 @@ fn serialize_push_data(data: &[u8]) -> Vec<u8> {
     result
 }
 
-/// FindAndDelete: remove all occurrences of `pattern` from `script` at opcode boundaries.
-/// FindAndDelete — remove signature from scriptCode (BIP62 consensus).
-///
-/// Walks through the script opcode by opcode. At each opcode start position,
-/// if the raw bytes match `pattern`, the pattern is skipped (deleted).
-/// Returns the cleaned script. Uses Cow to avoid allocation when pattern is not found.
-#[spec_locked("5.1.1")]
-#[cfg(feature = "production")]
-#[inline(always)]
-pub(crate) fn find_and_delete<'a>(script: &'a [u8], pattern: &[u8]) -> std::borrow::Cow<'a, [u8]> {
-    if pattern.is_empty() || script.len() < pattern.len() {
-        return std::borrow::Cow::Borrowed(script);
+/// Advance `pc` past one opcode (Bitcoin `CScript::GetOp`-compatible sizing).
+#[inline]
+fn script_get_op_advance(script: &[u8], pc: usize) -> Option<usize> {
+    if pc >= script.len() {
+        return None;
     }
-
-    // First pass: check if pattern exists at any opcode boundary. Avoid allocation when no match.
-    let mut i = 0;
-    let mut found = false;
-    while i < script.len() {
-        if i + pattern.len() <= script.len() && script[i..i + pattern.len()] == *pattern {
-            found = true;
-            break;
-        }
-        let opcode = script[i];
-        let advance = if opcode <= 0x4b {
-            1 + opcode as usize
-        } else if opcode == OP_PUSHDATA1 && i + 1 < script.len() {
-            2 + script[i + 1] as usize
-        } else if opcode == OP_PUSHDATA2 && i + 2 < script.len() {
-            3 + ((script[i + 1] as usize) | ((script[i + 2] as usize) << 8))
-        } else if opcode == OP_PUSHDATA4 && i + 4 < script.len() {
-            5 + ((script[i + 1] as usize)
-                | ((script[i + 2] as usize) << 8)
-                | ((script[i + 3] as usize) << 16)
-                | ((script[i + 4] as usize) << 24))
-        } else {
-            1
-        };
-        i = std::cmp::min(i + advance, script.len());
+    let opcode = script[pc];
+    let advance = if opcode <= 0x4b {
+        1 + opcode as usize
+    } else if opcode == OP_PUSHDATA1 && pc + 1 < script.len() {
+        2 + script[pc + 1] as usize
+    } else if opcode == OP_PUSHDATA2 && pc + 2 < script.len() {
+        3 + ((script[pc + 1] as usize) | ((script[pc + 2] as usize) << 8))
+    } else if opcode == OP_PUSHDATA4 && pc + 4 < script.len() {
+        5 + ((script[pc + 1] as usize)
+            | ((script[pc + 2] as usize) << 8)
+            | ((script[pc + 3] as usize) << 16)
+            | ((script[pc + 4] as usize) << 24))
+    } else {
+        1
+    };
+    let next = pc + advance;
+    if next > script.len() {
+        None
+    } else {
+        Some(next)
     }
-    if !found {
-        return std::borrow::Cow::Borrowed(script);
-    }
-
-    let mut result = Vec::with_capacity(script.len());
-    i = 0;
-    while i < script.len() {
-        if i + pattern.len() <= script.len() && script[i..i + pattern.len()] == *pattern {
-            i += pattern.len();
-            continue;
-        }
-        let opcode = script[i];
-        let advance = if opcode <= 0x4b {
-            1 + opcode as usize
-        } else if opcode == OP_PUSHDATA1 && i + 1 < script.len() {
-            2 + script[i + 1] as usize
-        } else if opcode == OP_PUSHDATA2 && i + 2 < script.len() {
-            3 + ((script[i + 1] as usize) | ((script[i + 2] as usize) << 8))
-        } else if opcode == OP_PUSHDATA4 && i + 4 < script.len() {
-            5 + ((script[i + 1] as usize)
-                | ((script[i + 2] as usize) << 8)
-                | ((script[i + 3] as usize) << 16)
-                | ((script[i + 4] as usize) << 24))
-        } else {
-            1
-        };
-        let end = std::cmp::min(i + advance, script.len());
-        result.extend_from_slice(&script[i..end]);
-        i = end;
-    }
-
-    std::borrow::Cow::Owned(result)
 }
 
-#[cfg(not(feature = "production"))]
+/// FindAndDelete — consensus match to Bitcoin Core `FindAndDelete` in `interpreter.cpp`.
+///
+/// Do/while loop: flush `[pc2, pc)`, delete consecutive raw occurrences of `pattern` from `pc`,
+/// then advance `pc` one opcode via GetOp-style sizing. The inner delete loop can leave `pc`
+/// misaligned; the next "opcode" is parsed from that byte (same as Core).
 #[spec_locked("5.1.1")]
 #[inline]
 pub(crate) fn find_and_delete<'a>(script: &'a [u8], pattern: &[u8]) -> std::borrow::Cow<'a, [u8]> {
-    if pattern.is_empty() || script.len() < pattern.len() {
+    if pattern.is_empty() {
         return std::borrow::Cow::Borrowed(script);
     }
+    let end = script.len();
+    let mut n_found = 0usize;
+    let mut result = Vec::new();
+    let mut pc = 0usize;
+    let mut pc2 = 0usize;
 
-    let mut result = Vec::with_capacity(script.len());
-    let mut i = 0;
-
-    while i < script.len() {
-        // Check if pattern matches at this opcode boundary
-        if i + pattern.len() <= script.len() && script[i..i + pattern.len()] == *pattern {
-            i += pattern.len();
-            continue; // Skip this occurrence, check again at new position
+    loop {
+        result.extend_from_slice(&script[pc2..pc]);
+        while end - pc >= pattern.len() && script[pc..pc + pattern.len()] == *pattern {
+            pc += pattern.len();
+            n_found += 1;
         }
-
-        // No match — copy this opcode's bytes and advance past it
-        let opcode = script[i];
-        let advance = if opcode <= 0x4b {
-            // Direct push: 1 byte opcode + opcode bytes of data
-            1 + opcode as usize
-        } else if opcode == OP_PUSHDATA1 && i + 1 < script.len() {
-            // OP_PUSHDATA1: 2 + data_len
-            2 + script[i + 1] as usize
-        } else if opcode == OP_PUSHDATA2 && i + 2 < script.len() {
-            // OP_PUSHDATA2: 3 + data_len
-            3 + ((script[i + 1] as usize) | ((script[i + 2] as usize) << 8))
-        } else if opcode == OP_PUSHDATA4 && i + 4 < script.len() {
-            // OP_PUSHDATA4: 5 + data_len
-            5 + ((script[i + 1] as usize)
-                | ((script[i + 2] as usize) << 8)
-                | ((script[i + 3] as usize) << 16)
-                | ((script[i + 4] as usize) << 24))
-        } else {
-            // Regular opcode (1 byte)
-            1
+        pc2 = pc;
+        if pc >= end {
+            break;
+        }
+        let Some(next_pc) = script_get_op_advance(script, pc) else {
+            break;
         };
-
-        let end = std::cmp::min(i + advance, script.len());
-        result.extend_from_slice(&script[i..end]);
-        i = end;
+        pc = next_pc;
     }
 
-    std::borrow::Cow::Owned(result)
+    if n_found > 0 {
+        result.extend_from_slice(&script[pc2..end]);
+        std::borrow::Cow::Owned(result)
+    } else {
+        std::borrow::Cow::Borrowed(script)
+    }
 }
 
 /// Return opcode position (0-indexed) of the opcode at byte_index in script. BIP 342 codesep_pos.
@@ -5078,13 +4973,10 @@ fn execute_opcode_with_context_full(
                     };
                     let sighash_type = SighashType::from_byte(sighash_byte);
 
-                    // FindAndDelete: Remove signature from scriptCode (BIP62 consensus rule)
-                    let pattern_bytes: ByteString = script_sig_for_sighash
-                        .and_then(|s| parse_script_sig_push_only(s.as_ref()))
-                        .and_then(|p| p.into_iter().next())
-                        .map(|elem| elem.as_ref().to_vec())
-                        .unwrap_or_else(|| signature_bytes.as_ref().to_vec());
-                    let pattern = serialize_push_data(&pattern_bytes);
+                    // FindAndDelete: remove the *current* signature's push encoding from scriptCode.
+                    // Must not use only the first scriptSig push — P2SH inputs may contain multiple
+                    // signatures before the redeem script, each checked with its own sighash.
+                    let pattern = serialize_push_data(signature_bytes.as_ref());
 
                     let base_script = match (
                         redeem_script_for_sighash,
@@ -5195,13 +5087,8 @@ fn execute_opcode_with_context_full(
                     };
                     let sighash_type = SighashType::from_byte(sighash_byte);
 
-                    // FindAndDelete: use same signature bytes as fast path when script_sig available
-                    let pattern_bytes: ByteString = script_sig_for_sighash
-                        .and_then(|s| parse_script_sig_push_only(s.as_ref()))
-                        .and_then(|p| p.into_iter().next())
-                        .map(|elem| elem.as_ref().to_vec())
-                        .unwrap_or_else(|| signature_bytes.as_ref().to_vec());
-                    let pattern = serialize_push_data(&pattern_bytes);
+                    // FindAndDelete: remove the signature under verification (not first scriptSig push).
+                    let pattern = serialize_push_data(signature_bytes.as_ref());
 
                     let base_script = match (
                         redeem_script_for_sighash,
@@ -6130,9 +6017,9 @@ fn execute_opcode_with_context_full(
                     return Ok(false);
                 }
 
-                // BIP-348: Count against sigops budget (BIP 342)
-                // Note: Sigops counting is handled at transaction level in get_transaction_sigop_cost()
-                // For Tapscript, sigops are counted via count_tapscript_sigops (BIP 342)
+                // BIP-342/348: per-tapscript validation weight enforces signature-related limits during
+                // execution. They are not added to `MAX_BLOCK_SIGOPS_COST` (witness v1 returns 0 in Core's
+                // WitnessSigOps).
 
                 // BIP-348: Push 0x01 (single byte) if valid
                 stack.push(to_stack_element(&[0x01])); // Single byte 0x01, not 1

@@ -354,34 +354,19 @@ impl U256 {
             "Bit shift ({bit_shift}) must be < 64 (shift: {shift})"
         );
 
-        for i in 0..4 {
-            if i >= word_shift {
-                // Runtime assertion: Array index must be in bounds
-                let dest_idx = i - word_shift;
-                debug_assert!(
-                    dest_idx < 4,
-                    "Destination index ({dest_idx}) must be < 4 (i: {i}, word_shift: {word_shift})"
-                );
-
-                result.0[dest_idx] |= self.0[i] >> bit_shift;
-
-                if bit_shift > 0 && i - word_shift + 1 < 4 {
-                    // Runtime assertion: Second destination index must be in bounds
-                    let dest_idx2 = i - word_shift + 1;
-                    debug_assert!(
-                        dest_idx2 < 4,
-                        "Second destination index ({dest_idx2}) must be < 4 (i: {i}, word_shift: {word_shift})"
-                    );
-
-                    // Runtime assertion: Left shift amount must be valid
-                    let left_shift = 64 - bit_shift;
-                    debug_assert!(
-                        left_shift > 0 && left_shift < 64,
-                        "Left shift amount ({left_shift}) must be in (0, 64) (bit_shift: {bit_shift})"
-                    );
-
-                    result.0[dest_idx2] |= self.0[i] << left_shift;
+        if bit_shift == 0 {
+            for i in word_shift..4 {
+                result.0[i - word_shift] = self.0[i];
+            }
+        } else {
+            // Same limb pairing as Bitcoin/Core-style big integers: each output word combines
+            // the low bits of self[i] and the high bits of self[i+1].
+            for i in word_shift..4 {
+                let mut word = self.0[i] >> bit_shift;
+                if i + 1 < 4 {
+                    word |= self.0[i + 1] << (64 - bit_shift);
                 }
+                result.0[i - word_shift] = word;
             }
         }
 
@@ -660,10 +645,8 @@ pub fn expand_target(bits: Natural) -> Result<U256> {
     // }
 
     let exponent = (bits >> 24) as u8;
-    // Standard uses 0x007fffff (23 bits); we handle the full 24-bit mantissa.
-    // The sign bit (0x00800000) is handled separately for expansion.
-    // we use the full mantissa including the sign bit
-    let mantissa = bits & 0x00ffffff;
+    // Bitcoin SetCompact uses a 23-bit mantissa (see arith_uint256::SetCompact).
+    let mantissa = bits & 0x007fffff;
 
     // Exponent in [3, 32] covers mainnet-style compact targets and regtest minimum-difficulty
     // (e.g. nBits 0x207fffff, exponent 32).
@@ -767,7 +750,7 @@ fn compress_target(target: &U256) -> Result<Natural> {
     // divide the mantissa by 256 and increase the exponent.
     // This ensures the mantissa fits in 23 bits (0x007fffff).
     let mut n_size_final = n_size;
-    if (n_compact & 0x00800000) != 0 {
+    while (n_compact & 0x00800000) != 0 {
         n_compact >>= 8;
         n_size_final += 1;
     }

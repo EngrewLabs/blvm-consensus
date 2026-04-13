@@ -92,14 +92,13 @@ fn test_maximum_exponent() {
     // Verify expansion succeeded (target is valid)
 }
 
-/// Test exponent > 29 (should be rejected)
+/// Exponent 30 is valid (mainnet-style targets extend past the legacy 0x1d cap;
+/// `expand_target` allows up to exponent 32 for regtest minimum difficulty).
 #[test]
-fn test_exponent_too_large() {
-    // bits = 0x1e00ffff (exponent = 30, mantissa = 0x00ffff)
-    // Should be rejected (exponent > 29)
+fn test_exponent_30_accepted() {
     let bits = 0x1e00ffff;
     let result = expand_target(bits);
-    assert!(result.is_err(), "Exponent > 29 should be rejected");
+    assert!(result.is_ok(), "Exponent 30 should be accepted");
 }
 
 /// Test exponent > 32 (should be rejected)
