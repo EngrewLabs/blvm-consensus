@@ -6,6 +6,7 @@
 //!
 //! Consensus-critical: Incorrect witness commitment causes consensus violation.
 
+use blvm_consensus::opcodes::OP_RETURN;
 use blvm_consensus::segwit::{compute_witness_merkle_root, validate_witness_commitment, Witness};
 use blvm_consensus::types::{
     Block, BlockHeader, Hash, OutPoint, Transaction, TransactionInput, TransactionOutput,
@@ -142,7 +143,6 @@ fn test_witness_commitment_no_witness_txs() {
 /// Test invalid witness commitment rejection
 #[test]
 fn test_invalid_witness_commitment_rejection() {
-    // Create a block with invalid witness commitment
     let block = Block {
         header: BlockHeader {
             version: 0x20000000,
@@ -164,7 +164,7 @@ fn test_invalid_witness_commitment_rejection() {
             }],
             outputs: blvm_consensus::tx_outputs![TransactionOutput {
                 value: 12_5000_0000,
-                script_pubkey: vec![], // Would contain wrong commitment
+                script_pubkey: vec![],
             }],
             lock_time: 0,
         }]
@@ -174,8 +174,10 @@ fn test_invalid_witness_commitment_rejection() {
     let witnesses = vec![Witness::new()];
     let witness_root = compute_witness_merkle_root(&block, &witnesses).unwrap();
 
-    // Create coinbase with wrong commitment
-    let wrong_commitment: Hash = [0xff; 32]; // Wrong commitment
+    // BIP141 OP_RETURN witness commitment with an incorrect 32-byte payload (not sha256d(root||nonce))
+    let mut bad_commitment_script = vec![OP_RETURN, 0x24, 0xaa, 0x21, 0xa9, 0xed];
+    bad_commitment_script.extend_from_slice(&[0xff; 32]);
+
     let coinbase = Transaction {
         version: 1,
         inputs: vec![TransactionInput {
@@ -189,17 +191,16 @@ fn test_invalid_witness_commitment_rejection() {
         .into(),
         outputs: vec![TransactionOutput {
             value: 12_5000_0000,
-            script_pubkey: vec![].into(), // Would contain wrong commitment
+            script_pubkey: bad_commitment_script.into(),
         }]
         .into(),
         lock_time: 0,
     };
 
-    // Validation should fail with wrong commitment
-    // (This depends on actual implementation)
-    let result = validate_witness_commitment(&coinbase, &wrong_commitment);
-    // Should detect mismatch
-    assert!(result.is_ok());
+    assert!(
+        !validate_witness_commitment(&coinbase, &witness_root, &[]).unwrap(),
+        "wrong commitment payload must fail BIP141 check"
+    );
 }
 
 /// Test witness commitment format

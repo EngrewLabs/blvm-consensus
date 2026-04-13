@@ -42,8 +42,14 @@ pub(crate) fn calculate_base_script_flags_for_block(
     if activation.is_fork_active(ForkId::Bip65, height) {
         flags |= 0x200; // CHECKLOCKTIMEVERIFY
     }
+    // BIP112 (CSV): CHECKSEQUENCEVERIFY at CSV deployment height (mainnet 419328).
+    // Bitcoin Core `GetBlockScriptFlags`: DEPLOYMENT_CSV, not SegWit.
+    if activation.is_fork_active(ForkId::Bip112, height) {
+        flags |= 0x400; // SCRIPT_VERIFY_CHECKSEQUENCEVERIFY
+    }
+    // BIP147 NULLDUMMY: Bitcoin Core enables at DEPLOYMENT_SEGWIT (same height as BIP147 on mainnet).
     if activation.is_fork_active(ForkId::Bip147, height) {
-        flags |= 0x10 | 0x400; // NULLDUMMY, CHECKSEQUENCEVERIFY
+        flags |= 0x10; // SCRIPT_VERIFY_NULLDUMMY
     }
     #[cfg(feature = "ctv")]
     if activation.is_fork_active(ForkId::Ctv, height) {
