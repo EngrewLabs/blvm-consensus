@@ -152,3 +152,10 @@ path = "fuzz_targets/transaction_output_validation.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "sighash_computation"
+path = "fuzz_targets/sighash_computation.rs"
+test = false
+doc = false
+bench = false
