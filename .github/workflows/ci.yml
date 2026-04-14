@@ -9,6 +9,7 @@ on:
     types: [published]
   repository_dispatch:
     types: [build-chain, upstream-changed]
+  # Full pipeline on demand (e.g. after a chore commit bumps blvm-spec-lock); use GitHub Actions → CI → Run workflow.
   workflow_dispatch:
 
 permissions:
