@@ -29,11 +29,12 @@
 //!
 //! let transaction = Transaction {
 //!     version: 1,
-//!     inputs: vec![],
+//!     inputs: vec![].into(),
 //!     outputs: vec![TransactionOutput {
 //!         value: 1000,
 //!         script_pubkey: vec![0x51],
-//!     }],
+//!     }]
+//!     .into(),
 //!     lock_time: 0,
 //! };
 //! let result = check_transaction(&transaction).unwrap();

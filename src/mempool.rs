@@ -483,7 +483,7 @@ pub enum MempoolResult {
 ///
 /// ```rust
 /// use blvm_consensus::mempool::{Mempool, update_mempool_after_block};
-/// use blvm_consensus::block::connect_block;
+/// use blvm_consensus::block::{connect_block, BlockValidationContext};
 /// use blvm_consensus::ValidationResult;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -507,12 +507,13 @@ pub enum MempoolResult {
 /// #     },
 /// #     transactions: vec![coinbase_tx].into(),
 /// # };
-/// # let witnesses: Vec<blvm_consensus::segwit::Witness> = vec![vec![]]; // One empty witness for the coinbase transaction
+/// // One `Vec<Witness>` per tx; coinbase has one input → one empty witness stack.
+/// # let witnesses: Vec<Vec<blvm_consensus::segwit::Witness>> = vec![vec![vec![]]];
 /// # let mut utxo_set = UtxoSet::default();
 /// # let height = 0;
 /// # let mut mempool = Mempool::new();
-/// # use blvm_consensus::types::Network;
-/// let (result, new_utxo_set, _) = connect_block(&block, &witnesses, utxo_set, height, None, Network::Regtest)?;
+/// let ctx = BlockValidationContext::for_network(Network::Regtest);
+/// let (result, new_utxo_set, _) = connect_block(&block, &witnesses, utxo_set, height, &ctx)?;
 /// if matches!(result, ValidationResult::Valid) {
 ///     let removed = update_mempool_after_block(&mut mempool, &block, &new_utxo_set)?;
 ///     println!("Removed {} transactions from mempool", removed.len());

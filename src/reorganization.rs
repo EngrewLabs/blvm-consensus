@@ -368,6 +368,7 @@ pub fn reorganize_chain_with_witnesses(
 ///     None::<fn(Natural) -> Option<Vec<BlockHeader>>>,
 ///     None::<fn(&blvm_consensus::types::Hash) -> Option<blvm_consensus::reorganization::BlockUndoLog>>,
 ///     None::<fn(&blvm_consensus::types::Hash, &blvm_consensus::reorganization::BlockUndoLog) -> blvm_consensus::error::Result<()>>,
+///     Network::Regtest,
 /// );
 /// if let Ok(reorg_result) = reorg_result {
 ///     let _removed = update_mempool_after_reorg(

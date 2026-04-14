@@ -286,8 +286,9 @@ jobs:
       - name: Install Rust
         uses: BTCDecoded/rust-ci/install-rust-toolchain@main
       
+      # 0.22+ parses CVSS 4.0 in advisory-db; 0.21 fails loading the DB (e.g. cap-primitives RUSTSEC-2024-0445).
       - name: Install audit
-        run: cargo install cargo-audit --version 0.21.0 --locked
+        run: cargo install cargo-audit --version 0.22.1 --locked
       
       - name: Audit
         run: cargo audit
