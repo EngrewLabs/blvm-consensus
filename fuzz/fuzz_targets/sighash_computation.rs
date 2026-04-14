@@ -1,10 +1,10 @@
 #![no_main]
 
-use consensus_proof::transaction_hash::{
+use blvm_consensus::transaction_hash::{
     calculate_bip143_sighash, calculate_transaction_sighash_single_input,
     Bip143PrecomputedHashes, SighashType,
 };
-use consensus_proof::types::{OutPoint, Transaction, TransactionInput, TransactionOutput};
+use blvm_consensus::types::{OutPoint, Transaction, TransactionInput, TransactionOutput};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
