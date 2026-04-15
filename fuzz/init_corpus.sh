@@ -27,6 +27,7 @@ TARGETS=(
     "script_opcodes"
     "differential_fuzzing"
     "sighash_computation"
+    "witness_validation"
 )
 
 for target in "${TARGETS[@]}"; do
@@ -198,4 +199,16 @@ echo "  - Use real blockchain data (mainnet/testnet)"
 echo ""
 echo "Corpus directories: $CORPUS_DIR"
 
-
+# Witness validation seeds
+# Boundary 520 bytes
+add_seed "witness_validation" "boundary_520.hex" "$(printf '01%.0s' {1..520})"
+# Boundary 521 bytes
+add_seed "witness_validation" "boundary_521.hex" "$(printf '01%.0s' {1..521})"
+# Taproot Control Block (33 bytes)
+add_seed "witness_validation" "taproot_cb_33.hex" "$(printf '00%.0s' {1..33})"
+# Taproot Control Block (65 bytes)
+add_seed "witness_validation" "taproot_cb_65.hex" "$(printf '00%.0s' {1..65})"
+# Taproot Invalid CB (34 bytes)
+add_seed "witness_validation" "taproot_cb_34.hex" "$(printf '00%.0s' {1..34})"
+# Degenerate: 32 empty elements
+add_seed "witness_validation" "degenerate_empty.hex" "$(printf '00%.0s' {1..32})"
