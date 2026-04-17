@@ -80,6 +80,20 @@ add_seed "economic_validation" "height_0.hex" "0000000000000000"
 # Height at first halving
 add_seed "economic_validation" "height_210000.hex" "a086010000000000"
 
+# Witness validation seeds
+# Boundary 520 bytes
+add_seed "witness_validation" "boundary_520.hex" "$(printf '01%.0s' {1..520})"
+# Boundary 521 bytes
+add_seed "witness_validation" "boundary_521.hex" "$(printf '01%.0s' {1..521})"
+# Taproot Control Block (33 bytes)
+add_seed "witness_validation" "taproot_cb_33.hex" "$(printf '00%.0s' {1..33})"
+# Taproot Control Block (65 bytes)
+add_seed "witness_validation" "taproot_cb_65.hex" "$(printf '00%.0s' {1..65})"
+# Taproot Invalid CB (34 bytes)
+add_seed "witness_validation" "taproot_cb_34.hex" "$(printf '00%.0s' {1..34})"
+# Degenerate: 32 empty elements
+add_seed "witness_validation" "degenerate_empty.hex" "$(printf '00%.0s' {1..32}"
+
 # Add Bitcoin Core test vectors if available
 BITCOIN_CORE_TEST_DIR="${BITCOIN_CORE_TEST_DIR:-/home/user/src/bitcoin/test/functional/data/util}"
 if [ -d "$BITCOIN_CORE_TEST_DIR" ]; then
@@ -154,17 +168,3 @@ echo "  - Extract from Bitcoin Core test vectors"
 echo "  - Use real blockchain data (mainnet/testnet)"
 echo ""
 echo "Corpus directories: $CORPUS_DIR"
-
-# Witness validation seeds
-# Boundary 520 bytes
-add_seed "witness_validation" "boundary_520.hex" "$(printf '01%.0s' {1..520})"
-# Boundary 521 bytes
-add_seed "witness_validation" "boundary_521.hex" "$(printf '01%.0s' {1..521})"
-# Taproot Control Block (33 bytes)
-add_seed "witness_validation" "taproot_cb_33.hex" "$(printf '00%.0s' {1..33})"
-# Taproot Control Block (65 bytes)
-add_seed "witness_validation" "taproot_cb_65.hex" "$(printf '00%.0s' {1..65})"
-# Taproot Invalid CB (34 bytes)
-add_seed "witness_validation" "taproot_cb_34.hex" "$(printf '00%.0s' {1..34})"
-# Degenerate: 32 empty elements
-add_seed "witness_validation" "degenerate_empty.hex" "$(printf '00%.0s' {1..32})"
