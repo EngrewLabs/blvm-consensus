@@ -302,3 +302,45 @@ fn test_difficulty_integer_arithmetic() {
         "Difficulty calculation must be deterministic (integer arithmetic)"
     );
 }
+
+/// Mainnet height 112896 retarget — Blockstream `bits` for 112896 is `0x1b00dc31` (453041201).
+#[test]
+fn mainnet_retarget_height_112896_matches_observed_chain_bits() {
+    let interval = DIFFICULTY_ADJUSTMENT_INTERVAL as usize;
+    let mut prev_headers = Vec::with_capacity(interval);
+    // Only timestamps of block 110880 and 112895 and nBits of 112895 affect the formula.
+    let first_ts = 1298800760u64;
+    let last_ts = 1299683275u64;
+    let period_bits = 453062093u64; // 0x1b012dcd (mainnet blocks 110880..=112895)
+
+    for i in 0..interval {
+        let ts = match i {
+            0 => first_ts,
+            x if x == interval - 1 => last_ts,
+            _ => first_ts + (i as u64 * 60),
+        };
+        prev_headers.push(BlockHeader {
+            version: 1,
+            prev_block_hash: [i as u8; 32].into(),
+            merkle_root: [0; 32],
+            timestamp: ts,
+            bits: period_bits,
+            nonce: 0,
+        });
+    }
+
+    let current = BlockHeader {
+        version: 1,
+        prev_block_hash: [0xee; 32].into(),
+        merkle_root: [0; 32],
+        timestamp: 1299684355,
+        bits: 453041201,
+        nonce: 0,
+    };
+
+    let got = get_next_work_required(&current, &prev_headers).unwrap();
+    assert_eq!(
+        got, 453041201,
+        "expected chain nBits 0x1b00dc31 for retarget at 112896"
+    );
+}

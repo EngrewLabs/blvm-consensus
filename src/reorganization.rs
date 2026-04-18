@@ -290,9 +290,12 @@ pub fn reorganize_chain_with_witnesses(
         // Persist undo log to database via callback (required for future reorganizations)
         if let Some(ref store_undo_log) = store_undo_log_for_block {
             if let Err(e) = store_undo_log(&block_hash, &undo_log) {
-                // Log error but continue - undo log storage failure shouldn't block reorganization
-                // In production, this should be logged as a warning
+                // Continue without persisting — reorg state is still returned in-memory.
+                // Avoid stderr in default release builds; enable `profile` or use a debug build to see this.
+                #[cfg(any(debug_assertions, feature = "profile"))]
                 eprintln!("Warning: Failed to store undo log for block {block_hash:?}: {e}");
+                #[cfg(not(any(debug_assertions, feature = "profile")))]
+                let _ = e;
             }
         }
 

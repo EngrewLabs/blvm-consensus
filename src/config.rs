@@ -750,13 +750,18 @@ pub fn get_consensus_config() -> ConsensusConfig {
 }
 
 /// Assume-valid height (cached). Used by block and script hot paths.
+/// Runtime override for assume-valid height, shared between get/set.
+/// u64::MAX means "no override" (fall through to config).
+#[cfg(all(feature = "production", feature = "benchmarking"))]
+static ASSUME_VALID_OVERRIDE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(u64::MAX);
+
 /// Benchmarking: set_assume_valid_height() overrides when feature enabled.
 pub fn get_assume_valid_height() -> u64 {
     #[cfg(all(feature = "production", feature = "benchmarking"))]
     {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static OVERRIDE: AtomicU64 = AtomicU64::new(u64::MAX);
-        let v = OVERRIDE.load(Ordering::Relaxed);
+        use std::sync::atomic::Ordering;
+        let v = ASSUME_VALID_OVERRIDE.load(Ordering::Relaxed);
         if v != u64::MAX {
             return v;
         }
@@ -783,9 +788,8 @@ pub fn get_n_minimum_chain_work() -> u128 {
 /// Set assume-valid height for benchmarking (overrides config).
 #[cfg(all(feature = "production", feature = "benchmarking"))]
 pub fn set_assume_valid_height(height: u64) {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static OVERRIDE: AtomicU64 = AtomicU64::new(u64::MAX);
-    OVERRIDE.store(height, Ordering::Relaxed);
+    use std::sync::atomic::Ordering;
+    ASSUME_VALID_OVERRIDE.store(height, Ordering::Relaxed);
 }
 
 /// Reset assume-valid override (benchmarking).
