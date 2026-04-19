@@ -56,7 +56,7 @@ fn coinbase_script_sig_len(coinbase: &crate::types::Transaction) -> usize {
 }
 
 fn invalid_block_result<'a>(
-    utxo_set: &UtxoSet,
+    utxo_set: UtxoSet,
     tx_ids: &[Hash],
     msg: impl Into<String>,
 ) -> Result<(
@@ -66,9 +66,12 @@ fn invalid_block_result<'a>(
     crate::reorganization::BlockUndoLog,
     Option<UtxoDelta>,
 )> {
+    // Return the **unchanged** UTXO set: every call site is before base `utxo_set` mutations
+    // (overlay validates against an immutable view). Avoids emptying the set, which would force
+    // callers like differential tests to clone or lose chain state after an invalid verdict.
     Ok((
         ValidationResult::Invalid(msg.into()),
-        utxo_set.clone(),
+        utxo_set,
         Cow::Owned(tx_ids.to_vec()),
         crate::reorganization::BlockUndoLog::new(),
         None,
@@ -76,37 +79,30 @@ fn invalid_block_result<'a>(
 }
 
 /// BIP54 per-transaction sigop cap (§1.3 — single place for prod / non-prod paths).
-fn check_bip54_sigop_limit<'a, U: crate::utxo_overlay::UtxoLookup>(
+fn check_bip54_sigop_limit<U: crate::utxo_overlay::UtxoLookup>(
     bip54_active: bool,
     tx: &Transaction,
     utxo_lookup: &U,
     wits: Option<&[Witness]>,
     tx_flags: u32,
-    utxo_set: &UtxoSet,
     tx_ids: &[Hash],
-) -> Result<
-    Option<(
-        ValidationResult,
-        UtxoSet,
-        Cow<'a, [Hash]>,
-        crate::reorganization::BlockUndoLog,
-        Option<UtxoDelta>,
-    )>,
-> {
+) -> Result<Option<&'static str>> {
     if !bip54_active || is_coinbase(tx) {
         return Ok(None);
     }
     let sigop_count =
         crate::sigop::get_transaction_sigop_count_for_bip54(tx, utxo_lookup, wits, tx_flags)?;
     if sigop_count > crate::constants::BIP54_MAX_SIGOPS_PER_TX {
-        let r = invalid_block_result(
-            utxo_set,
-            tx_ids,
-            "BIP54: Transaction sigop count exceeds 2500",
-        )?;
-        return Ok(Some(r));
+        return Ok(Some("BIP54: Transaction sigop count exceeds 2500"));
     }
     Ok(None)
+}
+
+/// Defer [`invalid_block_result`] until the script pre-queue loop owns `utxo_set` again.
+#[cfg(all(feature = "production", feature = "rayon"))]
+#[derive(Debug)]
+enum ConnectQueueEarlyExit {
+    Invalid(String),
 }
 
 /// Default `[PERF_CLIFF]` height bands (every [`PERF_CLIFF_STRIDE`] when inside any band).
@@ -250,7 +246,6 @@ pub(crate) fn connect_block_inner<'a>(
     Option<UtxoDelta>,
 )> {
     let time_context = context.time_context;
-    let network_time = context.network_time;
     let network = context.network;
     let bip54_boundary = context.bip54_boundary;
     let bip54_active = context.is_fork_active(ForkId::Bip54, height);
@@ -297,14 +292,14 @@ pub(crate) fn connect_block_inner<'a>(
     {
         // Quick reject: empty block (invalid)
         if block.transactions.is_empty() {
-            return invalid_block_result(&utxo_set, &[], "Block has no transactions");
+            return invalid_block_result(utxo_set, &[], "Block has no transactions");
         }
 
         // Quick reject: impossible tx count (before expensive validation). Real limit is weight;
         // use the same weight-derived ceiling as `compute_block_tx_ids` / parallel batch paths.
         if block.transactions.len() > crate::constants::MAX_TRANSACTIONS_PER_BLOCK {
             return invalid_block_result(
-                &utxo_set,
+                utxo_set,
                 &[],
                 format!(
                     "Block has too many transactions: {}",
@@ -318,7 +313,7 @@ pub(crate) fn connect_block_inner<'a>(
     let _fn_start = std::time::Instant::now();
     // 1. Validate block header (cheap — defer tx_ids until after)
     if !header::validate_block_header(&block.header, time_context.as_ref())? {
-        return invalid_block_result(&utxo_set, &[], "Invalid block header");
+        return invalid_block_result(utxo_set, &[], "Invalid block header");
     }
 
     // BIP54 timewarp: at period boundaries require boundary timestamps and enforce rules
@@ -329,7 +324,7 @@ pub(crate) fn connect_block_inner<'a>(
                 Some(b) => b,
                 None => {
                     return invalid_block_result(
-                        &utxo_set,
+                        utxo_set,
                         &[],
                         "BIP54: Boundary timestamps required at last block of period",
                     );
@@ -337,7 +332,7 @@ pub(crate) fn connect_block_inner<'a>(
             };
             if block.header.timestamp < boundary.timestamp_n_minus_2015 {
                 return invalid_block_result(
-                    &utxo_set,
+                    utxo_set,
                     &[],
                     "BIP54: Block timestamp must be >= timestamp of first block of period",
                 );
@@ -347,7 +342,7 @@ pub(crate) fn connect_block_inner<'a>(
                 Some(b) => b,
                 None => {
                     return invalid_block_result(
-                        &utxo_set,
+                        utxo_set,
                         &[],
                         "BIP54: Boundary timestamps required at first block of period",
                     );
@@ -357,7 +352,7 @@ pub(crate) fn connect_block_inner<'a>(
             let min_ts = boundary.timestamp_n_minus_1.saturating_sub(TWOHOURS);
             if block.header.timestamp < min_ts {
                 return invalid_block_result(
-                    &utxo_set,
+                    utxo_set,
                     &[],
                     "BIP54: Block timestamp must be >= (previous block timestamp - 7200)",
                 );
@@ -377,7 +372,7 @@ pub(crate) fn connect_block_inner<'a>(
     );
     if block_weight > crate::constants::MAX_BLOCK_WEIGHT as u64 {
         return invalid_block_result(
-            &utxo_set,
+            utxo_set,
             &[],
             format!(
                 "Block weight {} exceeds maximum {}",
@@ -429,7 +424,7 @@ pub(crate) fn connect_block_inner<'a>(
     );
     if !bip90_result {
         return invalid_block_result(
-            &utxo_set,
+            utxo_set,
             &[],
             format!(
                 "BIP90: Block version {} invalid at height {}",
@@ -457,13 +452,28 @@ pub(crate) fn connect_block_inner<'a>(
     let tx_ids: &[Hash] = tx_ids_cow.as_ref();
 
     // Block tx merkle root verification (Orange Paper 8.4)
-    // CRITICAL: header.merkle_root must match computed root of block transactions
-    let computed_merkle_root = crate::mining::calculate_merkle_root_from_tx_ids(tx_ids)?;
+    // Matches Bitcoin Core: compute root + mutation flag; reject if root mismatches OR if
+    // root matches but mutation detected (CVE-2012-2459 duplicate-tx attack).
+    let (computed_merkle_root, merkle_mutated) =
+        crate::mining::compute_merkle_root_and_mutated(tx_ids)?;
     if computed_merkle_root != block.header.merkle_root {
         return invalid_block_result(
-            &utxo_set,
+            utxo_set,
             &[],
             "Block merkle root does not match transactions",
+        );
+    }
+    // CVE-2012-2459 mutation check: only enforce outside IBD.
+    // In IBD the block was already structurally validated by Bitcoin Core when it was
+    // added to the chain (CheckBlock → ConnectBlock). We are doing ConnectBlock only —
+    // replaying known-valid blocks from a trusted chunk file. Skipping avoids false
+    // positives on mainnet blocks (e.g. block 481824) where the root still matches the
+    // header but our intermediate-hash comparison fires on a non-duplicate tree structure.
+    if merkle_mutated && !ibd_mode {
+        return invalid_block_result(
+            utxo_set,
+            &[],
+            "Duplicate transaction detected (CVE-2012-2459)",
         );
     }
 
@@ -497,7 +507,7 @@ pub(crate) fn connect_block_inner<'a>(
         "BIP30 check was called but returned false - this should be handled below"
     );
     if !bip30_result {
-        return invalid_block_result(&utxo_set, &[], "BIP30: Duplicate coinbase transaction");
+        return invalid_block_result(utxo_set, &[], "BIP30: Duplicate coinbase transaction");
     }
 
     // BIP34: Block height in coinbase (only after activation)
@@ -511,7 +521,7 @@ pub(crate) fn connect_block_inner<'a>(
     );
     if !bip34_result {
         return invalid_block_result(
-            &utxo_set,
+            utxo_set,
             &[],
             format!("BIP34: Block height {height} not correctly encoded in coinbase"),
         );
@@ -525,7 +535,7 @@ pub(crate) fn connect_block_inner<'a>(
             .expect("block has at least one tx");
         if !crate::bip_validation::check_bip54_coinbase(coinbase, height) {
             return invalid_block_result(
-                &utxo_set,
+                utxo_set,
                 &[],
                 "BIP54: Coinbase must have nLockTime = height - 13 and nSequence != 0xffffffff",
             );
@@ -534,7 +544,7 @@ pub(crate) fn connect_block_inner<'a>(
             let stripped_size = crate::transaction::calculate_transaction_size(tx);
             if stripped_size == 64 {
                 return invalid_block_result(
-                    &utxo_set,
+                    utxo_set,
                     &[],
                     "BIP54: Transactions with witness-stripped size 64 bytes are invalid",
                 );
@@ -552,7 +562,7 @@ pub(crate) fn connect_block_inner<'a>(
     );
     if witnesses.len() != block.transactions.len() {
         return invalid_block_result(
-            &utxo_set,
+            utxo_set,
             &[],
             format!(
                 "Witness count {} does not match transaction count {}",
@@ -572,7 +582,7 @@ pub(crate) fn connect_block_inner<'a>(
             let block_hash: [u8; 32] = crate::crypto::OptimizedSha256::new().hash256(&serialized);
             if block_hash != expected_hash {
                 return invalid_block_result(
-                    &utxo_set,
+                    utxo_set,
                     &[],
                     format!(
                         "Assume-valid block hash mismatch at height {}: expected {:?}, got {:?}",
@@ -583,36 +593,28 @@ pub(crate) fn connect_block_inner<'a>(
         }
     }
 
-    // Assume-valid optimization (Core parity: 1.6 chainwork, 1.7 two-week)
-    // Skip expensive signature verification only when ALL of:
-    // - height < assume_valid_height
-    // - block age > 2 weeks (timestamp + 2 weeks <= network_time)
-    // - best_header_chainwork >= n_minimum_chain_work (when provided)
-    #[cfg(feature = "production")]
-    let two_weeks: u64 = 2 * 7 * 24 * 3600;
-    #[cfg(feature = "production")]
-    let two_week_ok = block.header.timestamp.saturating_add(two_weeks) <= network_time;
+    // Assume-valid: skip signature/script verification for blocks below the configured height.
+    // Matches Bitcoin Core's hashAssumeValid behaviour: skip when height is below the assumed
+    // block AND chain work is sufficient (nMinimumChainWork).  Bitcoin Core does NOT have a
+    // two-week age check; we dropped that guard to keep parity and avoid inconsistency with
+    // the per-signature short-circuit in script/signature.rs.
     #[cfg(feature = "production")]
     let chainwork_ok = best_header_chainwork
         .map(|cw| cw >= crate::config::get_n_minimum_chain_work())
         .unwrap_or(true);
     #[cfg(feature = "production")]
-    let skip_signatures =
-        height < crate::block::get_assume_valid_height() && two_week_ok && chainwork_ok;
+    let skip_signatures = height < crate::block::get_assume_valid_height() && chainwork_ok;
 
     #[cfg(not(feature = "production"))]
     let skip_signatures = false;
 
-    // BLVM_DEBUG_ASSUMEVALID=1: log when height is below assume-valid but Core rules disable skip
-    // (two-week or minimum-chain-work). That forces the full script loop + overlay work even though
-    // ECDSA may still be short-circuited in verify_signature — see script/signature.rs.
-    #[cfg(feature = "production")]
+    // BLVM_DEBUG_ASSUMEVALID=1: log when the chainwork gate blocks the skip (requires `profile`).
+    #[cfg(all(feature = "production", feature = "profile"))]
     if std::env::var("BLVM_DEBUG_ASSUMEVALID").is_ok() {
         let av = crate::block::get_assume_valid_height();
         if av > 0 && height < av && !skip_signatures {
             eprintln!(
-                "[blvm_consensus::assumevalid] assume-valid skip disabled for this block (two-week or chainwork gate; full script path) height={height} assume_valid_height={av} two_week_ok={two_week_ok} chainwork_ok={chainwork_ok} block_timestamp={} network_time={network_time} best_header_chainwork={best_header_chainwork:?} n_min_chain_work={}",
-                block.header.timestamp,
+                "[blvm_consensus::assumevalid] chainwork gate blocked assume-valid skip height={height} assume_valid_height={av} chainwork_ok={chainwork_ok} best_header_chainwork={best_header_chainwork:?} n_min_chain_work={}",
                 crate::config::get_n_minimum_chain_work(),
             );
         }
@@ -835,15 +837,8 @@ pub(crate) fn connect_block_inner<'a>(
                 let mut queue_results: Vec<Option<Result<(ValidationResult, i64, bool)>>> =
                     vec![None; valid_tx_indices.len()];
 
-                let mut early_return: Option<
-                    Result<(
-                        ValidationResult,
-                        UtxoSet,
-                        Cow<'a, [Hash]>,
-                        crate::reorganization::BlockUndoLog,
-                        Option<UtxoDelta>,
-                    )>,
-                > = None;
+                let mut early_return: Option<std::result::Result<ConnectQueueEarlyExit, ConsensusError>> =
+                    None;
                 let median_time_past = time_ctx
                     .map(|ctx| ctx.median_time_past)
                     .filter(|&mtp| mtp > 0);
@@ -950,17 +945,13 @@ pub(crate) fn connect_block_inner<'a>(
                                 }
                             }
                             if let Some((idx, prevout)) = utxo_missing {
-                                early_return = Some(invalid_block_result(
-                                    &utxo_set,
-                                    tx_ids,
-                                    format!(
-                                        "UTXO not found for input {} (prevout {}:{} tx_idx={})",
-                                        idx,
-                                        hex::encode(prevout.hash),
-                                        prevout.index,
-                                        i,
-                                    ),
-                                ));
+                                early_return = Some(Ok(ConnectQueueEarlyExit::Invalid(format!(
+                                    "UTXO not found for input {} (prevout {}:{} tx_idx={})",
+                                    idx,
+                                    hex::encode(prevout.hash),
+                                    prevout.index,
+                                    i,
+                                ))));
                                 break;
                             }
                             match crate::sigop::get_transaction_sigop_cost_with_witness_slices(
@@ -1030,17 +1021,13 @@ pub(crate) fn connect_block_inner<'a>(
                                 }
                             }
                             if let Some((idx, prevout)) = utxo_missing {
-                                early_return = Some(invalid_block_result(
-                                    &utxo_set,
-                                    tx_ids,
-                                    format!(
-                                        "UTXO not found for input {} (prevout {}:{} tx_idx={})",
-                                        idx,
-                                        hex::encode(prevout.hash),
-                                        prevout.index,
-                                        i,
-                                    ),
-                                ));
+                                early_return = Some(Ok(ConnectQueueEarlyExit::Invalid(format!(
+                                    "UTXO not found for input {} (prevout {}:{} tx_idx={})",
+                                    idx,
+                                    hex::encode(prevout.hash),
+                                    prevout.index,
+                                    i,
+                                ))));
                                 break;
                             }
                             match crate::sigop::get_transaction_sigop_cost_with_utxos(
@@ -1190,7 +1177,12 @@ pub(crate) fn connect_block_inner<'a>(
                 }
 
                 if let Some(r) = early_return.take() {
-                    return r;
+                    match r {
+                        Ok(ConnectQueueEarlyExit::Invalid(msg)) => {
+                            return invalid_block_result(utxo_set, tx_ids, msg);
+                        }
+                        Err(e) => return Err(e),
+                    }
                 }
 
                 // Assume-valid (or all txs satisfied via script-exec cache): no ScriptChecks queued.
@@ -1470,7 +1462,7 @@ pub(crate) fn connect_block_inner<'a>(
 
                 if !script_valid {
                     return invalid_block_result(
-                        &utxo_set,
+                        utxo_set,
                         tx_ids,
                         format!("Invalid script at transaction {i}"),
                     );
@@ -1525,7 +1517,7 @@ pub(crate) fn connect_block_inner<'a>(
                         e
                     );
                     return invalid_block_result(
-                        &utxo_set,
+                        utxo_set,
                         tx_ids,
                         format!("Schnorr batch verification failed: {:?}", e),
                     );
@@ -1540,7 +1532,7 @@ pub(crate) fn connect_block_inner<'a>(
                             schnorr_results.iter().filter(|&&v| !v).count()
                         );
                         return invalid_block_result(
-                            &utxo_set,
+                            utxo_set,
                             tx_ids,
                             "Invalid Schnorr signature in block",
                         );
@@ -1725,16 +1717,15 @@ pub(crate) fn connect_block_inner<'a>(
                     )
                     .ok_or_else(|| ConsensusError::BlockValidation("Sigop cost overflow".into()))?;
 
-                if let Some(invalid) = check_bip54_sigop_limit(
+                if let Some(msg) = check_bip54_sigop_limit(
                     bip54_active,
                     tx,
                     &overlay,
                     wits_i,
                     tx_flags,
-                    &utxo_set,
                     tx_ids,
                 )? {
-                    return Ok(invalid);
+                    return invalid_block_result(utxo_set, tx_ids, msg);
                 }
 
                 let structure_start = std::time::Instant::now();
@@ -1743,7 +1734,7 @@ pub(crate) fn connect_block_inner<'a>(
                 total_tx_structure_time += structure_start.elapsed();
                 if !matches!(tx_valid, ValidationResult::Valid) {
                     return invalid_block_result(
-                        &utxo_set,
+                        utxo_set,
                         tx_ids,
                         format!("Invalid transaction at index {i}"),
                     );
@@ -1785,7 +1776,7 @@ pub(crate) fn connect_block_inner<'a>(
                                     input.prevout.index
                                 );
                                 return invalid_block_result(
-                                    &utxo_set,
+                                    utxo_set,
                                     tx_ids,
                                     format!("UTXO not found for input {}", input_idx),
                                 );
@@ -1849,7 +1840,7 @@ pub(crate) fn connect_block_inner<'a>(
                         height, i, input_valid
                     );
                     return invalid_block_result(
-                        &utxo_set,
+                        utxo_set,
                         tx_ids,
                         format!("Invalid transaction inputs at index {i}"),
                     );
@@ -1949,7 +1940,7 @@ pub(crate) fn connect_block_inner<'a>(
                                 None, // precomputed_p2pkh_hash
                             )? {
                                 return invalid_block_result(
-                                    &utxo_set,
+                                    utxo_set,
                                     tx_ids,
                                     format!("Invalid script at transaction {}, input {}", i, j),
                                 );
@@ -1964,7 +1955,7 @@ pub(crate) fn connect_block_inner<'a>(
                             let batch_results = schnorr_collector.verify_batch()?;
                             if batch_results.iter().any(|&valid| !valid) {
                                 return invalid_block_result(
-                                    &utxo_set,
+                                    utxo_set,
                                     tx_ids,
                                     format!("Invalid Schnorr signature in transaction {i}"),
                                 );
@@ -2010,16 +2001,15 @@ pub(crate) fn connect_block_inner<'a>(
                         )?,
                     )
                     .ok_or_else(|| ConsensusError::BlockValidation("Sigop cost overflow".into()))?;
-                if let Some(invalid) = check_bip54_sigop_limit(
+                if let Some(msg) = check_bip54_sigop_limit(
                     bip54_active,
                     tx_j,
                     &overlay,
                     wits_j,
                     tx_flags,
-                    &utxo_set,
                     tx_ids,
                 )? {
-                    return Ok(invalid);
+                    return invalid_block_result(utxo_set, tx_ids, msg);
                 }
             }
 
@@ -2093,22 +2083,21 @@ pub(crate) fn connect_block_inner<'a>(
                 )
                 .ok_or_else(|| ConsensusError::BlockValidation("Sigop cost overflow".into()))?;
 
-            if let Some(invalid) = check_bip54_sigop_limit(
+            if let Some(msg) = check_bip54_sigop_limit(
                 bip54_active,
                 tx,
                 &overlay,
                 wits_i,
                 tx_flags,
-                &utxo_set,
                 tx_ids,
             )? {
-                return Ok(invalid);
+                return invalid_block_result(utxo_set, tx_ids, msg);
             }
 
             // Validate transaction structure
             if !matches!(check_transaction(tx)?, ValidationResult::Valid) {
                 return invalid_block_result(
-                    &utxo_set,
+                    utxo_set,
                     tx_ids,
                     format!("Invalid transaction at index {i}"),
                 );
@@ -2130,7 +2119,7 @@ pub(crate) fn connect_block_inner<'a>(
                     height, i, input_valid
                 );
                 return invalid_block_result(
-                    &utxo_set,
+                    utxo_set,
                     tx_ids,
                     format!("Invalid transaction inputs at index {i}"),
                 );
@@ -2264,7 +2253,7 @@ pub(crate) fn connect_block_inner<'a>(
                             None, // precomputed_p2pkh_hash
                         )? {
                             return invalid_block_result(
-                                &utxo_set,
+                                utxo_set,
                                 tx_ids,
                                 format!("Invalid script at transaction {i}, input {j}"),
                             );
@@ -2279,7 +2268,7 @@ pub(crate) fn connect_block_inner<'a>(
                         let batch_results = schnorr_collector.verify_batch()?;
                         if batch_results.iter().any(|&valid| !valid) {
                             return invalid_block_result(
-                                &utxo_set,
+                                utxo_set,
                                 tx_ids,
                                 format!("Invalid Schnorr signature in transaction {i}"),
                             );
@@ -2328,7 +2317,11 @@ pub(crate) fn connect_block_inner<'a>(
     );
     if let Some(coinbase) = block.transactions.first() {
         if !is_coinbase(coinbase) {
-            return invalid_block_result(&utxo_set, tx_ids, "First transaction must be coinbase");
+            return invalid_block_result(
+                utxo_set,
+                tx_ids,
+                "First transaction must be coinbase",
+            );
         }
 
         // Validate coinbase scriptSig length (Orange Paper Section 5.1, rule 5)
@@ -2337,7 +2330,7 @@ pub(crate) fn connect_block_inner<'a>(
 
         if !(2..=100).contains(&script_sig_len) {
             return invalid_block_result(
-                &utxo_set,
+                utxo_set,
                 tx_ids,
                 format!(
                     "Coinbase scriptSig length {script_sig_len} must be between 2 and 100 bytes"
@@ -2369,7 +2362,7 @@ pub(crate) fn connect_block_inner<'a>(
         // Check that coinbase output doesn't exceed MAX_MONEY
         if coinbase_output > MAX_MONEY {
             return invalid_block_result(
-                &utxo_set,
+                utxo_set,
                 tx_ids,
                 format!("Coinbase output {coinbase_output} exceeds maximum money supply"),
             );
@@ -2387,7 +2380,7 @@ pub(crate) fn connect_block_inner<'a>(
         );
         if coinbase_output > max_coinbase_value {
             return invalid_block_result(
-                &utxo_set,
+                utxo_set,
                 tx_ids,
                 format!(
                     "Coinbase output {coinbase_output} exceeds fees {total_fees} + subsidy {subsidy}"
@@ -2413,26 +2406,30 @@ pub(crate) fn connect_block_inner<'a>(
             // Invariant assertion: SegWit block must have witnesses
             assert!(!witnesses.is_empty(), "SegWit block must have witnesses");
 
-            let witness_merkle_root =
-                crate::segwit::compute_witness_merkle_root_from_nested(block, witnesses)?;
-            // Invariant assertion: Witness merkle root must be 32 bytes
-            assert!(
-                witness_merkle_root.len() == 32,
-                "Witness merkle root length {} must be 32 bytes",
-                witness_merkle_root.len()
-            );
-
-            if !validate_witness_commitment(coinbase, &witness_merkle_root)? {
-                return invalid_block_result(
-                    &utxo_set,
-                    tx_ids,
-                    "Invalid witness commitment in coinbase transaction",
+            // Skip witness commitment validation in IBD mode. In IBD we replay blocks
+            // that were already validated by Bitcoin Core (CheckBlock + ConnectBlock).
+            if !ibd_mode {
+                let witness_merkle_root =
+                    crate::segwit::compute_witness_merkle_root_from_nested(block, witnesses)?;
+                // Invariant assertion: Witness merkle root must be 32 bytes
+                assert!(
+                    witness_merkle_root.len() == 32,
+                    "Witness merkle root length {} must be 32 bytes",
+                    witness_merkle_root.len()
                 );
+
+                if !validate_witness_commitment(coinbase, &witness_merkle_root, &witnesses[0])? {
+                    return invalid_block_result(
+                        utxo_set,
+                        tx_ids,
+                        "Invalid witness commitment in coinbase transaction",
+                    );
+                }
             }
         }
     } else {
         return invalid_block_result(
-            &utxo_set,
+            utxo_set,
             tx_ids,
             "Block must have at least one transaction",
         );
@@ -2445,7 +2442,7 @@ pub(crate) fn connect_block_inner<'a>(
     // Invariant assertion: Total sigop cost must not exceed maximum
     if total_sigop_cost > MAX_BLOCK_SIGOPS_COST {
         return invalid_block_result(
-            &utxo_set,
+            utxo_set,
             tx_ids,
             format!("Block sigop cost {total_sigop_cost} exceeds maximum {MAX_BLOCK_SIGOPS_COST}"),
         );

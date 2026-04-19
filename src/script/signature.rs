@@ -26,10 +26,6 @@ where
     SECP256K1_CONTEXT.with(f)
 }
 
-pub(crate) fn get_assumevalid_height() -> u64 {
-    crate::config::get_assume_valid_height()
-}
-
 /// Verify ECDSA signature using secp256k1.
 /// BIP66: strict DER. BIP62: LOW_S, STRICTENC.
 #[allow(clippy::too_many_arguments)]
@@ -43,18 +39,6 @@ pub(crate) fn verify_signature<C: Context + Verification>(
     network: crate::types::Network,
     sigversion: SigVersion,
 ) -> Result<bool> {
-    // ECDSA short-circuit when height < assume_valid_height (no two-week / chainwork check here).
-    // connect_block_inner uses `skip_signatures` with two_week_ok && chainwork_ok; when that is
-    // false but height < av, the interpreter still runs and this path may skip ECDSA anyway.
-    // Keep in sync with consensus review if Core parity for assume-valid is tightened.
-    let assumevalid_height = get_assumevalid_height();
-    if assumevalid_height > 0 && height < assumevalid_height {
-        if signature_bytes.is_empty() {
-            return Ok(false);
-        }
-        return Ok(true);
-    }
-
     if signature_bytes.is_empty() {
         return Ok(false);
     }

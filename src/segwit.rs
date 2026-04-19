@@ -1,4 +1,11 @@
 //! Segregated Witness (SegWit) functions from Orange Paper Section 11.1
+//!
+//! **Debug logging (optional):** enable crate feature **`profile`**, then set:
+//! - **`BLVM_WITNESS_DEBUG`** — after computing the witness merkle root from wtxids, print tx count and hex root.
+//! - **`BLVM_WITNESS_COMMIT_DEBUG`** — when a witness commitment output exists but does not match BIP141
+//!   `sha256d(witness_root ‖ reserved_nonce)`, print expected vs found commitment.
+//!
+//! These hooks are omitted from non-`profile` builds so default releases never consult these env vars.
 
 use crate::error::Result;
 use crate::opcodes::*;
@@ -81,6 +88,14 @@ pub fn compute_witness_merkle_root(block: &Block, witnesses: &[Witness]) -> Resu
     compute_merkle_root(&witness_hashes)
 }
 
+/// Double-SHA256 a byte slice, returning a 32-byte hash array.
+fn sha256d_bytes(data: &[u8]) -> Hash {
+    let result = sha256d::Hash::hash(data);
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&result[..]);
+    hash
+}
+
 /// Hash witness data
 /// Orange Paper 11.1: Hash(tx.witness) for witness merkle commitment
 #[spec_locked("11.1")]
@@ -115,7 +130,17 @@ fn hash_witness_from_nested(tx_witnesses: &[Witness]) -> Hash {
 /// Compute witness merkle root from nested witnesses without flattening.
 /// Accepts `&[Vec<Witness>]` where each `Vec<Witness>` is one tx's input stacks.
 /// Avoids allocating flattened structure in block validation hot path.
-/// Orange Paper 11.1.4: WitnessRoot = ComputeMerkleRoot({Hash(tx.witness) : tx ∈ block.transactions})
+/// Orange Paper 11.1.4: WitnessRoot = ComputeMerkleRoot({wtxid : tx ∈ block.transactions})
+///
+/// BIP141 wtxid computation:
+///   - coinbase: all zeros (hardcoded, consensus rule)
+///   - non-SegWit tx (no witness data): wtxid = txid = sha256d(legacy serialization)
+///   - SegWit tx (has witness data): wtxid = sha256d(segwit-serialized tx incl. witnesses)
+///
+/// Previously this used `hash_witness_from_nested` which returns sha256d("") for ALL
+/// non-SegWit transactions, causing every non-SegWit tx to map to the same hash.
+/// In a block with many non-SegWit txs (e.g. block 481824), adjacent pairs of these
+/// identical hashes trigger the CVE-2012-2459 mutation check and abort falsely.
 #[spec_locked("11.1.4")]
 pub fn compute_witness_merkle_root_from_nested(
     block: &Block,
@@ -127,14 +152,37 @@ pub fn compute_witness_merkle_root_from_nested(
         ));
     }
     let mut witness_hashes = Vec::with_capacity(block.transactions.len());
-    for (i, tx_witnesses) in witnesses.iter().enumerate() {
+    for (i, (tx, tx_witnesses)) in block.transactions.iter().zip(witnesses.iter()).enumerate() {
         if i == 0 {
+            // Coinbase wtxid is always all-zeros by consensus (BIP141)
             witness_hashes.push([0u8; 32]);
         } else {
-            witness_hashes.push(hash_witness_from_nested(tx_witnesses));
+            // Has any non-empty witness stack element across all inputs?
+            let has_witness = tx_witnesses.iter().any(|w| !w.is_empty());
+            let hash = if has_witness {
+                // SegWit tx: wtxid = sha256d(version || 0x00 0x01 || inputs || outputs || witnesses || locktime)
+                let serialized = crate::serialization::transaction::serialize_transaction_with_witness(tx, tx_witnesses);
+                sha256d_bytes(&serialized)
+            } else {
+                // Non-SegWit tx: wtxid = txid = sha256d(version || inputs || outputs || locktime)
+                let serialized = crate::serialization::transaction::serialize_transaction(tx);
+                sha256d_bytes(&serialized)
+            };
+            witness_hashes.push(hash);
         }
     }
-    compute_merkle_root(&witness_hashes)
+    let root = compute_merkle_root(&witness_hashes);
+    #[cfg(feature = "profile")]
+    if std::env::var("BLVM_WITNESS_DEBUG").is_ok() {
+        if let Ok(r) = &root {
+            eprintln!(
+                "BLVM_WITNESS_DEBUG: {} txs, root={}",
+                witness_hashes.len(),
+                hex::encode(r)
+            );
+        }
+    }
+    root
 }
 
 /// Compute merkle root from hashes (Orange Paper 8.4.1).
@@ -143,37 +191,86 @@ fn compute_merkle_root(hashes: &[Hash]) -> Result<Hash> {
     crate::mining::calculate_merkle_root_from_tx_ids(hashes)
 }
 
-/// Validate witness commitment in coinbase transaction
+/// Validate witness commitment in coinbase transaction.
+///
+/// Per BIP141, the commitment recorded in the coinbase OP_RETURN is:
+///   commitment = sha256d(witness_merkle_root || coinbase_reserved_nonce)
+/// where `coinbase_reserved_nonce` is the 32-byte nonce stored in
+/// the coinbase input's witness stack (witnesses\[0\]\[0\]).
+/// If the coinbase has no witness, the reserved value is 32 zero bytes.
+///
+/// The OP_RETURN output format is:
+///   OP_RETURN 0x24 0xaa21a9ed <commitment_hash:32>
 #[spec_locked("11.1.5")]
 pub fn validate_witness_commitment(
     coinbase_tx: &Transaction,
     witness_merkle_root: &Hash,
+    coinbase_witnesses: &[Witness],
 ) -> Result<bool> {
-    // Look for witness commitment in coinbase script
+    // Extract the reserved nonce from coinbase input 0's witness stack.
+    // Per BIP141, it MUST be exactly 32 bytes; if absent default to 32 zero bytes.
+    let reserved_nonce: [u8; 32] = coinbase_witnesses
+        .first()
+        .and_then(|w| w.first())
+        .and_then(|item| item.as_slice().try_into().ok())
+        .unwrap_or([0u8; 32]);
+
+    // Compute the expected commitment: sha256d(witness_root || reserved_nonce)
+    let mut preimage = [0u8; 64];
+    preimage[..32].copy_from_slice(witness_merkle_root);
+    preimage[32..].copy_from_slice(&reserved_nonce);
+    let expected_commitment = sha256d_bytes(&preimage);
+
+    // Look for a witness commitment OP_RETURN in coinbase outputs.
+    // BIP141: if multiple outputs match the 0xaa21a9ed prefix, use the LAST one.
+    // Bitcoin Core iterates all outputs and keeps updating the commitment index,
+    // so only the highest-index matching output is used for validation.
+    let mut last_commitment: Option<Hash> = None;
     for output in &coinbase_tx.outputs {
         if let Some(commitment) = extract_witness_commitment(&output.script_pubkey) {
-            return Ok(commitment == *witness_merkle_root);
+            last_commitment = Some(commitment);
         }
     }
 
-    // No witness commitment found - this is valid for non-SegWit blocks
-    Ok(true)
+    match last_commitment {
+        Some(commitment) => {
+            let ok = commitment == expected_commitment;
+            #[cfg(feature = "profile")]
+            if !ok && std::env::var("BLVM_WITNESS_COMMIT_DEBUG").is_ok() {
+                eprintln!(
+                    "BLVM_WITNESS_COMMIT_DEBUG: root={} nonce={} expected={} got={}",
+                    hex::encode(witness_merkle_root),
+                    hex::encode(reserved_nonce),
+                    hex::encode(expected_commitment),
+                    hex::encode(commitment),
+                );
+            }
+            Ok(ok)
+        }
+        // No witness commitment found — valid for pre-SegWit blocks.
+        None => Ok(true),
+    }
 }
 
-/// Extract witness commitment from script
-/// Orange Paper 11.1.5: Witness commitment in coinbase OP_RETURN output
+/// Extract the 32-byte commitment hash from a coinbase OP_RETURN witness commitment output.
+/// Orange Paper 11.1.5: Witness commitment in coinbase OP_RETURN output.
+///
+/// Expected format: OP_RETURN 0x24 [0xaa 0x21 0xa9 0xed] [commitment: 32 bytes]
+///   script[0] = 0x6a (OP_RETURN)
+///   script[1] = 0x24 (push 36 bytes)
+///   script[2..6] = 0xaa21a9ed (BIP141 magic prefix)
+///   script[6..38] = commitment hash (32 bytes)
 #[spec_locked("11.1.5")]
 pub(crate) fn extract_witness_commitment(script: &ByteString) -> Option<Hash> {
-    // Look for OP_RETURN followed by witness commitment
-    if script.len() >= 38 && script[0] == OP_RETURN {
-        // OP_RETURN
-        if script.len() >= 38 && script[1] == 0x24 {
-            // 0x24 = push 36 bytes (witness commitment)
-            // 36 bytes
-            let mut commitment = [0u8; 32];
-            commitment.copy_from_slice(&script[2..34]);
-            return Some(commitment);
-        }
+    const MAGIC: [u8; 4] = [0xaa, 0x21, 0xa9, 0xed];
+    if script.len() >= 38
+        && script[0] == OP_RETURN
+        && script[1] == 0x24
+        && script[2..6] == MAGIC
+    {
+        let mut commitment = [0u8; 32];
+        commitment.copy_from_slice(&script[6..38]);
+        return Some(commitment);
     }
     None
 }
@@ -264,9 +361,10 @@ pub fn validate_segwit_block(
     }
 
     // Validate witness commitment
-    if !block.transactions.is_empty() {
+    if !block.transactions.is_empty() && !witnesses.is_empty() {
         let witness_root = compute_witness_merkle_root(block, witnesses)?;
-        if !validate_witness_commitment(&block.transactions[0], &witness_root)? {
+        // witnesses[0] is the coinbase input's witness stack (contains the reserved nonce)
+        if !validate_witness_commitment(&block.transactions[0], &witness_root, std::slice::from_ref(&witnesses[0]))? {
             return Ok(false);
         }
     }
@@ -324,11 +422,14 @@ mod tests {
     fn test_validate_witness_commitment() {
         let mut coinbase_tx = create_test_transaction();
         let witness_root = [1u8; 32];
+        let nonce = [0u8; 32]; // default reserved nonce
 
-        // Add witness commitment to coinbase script
-        coinbase_tx.outputs[0].script_pubkey = create_witness_commitment_script(&witness_root);
+        // Add witness commitment to coinbase script (correct BIP141 format)
+        coinbase_tx.outputs[0].script_pubkey =
+            create_witness_commitment_script(&witness_root, &nonce);
 
-        let is_valid = validate_witness_commitment(&coinbase_tx, &witness_root).unwrap();
+        // Empty coinbase witnesses → nonce defaults to [0u8; 32]
+        let is_valid = validate_witness_commitment(&coinbase_tx, &witness_root, &[]).unwrap();
         assert!(is_valid);
     }
 
@@ -392,10 +493,10 @@ mod tests {
             vec![vec![OP_1]], // First tx
         ];
 
-        // Create coinbase with invalid witness commitment
-        let invalid_commitment = [2u8; 32];
+        // Create coinbase with wrong witness_root in the commitment (won't match actual merkle root)
+        let wrong_root = [2u8; 32];
         block.transactions[0].outputs[0].script_pubkey =
-            create_witness_commitment_script(&invalid_commitment);
+            create_witness_commitment_script(&wrong_root, &[0u8; 32]);
 
         let is_valid = validate_segwit_block(&block, &witnesses, 4_000_000).unwrap();
         assert!(!is_valid);
@@ -407,7 +508,8 @@ mod tests {
         let witness_root = [1u8; 32];
 
         // No witness commitment in script
-        let is_valid = validate_witness_commitment(&coinbase_tx, &witness_root).unwrap();
+        let is_valid =
+            validate_witness_commitment(&coinbase_tx, &witness_root, &[]).unwrap();
         assert!(is_valid); // Should be valid for non-SegWit blocks
     }
 
@@ -415,23 +517,31 @@ mod tests {
     fn test_validate_witness_commitment_invalid_commitment() {
         let mut coinbase_tx = create_test_transaction();
         let witness_root = [1u8; 32];
-        let invalid_commitment = [2u8; 32];
+        let invalid_root = [2u8; 32]; // different root → wrong commitment
 
-        // Add invalid witness commitment
+        // Add commitment computed from a different root
         coinbase_tx.outputs[0].script_pubkey =
-            create_witness_commitment_script(&invalid_commitment);
+            create_witness_commitment_script(&invalid_root, &[0u8; 32]);
 
-        let is_valid = validate_witness_commitment(&coinbase_tx, &witness_root).unwrap();
+        let is_valid =
+            validate_witness_commitment(&coinbase_tx, &witness_root, &[]).unwrap();
         assert!(!is_valid);
     }
 
     #[test]
     fn test_extract_witness_commitment_valid() {
-        let commitment = [1u8; 32];
-        let script = create_witness_commitment_script(&commitment);
+        let witness_root = [1u8; 32];
+        let nonce = [0u8; 32];
+        let script = create_witness_commitment_script(&witness_root, &nonce);
+
+        // extract_witness_commitment returns sha256d(root||nonce), not the raw root
+        let mut preimage = [0u8; 64];
+        preimage[..32].copy_from_slice(&witness_root);
+        preimage[32..].copy_from_slice(&nonce);
+        let expected = sha256d_bytes(&preimage);
 
         let extracted = extract_witness_commitment(&script).unwrap();
-        assert_eq!(extracted, commitment);
+        assert_eq!(extracted, expected);
     }
 
     #[test]
@@ -567,12 +677,16 @@ mod tests {
         }
     }
 
-    fn create_witness_commitment_script(commitment: &Hash) -> ByteString {
-        let mut script = vec![OP_RETURN, PUSH_36_BYTES]; // OP_RETURN, 36 bytes
-        script.extend_from_slice(commitment);
-        // Add 4 more bytes to make it 38 bytes total as expected by extract_witness_commitment
-        script.extend_from_slice(&[OP_0, OP_0, OP_0, OP_0]);
-        script
+    fn create_witness_commitment_script(witness_root: &Hash, nonce: &[u8; 32]) -> ByteString {
+        // Compute the correct BIP141 commitment: sha256d(witness_root || nonce)
+        let mut preimage = [0u8; 64];
+        preimage[..32].copy_from_slice(witness_root);
+        preimage[32..].copy_from_slice(nonce);
+        let commitment = sha256d_bytes(&preimage);
+        let mut script = vec![OP_RETURN, PUSH_36_BYTES]; // 0x6a, 0x24
+        script.extend_from_slice(&[0xaa, 0x21, 0xa9, 0xed]); // BIP141 magic prefix
+        script.extend_from_slice(&commitment);
+        script.into()
     }
 }
 
@@ -654,8 +768,8 @@ mod property_tests {
             coinbase_tx in create_transaction_strategy(),
             witness_root in create_hash_strategy()
         ) {
-            let result1 = validate_witness_commitment(&coinbase_tx, &witness_root).unwrap();
-            let result2 = validate_witness_commitment(&coinbase_tx, &witness_root).unwrap();
+            let result1 = validate_witness_commitment(&coinbase_tx, &witness_root, &[]).unwrap();
+            let result2 = validate_witness_commitment(&coinbase_tx, &witness_root, &[]).unwrap();
 
             assert_eq!(result1, result2);
         }
