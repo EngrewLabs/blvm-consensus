@@ -176,6 +176,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "sigop_validation"
+path = "fuzz_targets/sigop_validation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "sequence_locks_validation"
 path = "fuzz_targets/sequence_locks_validation.rs"
 test = false
