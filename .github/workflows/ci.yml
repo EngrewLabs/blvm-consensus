@@ -43,6 +43,26 @@ jobs:
 
       - name: Strip [patch.crates-io] for crates.io-only CI
         uses: BTCDecoded/rust-ci/strip-patch-crates-io@main
+      - name: Setup blvm-spec-lock dependency
+        run: |
+          # blvm-spec-lock dependency resolution:
+          # 1. Default: crates.io `blvm-spec-lock` (after strip-patch; semver in Cargo.toml)
+          # 2. Fallback: Clone GitHub repo and use path dependency if crate not available
+          # 3. Local dev: Use .cargo/config.toml with [patch.crates-io] (not in CI)
+          bash scripts/setup-spec-lock.sh
+      
+      - name: Regenerate Orange Paper constants
+        run: |
+          echo "🔄 Regenerating constants from Orange Paper..."
+          # Build cargo-spec-lock if not already available
+          if [ ! -f "../blvm-spec-lock/target/debug/cargo-spec-lock" ]; then
+            echo "Building cargo-spec-lock..."
+            cd ../blvm-spec-lock
+            CARGO_INCREMENTAL=0 cargo build -j 1 --bin cargo-spec-lock
+            cd ../blvm-consensus
+          fi
+          
+          # Orange Paper constants moved to blvm-primitives; no regeneration here.
       
       - name: Cache
         id: setup-cache
@@ -189,6 +209,8 @@ jobs:
 
       - name: Strip [patch.crates-io] for crates.io-only CI
         uses: BTCDecoded/rust-ci/strip-patch-crates-io@main
+      - name: Setup blvm-spec-lock dependency
+        run: bash scripts/setup-spec-lock.sh
       
       - name: Install Rust
         uses: BTCDecoded/rust-ci/install-rust-toolchain@main
@@ -259,6 +281,8 @@ jobs:
 
       - name: Strip [patch.crates-io] for crates.io-only CI
         uses: BTCDecoded/rust-ci/strip-patch-crates-io@main
+      - name: Setup blvm-spec-lock dependency
+        run: bash scripts/setup-spec-lock.sh
       
       - name: Install Rust
         uses: BTCDecoded/rust-ci/install-rust-toolchain@main
@@ -286,27 +310,12 @@ jobs:
 
       - name: Strip [patch.crates-io] for crates.io-only CI
         uses: BTCDecoded/rust-ci/strip-patch-crates-io@main
+      - name: Setup blvm-spec-lock dependency
+        run: bash scripts/setup-spec-lock.sh
       
       - name: Setup blvm-spec (PROTOCOL.md + ARCHITECTURE.md for verification)
-        run: |
-          set -euo pipefail
-          REPO_ROOT="${GITHUB_WORKSPACE}"
-          DEST="$(dirname "$REPO_ROOT")/blvm-spec"
-          REPO_URL="https://github.com/BTCDecoded/blvm-spec.git"
-          echo "Ensuring blvm-spec at: $DEST"
-          if [ -d "$DEST" ]; then
-            if [ ! -f "$DEST/THE_ORANGE_PAPER.md" ] && [ ! -f "$DEST/PROTOCOL.md" ]; then
-              echo "Removing incomplete blvm-spec at $DEST"
-              rm -rf "$DEST"
-            fi
-          fi
-          if [ -d "$DEST" ] && [ -n "$(ls -A "$DEST" 2>/dev/null || true)" ]; then
-            echo "blvm-spec already present at $DEST"
-            exit 0
-          fi
-          git clone --depth 1 "$REPO_URL" "$DEST"
-          echo "blvm-spec ready at $DEST"
-
+        run: bash scripts/setup-spec.sh
+      
       - name: Cache
         uses: BTCDecoded/rust-ci/runner-cargo-cache@main
         with:
@@ -321,23 +330,20 @@ jobs:
       - name: Install Rust
         uses: BTCDecoded/rust-ci/install-rust-toolchain@main
 
-      - name: Install spec-lock build deps (Z3 / clang)
+      - name: Build blvm-spec-lock (with Z3 for full contract verification)
+        env:
+          CARGO_INCREMENTAL: "0"
         run: |
-          if command -v apt-get >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq libz3-dev libclang-dev clang pkg-config
-          elif command -v pacman >/dev/null 2>&1; then
-            sudo pacman -Sy --noconfirm z3 llvm clang pkgconf
-          fi
-
-      - name: Install cargo-spec-lock from crates.io
-        run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
-          cargo install blvm-spec-lock --locked --features z3
-
+          cd ../blvm-spec-lock
+          # Build with Z3 so get_block_subsidy and other contracts get full verification
+          # Requires: libz3-dev libclang-dev (apt) or z3 llvm llvm-libs clang (pacman)
+          # -j 1 + CARGO_INCREMENTAL=0: mitigates missing .d dep-info flakes on self-hosted runners
+          cargo build --release -j 1 --features z3 --bin cargo-spec-lock
+          cd ../blvm-consensus
+          echo "✅ cargo-spec-lock ready"
+      
       - name: Run blvm-spec-lock verify
         run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
           echo "🔒 Running blvm-spec-lock verification..."
           SPEC_ARGS="--crate-path ."
           if [ -f "../blvm-spec/PROTOCOL.md" ] && [ -f "../blvm-spec/ARCHITECTURE.md" ]; then
@@ -347,12 +353,12 @@ jobs:
             SPEC_ARGS="$SPEC_ARGS --spec-path ../blvm-spec/THE_ORANGE_PAPER.md"
             echo "Using THE_ORANGE_PAPER.md for spec-derived contracts (fallback)"
           else
-            echo "❌ No spec found at ../blvm-spec (PROTOCOL.md, ARCHITECTURE.md, or THE_ORANGE_PAPER.md). Clone step should have fetched blvm-spec."
+            echo "❌ No spec found at ../blvm-spec (PROTOCOL.md, ARCHITECTURE.md, or THE_ORANGE_PAPER.md). setup-spec.sh should have cloned blvm-spec."
             exit 1
           fi
           # Strict mode: SPEC_LOCK_STRICT=1 works with cargo-spec-lock builds that lack `--strict` on the CLI.
           export SPEC_LOCK_STRICT=1
-          cargo-spec-lock verify $SPEC_ARGS 2>&1 | tee spec_lock_output.txt
+          ../blvm-spec-lock/target/release/cargo-spec-lock verify $SPEC_ARGS 2>&1 | tee spec_lock_output.txt
           EXIT_CODE=${PIPESTATUS[0]}
           if [ $EXIT_CODE -ne 0 ]; then
             echo "❌ blvm-spec-lock verification failed"
@@ -432,6 +438,8 @@ jobs:
 
       - name: Strip [patch.crates-io] for crates.io-only CI
         uses: BTCDecoded/rust-ci/strip-patch-crates-io@main
+      - name: Setup blvm-spec-lock dependency
+        run: bash scripts/setup-spec-lock.sh
       
       - name: Cache
         uses: BTCDecoded/rust-ci/runner-cargo-cache@main
@@ -495,6 +503,8 @@ jobs:
 
       - name: Strip [patch.crates-io] for crates.io-only CI
         uses: BTCDecoded/rust-ci/strip-patch-crates-io@main
+      - name: Setup blvm-spec-lock dependency
+        run: bash scripts/setup-spec-lock.sh
       
       - name: Install Rust
         uses: BTCDecoded/rust-ci/install-rust-toolchain@main
