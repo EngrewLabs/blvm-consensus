@@ -154,8 +154,23 @@ doc = false
 bench = false
 
 [[bin]]
+name = "bip66_validation"
+path = "fuzz_targets/bip66_validation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sighash_computation"
+path = "fuzz_targets/sighash_computation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "witness_validation"
 path = "fuzz_targets/witness_validation.rs"
 test = false
 doc = false
 bench = false
+
