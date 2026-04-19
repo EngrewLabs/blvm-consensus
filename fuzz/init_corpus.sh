@@ -152,7 +152,7 @@ add_seed "witness_validation" "taproot_cb_65.hex" "$(printf '00%.0s' {1..65})"
 # Taproot Invalid CB (34 bytes)
 add_seed "witness_validation" "taproot_cb_34.hex" "$(printf '00%.0s' {1..34})"
 # Degenerate: 32 empty elements
-add_seed "witness_validation" "degenerate_empty.hex" "$(printf '00%.0s' {1..32}"
+add_seed "witness_validation" "degenerate_empty.hex" "$(printf '00%.0s' {1..32})"
 
 # Add Bitcoin Core test vectors if available
 BITCOIN_CORE_TEST_DIR="${BITCOIN_CORE_TEST_DIR:-/home/user/src/bitcoin/test/functional/data/util}"
