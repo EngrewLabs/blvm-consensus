@@ -92,8 +92,8 @@ fuzz_target!(|data: &[u8]| {
     // -----------------------------
     // 5. Flags (controlled chaos)
     // -----------------------------
-    let flags = if data.len() > 0 {
-        data[0] as u32
+    let flags = if data.len() >= 4 {
+        u32::from_le_bytes([data[0], data[1], data[2], data[3]])
     } else {
         0
     };
