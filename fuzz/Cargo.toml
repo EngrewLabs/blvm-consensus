@@ -159,3 +159,9 @@ path = "fuzz_targets/bip66_validation.rs"
 test = false
 doc = false
 bench = false
+
+name = "sighash_computation"
+path = "fuzz_targets/sighash_computation.rs"
+test = false
+doc = false
+bench = false
