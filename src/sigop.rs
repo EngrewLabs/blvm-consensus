@@ -114,10 +114,13 @@ pub fn count_sigops_in_script(script: &ByteString, accurate: bool) -> u32 {
     count
 }
 
-/// Count sigops in a tapscript (BIP 342).
-/// CHECKSIG, CHECKSIGVERIFY, CHECKSIGADD each cost 1.
+/// Count sigops in a tapscript per BIP 342 (`CountTapscriptSigOps`).
+///
+/// Used for **per-tapscript validation weight** during script execution. This must **not** be folded
+/// into block `MAX_BLOCK_SIGOPS_COST`: Bitcoin Core `WitnessSigOps` only counts witness **v0**; v1
+/// (Taproot) contributes **0** to that total.
 #[spec_locked("11.2.8")]
-fn count_tapscript_sigops(script: &ByteString) -> u32 {
+pub fn count_tapscript_sigops(script: &ByteString) -> u32 {
     let mut count = 0u32;
     let mut i = 0;
 
@@ -367,26 +370,11 @@ pub(crate) fn count_witness_sigops<U: UtxoLookup>(
                     }
                 }
             }
-            // P2TR (Taproot): OP_1 <32-byte-hash>, script path has tapscript in witness
-            else if (flags & 0x8000) != 0
-                && script_pubkey.len() == 34
-                && script_pubkey[0] == OP_1
-                && script_pubkey[1] == 0x20
-            {
-                if let Some(witness) = witnesses.get(i) {
-                    if witness.len() >= 2 {
-                        let script_idx = if witness.len() >= 3
-                            && witness[witness.len() - 2].first() == Some(&0x50)
-                        {
-                            witness.len() - 3
-                        } else {
-                            witness.len() - 2
-                        };
-                        let tapscript = &witness[script_idx];
-                        count = count.saturating_add(count_tapscript_sigops(tapscript) as u64);
-                    }
-                }
-            }
+            // P2TR (witness v1): do **not** add tapscript sigops here.
+            // Bitcoin Core `WitnessSigOps` only handles version 0; v1 returns 0.
+            // BIP 342 enforces signature-related limits via tapscript validation weight during
+            // execution, not `MAX_BLOCK_SIGOPS_COST`. Counting tapscript ops here overstates the
+            // block total and rejects mined mainnet blocks (e.g. heavy tapscript spends).
         }
     }
 
@@ -531,26 +519,8 @@ pub fn get_transaction_sigop_cost_with_utxos(
                                     as u64);
                             }
                         }
-                    } else if (flags & 0x8000) != 0
-                        && script_pubkey.len() == 34
-                        && script_pubkey[0] == OP_1
-                        && script_pubkey[1] == 0x20
-                    {
-                        if let Some(witness) = witnesses.get(i) {
-                            if witness.len() >= 2 {
-                                let script_idx = if witness.len() >= 3
-                                    && witness[witness.len() - 2].first() == Some(&0x50)
-                                {
-                                    witness.len() - 3
-                                } else {
-                                    witness.len() - 2
-                                };
-                                let tapscript = &witness[script_idx];
-                                total_cost = total_cost
-                                    .saturating_add(count_tapscript_sigops(tapscript) as u64);
-                            }
-                        }
                     }
+                    // P2TR / witness v1: witness sigop cost is 0 for block limit (match Core WitnessSigOps).
                 }
             }
         }
@@ -842,8 +812,9 @@ mod tests {
     }
 
     /// Prefetched-UTXO sigop cost must match overlay-based counting (used on assume-valid path).
+    /// P2TR witness does not contribute to legacy block sigop cost (`WitnessSigOps` v1 = 0 in Core).
     #[test]
-    fn get_transaction_sigop_cost_with_utxos_matches_witness_slices_including_p2tr() {
+    fn get_transaction_sigop_cost_with_utxos_matches_witness_slices_p2tr_excluded_from_block_cost() {
         use crate::segwit::Witness;
 
         let prev = OutPoint {
@@ -901,7 +872,11 @@ mod tests {
                     .unwrap();
             assert_eq!(
                 with_utxos, with_slices,
-                "P2TR tapscript sigop cost must match between utxo prefetch and overlay lookup"
+                "sigop cost must match between utxo prefetch and overlay lookup"
+            );
+            assert_eq!(
+                with_slices, 0,
+                "tapscript in P2TR witness must not add to block sigop cost"
             );
         }
     }

@@ -371,17 +371,42 @@ pub fn calculate_merkle_root(transactions: &[Transaction]) -> Result<Hash> {
 
     #[cfg(not(feature = "production"))]
     {
-        merkle_tree_from_hashes(&mut hashes)
+        let (root, mutated) = merkle_tree_from_hashes(&mut hashes)?;
+        if mutated {
+            return Err(crate::error::ConsensusError::InvalidProofOfWork(
+                "Merkle root mutation detected (CVE-2012-2459)".into(),
+            ));
+        }
+        Ok(root)
     }
 }
 
-/// Build merkle tree from pre-computed leaf hashes (non-production path)
+/// Build merkle tree from pre-computed leaf hashes.
 ///
 /// Also usable directly when tx_ids are already computed, avoiding
 /// redundant serialization and hashing.
 /// Implements ComputeMerkleRoot (Orange Paper 8.4.1).
+///
+/// Returns `Err` if `tx_ids` is empty **or** if a CVE-2012-2459 mutation is detected
+/// (duplicate adjacent hashes at any merkle level). Use [`compute_merkle_root_and_mutated`]
+/// when you need the root regardless of mutation (matches Bitcoin Core `ComputeMerkleRoot`).
 #[spec_locked("8.4.1")]
 pub fn calculate_merkle_root_from_tx_ids(tx_ids: &[Hash]) -> Result<Hash> {
+    let (root, mutated) = compute_merkle_root_and_mutated(tx_ids)?;
+    if mutated {
+        return Err(crate::error::ConsensusError::InvalidProofOfWork(
+            "Merkle root mutation detected (CVE-2012-2459)".into(),
+        ));
+    }
+    Ok(root)
+}
+
+/// Compute merkle root **and** CVE-2012-2459 mutation flag without aborting on mutation.
+/// Matches Bitcoin Core's `ComputeMerkleRoot(leaves, &mutated)` — always returns a root.
+/// Callers decide policy: `CheckBlock` rejects mutated blocks; `ConnectBlock` may skip
+/// the check for already-accepted blocks.
+#[spec_locked("8.4.1")]
+pub fn compute_merkle_root_and_mutated(tx_ids: &[Hash]) -> Result<(Hash, bool)> {
     if tx_ids.is_empty() {
         return Err(crate::error::ConsensusError::InvalidProofOfWork(
             "Cannot calculate merkle root for empty transaction list".into(),
@@ -394,8 +419,9 @@ pub fn calculate_merkle_root_from_tx_ids(tx_ids: &[Hash]) -> Result<Hash> {
 /// Merkle tree building logic. Uses double SHA256 at each level (Bitcoin standard).
 /// Stack-allocates the 64-byte pair buffer to avoid heap allocation per node.
 /// Orange Paper 8.4.1: ComputeMerkleRoot pair-and-hash construction.
+/// Returns `(root, mutated)` — caller decides policy on mutation.
 #[spec_locked("8.4.1")]
-fn merkle_tree_from_hashes(hashes: &mut Vec<Hash>) -> Result<Hash> {
+fn merkle_tree_from_hashes(hashes: &mut Vec<Hash>) -> Result<(Hash, bool)> {
     let mut mutated = false;
 
     while hashes.len() > 1 {
@@ -428,13 +454,7 @@ fn merkle_tree_from_hashes(hashes: &mut Vec<Hash>) -> Result<Hash> {
         *hashes = next_level;
     }
 
-    if mutated {
-        return Err(crate::error::ConsensusError::InvalidProofOfWork(
-            "Merkle root mutation detected (CVE-2012-2459)".into(),
-        ));
-    }
-
-    Ok(hashes[0])
+    Ok((hashes[0], mutated))
 }
 
 /// Serialize transaction for hashing (used for batch hashing optimization)

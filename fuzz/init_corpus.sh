@@ -26,6 +26,9 @@ TARGETS=(
     "serialization"
     "script_opcodes"
     "differential_fuzzing"
+    "bip66_validation"
+    "sighash_computation"
+    "witness_validation"
     "sequence_locks_validation"
 )
 
@@ -48,9 +51,9 @@ add_binary_seed() {
     local target=$1
     local filename=$2
     local content=$3
-
     printf '%b' "$content" > "$CORPUS_DIR/$target/$filename"
     echo "Added binary seed: $target/$filename"
+    shift 2
 }
 
 echo ""
@@ -88,6 +91,70 @@ add_seed "pow_validation" "genesis_header.hex" "01000000000000000000000000000000
 add_seed "economic_validation" "height_0.hex" "0000000000000000"
 # Height at first halving
 add_seed "economic_validation" "height_210000.hex" "a086010000000000"
+
+# BIP66 validation seeds
+# Input format: byte[0]=selector (0=pre-activation, 1=activation boundary, 2=regtest),
+# bytes[1..]=signature candidate
+# Valid minimal DER: selector + 0x30 [total-len] 0x02 [R-len] [R] 0x02 [S-len] [S] [sighash]
+add_seed "bip66_validation" "valid_minimal_regtest.hex" "02300602010102010101"
+add_seed "bip66_validation" "valid_minimal_mainnet.hex" "01300602010102010101"
+# Pre-activation: anything passes
+add_seed "bip66_validation" "pre_activation_garbage.hex" "00ffffff"
+# Too short for DER (should reject when active)
+add_seed "bip66_validation" "too_short.hex" "023001"
+# Wrong SEQUENCE tag (should reject when active)
+add_seed "bip66_validation" "wrong_tag.hex" "02310602010102010101"
+# Empty signature (selector only)
+add_seed "bip66_validation" "empty_sig.hex" "02"
+
+# Sighash computation seeds (binary format — uses printf, not add_seed)
+# Header: [scenario, sighash_byte, input_idx, n_inputs, n_outputs,
+#          version(4), locktime(4), prevout_value(8), seq_seed, val_seed, script...]
+# Scenario 0: Legacy SIGHASH_ALL determinism + perturbation (two distinct script halves)
+add_binary_seed "sighash_computation" "legacy_all_determ.bin" \
+    '\x00\x01\x00\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\xe1\xf5\x05\x00\x00\x00\x00\xff\x32\x76\xa9\x14\x00\x00\x51\x52\x53'
+
+# Scenario 1: SIGHASH_SINGLE quirk — 2 inputs, 0 outputs (triggers quirk)
+add_binary_seed "sighash_computation" "single_quirk_empty.bin" \
+    '\x01\x03\x00\x02\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\xe1\xf5\x05\x00\x00\x00\x00\xff\x32\x76\xa9'
+
+# Scenario 1: SIGHASH_SINGLE boundary — 2 inputs, 1 output, input_index=1 (idx >= outputs.len())
+add_binary_seed "sighash_computation" "single_quirk_boundary.bin" \
+    '\x01\x03\x01\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\xe1\xf5\x05\x00\x00\x00\x00\xff\x32\x76\xa9'
+
+# Scenario 2: Legacy bounds error — input_index=0xFF with 1 input
+add_binary_seed "sighash_computation" "legacy_bounds.bin" \
+    '\x02\x01\xff\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\xe1\xf5\x05\x00\x00\x00\x00\xff\x32\x76\xa9'
+
+# Scenario 3: BIP143 SIGHASH_ALL determinism + perturbation
+add_binary_seed "sighash_computation" "bip143_all_determ.bin" \
+    '\x03\x01\x00\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\xe1\xf5\x05\x00\x00\x00\x00\xff\x32\x76\xa9\x14\x00\x00\x51\x52\x53'
+
+# Scenario 4: BIP143 NONE|ANYONECANPAY precomputed equivalence
+add_binary_seed "sighash_computation" "bip143_precomputed.bin" \
+    '\x04\x82\x00\x02\x02\x01\x00\x00\x00\x00\x00\x00\x00\x00\x88\x13\x00\x00\x00\x00\x00\x00\xff\x32\x76\xa9\x14'
+
+# Scenario 5: BIP143 bounds error — input_index=0xFF with 1 input
+add_binary_seed "sighash_computation" "bip143_bounds.bin" \
+    '\x05\x01\xff\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\xe1\xf5\x05\x00\x00\x00\x00\xff\x32\x76\xa9'
+
+# Extra: SIGHASH_NONE with 3 inputs, varied sequences
+add_binary_seed "sighash_computation" "legacy_none_multi.bin" \
+    '\x00\x02\x01\x03\x02\x01\x00\x00\x00\x00\x00\x00\x00\x00\xe1\xf5\x05\x00\x00\x00\x00\xab\x32\x76\xa9\x14\x00\x00\x51\x52\x53'
+    
+# Witness validation seeds
+# Boundary 520 bytes
+add_seed "witness_validation" "boundary_520.hex" "$(printf '01%.0s' {1..520})"
+# Boundary 521 bytes
+add_seed "witness_validation" "boundary_521.hex" "$(printf '01%.0s' {1..521})"
+# Taproot Control Block (33 bytes)
+add_seed "witness_validation" "taproot_cb_33.hex" "$(printf '00%.0s' {1..33})"
+# Taproot Control Block (65 bytes)
+add_seed "witness_validation" "taproot_cb_65.hex" "$(printf '00%.0s' {1..65})"
+# Taproot Invalid CB (34 bytes)
+add_seed "witness_validation" "taproot_cb_34.hex" "$(printf '00%.0s' {1..34})"
+# Degenerate: 32 empty elements
+add_seed "witness_validation" "degenerate_empty.hex" "$(printf '00%.0s' {1..32})"
 
 # Sequence locks validation seeds
 # Layout follows fuzz_targets/sequence_locks_validation.rs custom Arbitrary parser:
@@ -227,5 +294,3 @@ echo "  - Extract from Bitcoin Core test vectors"
 echo "  - Use real blockchain data (mainnet/testnet)"
 echo ""
 echo "Corpus directories: $CORPUS_DIR"
-
-

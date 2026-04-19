@@ -59,8 +59,9 @@ hashbrown = { version = "0.14", optional = true }
 # crates.io: allow any 0.x >=0.1 without editing Cargo.toml for each patch/minor
 blvm-primitives = { version = ">=0.1, <1", default-features = false }
 
-# Spec-lock for mathematical verification
-# CI: setup-spec-lock.sh clones to ../blvm-spec-lock when needed for the cargo-spec-lock CLI
+# Spec-lock for mathematical verification (`blvm-spec-lock` is published on crates.io).
+# Monorepo dev: [patch.crates-io] below pins ../blvm-spec-lock; CI strips patches and uses crates.io.
+# CI: setup-spec-lock.sh clones ../blvm-spec-lock when the cargo-spec-lock CLI is needed.
 blvm-spec-lock = { version = ">=0.1, <1", default-features = false }
 # Spec-macros for spec_locked attributes (migration in progress - commented out until committed)
 # blvm-spec-macros = { path = "../blvm-spec-macros", optional = true }
@@ -68,7 +69,7 @@ blvm-spec-lock = { version = ">=0.1, <1", default-features = false }
 
 [dev-dependencies]
 blvm-muhash = { version = ">=0.1, <1" }
-blvm-protocol = { version = ">=0.1, <1", features = ["utxo-commitments"] }
+# UTXO commitments tests live in blvm-protocol (protocol → consensus only; no dev-dep cycle).
 # Formal verification tools - EXACT VERSIONS for reproducibility
 proptest = "=1.5.0"
 # Fuzzing framework for better test coverage ergonomics
@@ -84,7 +85,6 @@ criterion = "0.5"
 [patch.crates-io]
 blvm-primitives = { path = "../blvm-primitives" }
 blvm-spec-lock = { path = "../blvm-spec-lock" }
-blvm-protocol = { path = "../blvm-protocol" }
 blvm-muhash = { path = "../blvm-muhash" }
 blvm-secp256k1 = { path = "../blvm-secp256k1" }
 
@@ -114,7 +114,7 @@ rayon = ["dep:rayon"]
 # Enables cache clearing and state reset functions for reproducible benchmarks
 benchmarking = []
 
-# UTXO commitments (implementation in blvm-protocol; tests use blvm-protocol)
+# UTXO commitments (implementation in blvm-protocol; integration tests are in blvm-protocol)
 utxo-commitments = []
 # Verify UTXO proofs during initial sync (optional, for coin-freeze attack mitigation)
 utxo-proof-verification = []
