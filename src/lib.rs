@@ -168,7 +168,7 @@ impl ConsensusProof {
             block.transactions.iter().map(|_| Vec::new()).collect();
         let network_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or(std::time::Duration::ZERO)
             .as_secs();
         let context = block::BlockValidationContext::from_connect_block_ibd_args(
             None::<&[types::BlockHeader]>,
