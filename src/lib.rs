@@ -81,6 +81,10 @@ pub mod orange_paper_constants {
     pub use crate::constants::{C, H, L_ELEMENT, L_OPS, L_SCRIPT, L_STACK, M_MAX, R, S_MAX, W_MAX};
 }
 
+/// Spec-lock / property-test helpers only — not a supported production API.
+/// Functions in this module `panic!` or `unimplemented!` when called outside their
+/// intended spec-validation context. Do **not** call from production code.
+#[doc(hidden)]
 pub mod orange_paper_property_helpers;
 
 pub mod config;
